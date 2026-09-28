@@ -130,5 +130,6 @@ module.exports = {
   isSuperAdminRole,
   isProtectedOwnerUid,
   protectedOwnerConfigured,
+  protectedOwnerUid,
   setProtectedOwnerUidForTests,
 };

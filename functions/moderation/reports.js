@@ -1,5 +1,5 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
-const { FieldValue } = require("firebase-admin/firestore");
+const { FieldValue, Timestamp } = require("firebase-admin/firestore");
 const { createHash } = require("node:crypto");
 
 const {
@@ -78,7 +78,23 @@ const ACTION = Object.freeze({
   RESOLVE: "resolve",
   REMOVE_AND_RESOLVE: "removeAndResolve",
   DISMISS: "dismiss",
+  // Premium Pages only (ADR-233 §2.10; functions/pages/moderation.js). On a
+  // Page report removeAndResolve removes the post or comment, or suspends
+  // the Page for a `page` report; these four act without resolving.
+  HOLD_PAGE_POST: "holdPagePost",
+  RESTORE_PAGE_POST: "restorePagePost",
+  SUSPEND_PAGE: "suspendPage",
+  LIFT_PAGE_SUSPENSION: "liftPageSuspension",
 });
+const PAGE_ONLY_ACTIONS = new Set([
+  ACTION.HOLD_PAGE_POST,
+  ACTION.RESTORE_PAGE_POST,
+  ACTION.SUSPEND_PAGE,
+  ACTION.LIFT_PAGE_SUSPENSION,
+]);
+// The Page report target types (pages/report_contract.js), repeated here so
+// this module does not load the Pages graph until a Page report is handled.
+const PAGE_REPORT_TARGET_TYPES = new Set(["page", "pagePost", "pagePostComment"]);
 
 // Closed set, mirrored by ReportResolution in the Flutter client.
 const RESOLUTIONS = new Set([
@@ -108,6 +124,26 @@ const TRANSITIONS = {
   [ACTION.DISMISS]: {
     from: [STATUS.OPEN, STATUS.IN_REVIEW],
     to: STATUS.DISMISSED,
+  },
+  // A Page content action claims the report for the acting moderator and
+  // keeps it open for the decision that closes it.
+  [ACTION.HOLD_PAGE_POST]: {
+    from: [STATUS.OPEN, STATUS.IN_REVIEW],
+    to: STATUS.IN_REVIEW,
+  },
+  [ACTION.RESTORE_PAGE_POST]: {
+    from: [STATUS.OPEN, STATUS.IN_REVIEW],
+    to: STATUS.IN_REVIEW,
+  },
+  [ACTION.SUSPEND_PAGE]: {
+    from: [STATUS.OPEN, STATUS.IN_REVIEW],
+    to: STATUS.IN_REVIEW,
+  },
+  // Lifting a suspension is an appeal outcome, so it is also possible after
+  // the report closed. `to: null` keeps the report's status unchanged.
+  [ACTION.LIFT_PAGE_SUSPENSION]: {
+    from: [STATUS.OPEN, STATUS.IN_REVIEW, STATUS.RESOLVED, STATUS.DISMISSED],
+    to: null,
   },
 };
 
@@ -514,11 +550,14 @@ function moderationAuditId(reportId, requestId) {
   return `report_${digest}`;
 }
 
-const moderateReport = onCall(
-  { region: REGION, enforceAppCheck: false },
-  async (request) => {
-    const caller = await requireActiveStaff(request, { privileged: true });
-
+/// The whole moderateReport decision for an already-authorized `caller`
+/// ({uid, role, token?, email?}). The callable authorizes staff first; the
+/// owner-guarded Pages operator script (scripts/pages_moderation.js) calls
+/// this same function, so both paths move the report, write the audit row
+/// and act on the content in one transaction.
+async function handleModerateReport(caller, data) {
+  {
+    const request = { data };
     // Document and idempotency identities are authority-bearing input. Never
     // trim or truncate them: doing so can alias two different caller values to
     // the same report/audit document before the closed grammar is checked.
@@ -543,6 +582,16 @@ const moderateReport = onCall(
       request.data?.moderatorNote,
       MAX_MODERATOR_NOTE,
     );
+    // Page reports only: the rule a Page action is recorded under (a key of
+    // pages/report_contract.js PAGE_REPORT_REASONS; the report's own reason
+    // when absent). The Pages arm validates the value.
+    const moderationReason = request.data?.moderationReason ?? null;
+    if (
+      moderationReason !== null &&
+      (typeof moderationReason !== "string" || moderationReason.length > 64)
+    ) {
+      throw new HttpsError("invalid-argument", "moderationReason is invalid.");
+    }
 
     if (!TRANSITIONS[action]) {
       throw new HttpsError("invalid-argument", "Unknown moderation action.");
@@ -597,7 +646,7 @@ const moderateReport = onCall(
       const current = report.status ?? STATUS.OPEN;
       const transition = TRANSITIONS[action];
 
-      if (TERMINAL.has(current)) {
+      if (TERMINAL.has(current) && !transition.from.includes(current)) {
         throw new HttpsError(
           "failed-precondition",
           `This report was already ${current}.`,
@@ -641,7 +690,32 @@ const moderateReport = onCall(
       // which converges the same way, is a follow-up rather than a silent
       // change to a deployed audit shape.
       let contentAlreadyRemoved = null;
-      if (action === ACTION.REMOVE_AND_RESOLVE) {
+      const pageReport = PAGE_REPORT_TARGET_TYPES.has(report.targetType);
+      if (PAGE_ONLY_ACTIONS.has(action) && !pageReport) {
+        throw new HttpsError(
+          "failed-precondition",
+          "This action applies only to Page reports.",
+        );
+      }
+      if (
+        pageReport &&
+        action !== ACTION.CLAIM &&
+        action !== ACTION.RELEASE
+      ) {
+        // Premium Pages (ADR-233 §2.10): content actions, the open-report
+        // count and evidence release, in this same transaction.
+        const { applyPageReportModeration } = require("../pages/moderation");
+        const page = await applyPageReportModeration(transaction, {
+          db,
+          report,
+          reportId,
+          action,
+          moderationReason,
+          now: Timestamp.now(),
+        });
+        contentRemoved = page.contentRemoved;
+        contentAlreadyRemoved = page.contentAlreadyRemoved;
+      } else if (action === ACTION.REMOVE_AND_RESOLVE) {
         if (report.targetType === "globalMessage") {
           const messageReference = db
             .collection("globalChat")
@@ -969,8 +1043,9 @@ const moderateReport = onCall(
       // Reporter evidence — reporterId, targetType, targetId,
       // reportedUserId, contextPath, reason, note, createdAt — is never
       // in this update. Only workflow fields move.
+      const nextStatus = transition.to ?? current;
       const workflow = {
-        status: transition.to,
+        status: nextStatus,
         lastRequestId: requestId,
         updatedAt: FieldValue.serverTimestamp(),
       };
@@ -981,6 +1056,13 @@ const moderateReport = onCall(
       } else if (action === ACTION.RELEASE) {
         workflow.assignedTo = null;
         workflow.assignedAt = null;
+      } else if (!needsResolution) {
+        // A Page content action (hold, restore, suspend, lift) claims an
+        // unassigned open report and never resolves it.
+        if (transition.to === STATUS.IN_REVIEW && !assignee) {
+          workflow.assignedTo = caller.uid;
+          workflow.assignedAt = FieldValue.serverTimestamp();
+        }
       } else {
         workflow.resolution = resolution;
         workflow.resolutionNote = moderatorNote || null;
@@ -1008,7 +1090,7 @@ const moderateReport = onCall(
         targetLabel: null,
         details: {
           previousStatus: current,
-          newStatus: transition.to,
+          newStatus: nextStatus,
           resolution: needsResolution ? resolution : null,
           note: moderatorNote || null,
           contentRemoved,
@@ -1023,7 +1105,7 @@ const moderateReport = onCall(
       });
 
       return {
-        status: transition.to,
+        status: nextStatus,
         previous: current,
         replayed: false,
         contentRemoved,
@@ -1045,11 +1127,22 @@ const moderateReport = onCall(
       contentRemoved: outcome.contentRemoved,
       replayed: outcome.replayed,
     };
+  }
+}
+
+const moderateReport = onCall(
+  { region: REGION, enforceAppCheck: false },
+  async (request) => {
+    const caller = await requireActiveStaff(request, { privileged: true });
+    return handleModerateReport(caller, request.data);
   },
 );
 
 module.exports = {
+  handleModerateReport,
   moderateReport,
+  PAGE_ONLY_ACTIONS,
+  REPORT_STAFF_ROLES,
   requireActiveStaff,
   STATUS,
   ACTION,

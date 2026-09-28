@@ -42,6 +42,21 @@ npm test
 Exits non-zero if anything fails. Prints `OK`/`FAIL` per check plus a
 `<n> passed, <n> failed` summary.
 
+## Premium Pages (ADR-233)
+
+`pages_rules.test.js` is the Firestore boundary of every Pages collection
+(`pages`, `pagePosts`, likes, comments, follows, reservations, jobs, open
+reports, evidence retention, the staff media audit, `pageVisibility/v1`):
+every client, staff tokens with the `users.role` mirror included, is denied,
+and the owner may only `get` their own `pages/{uid}`. It runs as part of
+`npm test` and alone as `npm --prefix firestore-tests run test:pages`.
+
+`pages_storage_rules.test.js` is the Storage boundary of `page_posts/` (one
+live reservation per object, exact metadata, plain HTTP headers, no client
+read at all). It runs as the last file of `test:storage` (so CI runs it with
+the other Storage suites) and alone as `test:pages-storage`, with
+`--only firestore,storage --project demo-yovoice`.
+
 ## Storage rules
 
 `storage.test.js` is the regression suite for `../storage.rules` — profile,

@@ -82,7 +82,16 @@ const LIKERS_INPUT = Object.freeze({
     ]),
     required: Object.freeze(["serverId", "channelId", "messageId"]),
   }),
+  // ADR-233 §2.6 (Premium Pages, D15): Page POST likes only; no comment
+  // target in v1.
+  pagePost: Object.freeze({
+    allowed: Object.freeze(["cursor", "postId"]),
+    required: Object.freeze(["postId"]),
+  }),
 });
+// pages/contract.js PAGE_POST_ID_PATTERN, restated so this shared module
+// does not load the Pages graph (pinned equal by pages_likers.test.js).
+const PAGE_POST_ID = /^pp_[a-f0-9]{40}$/u;
 
 function optionalId(value, label) {
   return value === undefined || value === null ? null : requireId(value, label);
@@ -106,6 +115,18 @@ function requireLikersListInput(family, data) {
       cursor,
       momentId,
       commentId,
+    };
+  }
+  if (family === "pagePost") {
+    if (typeof data.postId !== "string" || !PAGE_POST_ID.test(data.postId)) {
+      fail("invalid-argument", "postId is invalid.");
+    }
+    return {
+      targetType: "pagePost",
+      ids: [data.postId],
+      emoji: null,
+      cursor,
+      postId: data.postId,
     };
   }
   if (family === "reel") {
@@ -390,6 +411,7 @@ async function runLikersPage({
 }
 
 module.exports = {
+  LIKERS_PAGE_POST_ID: PAGE_POST_ID,
   LIKERS_CHUNK,
   LIKERS_INPUT,
   LIKERS_MAX_FETCHED,

@@ -50,6 +50,11 @@ const NEW_TYPES = [
   "serverEventReminder",
   "serverRole",
 ];
+// Premium Pages (ADR-233 §2.6, package B4). Server-side only until the
+// Flutter lane (C4) adds the client enum, icon and deep link: installed
+// builds render it as `system` with its human-readable targetLabel, so it is
+// deliberately NOT in the client-parity loop below.
+const PAGES_TYPES = ["pagePostComment"];
 
 test("an unregistered notification type is refused, not pushed", async () => {
   const neverRead = {
@@ -80,13 +85,17 @@ test("an unregistered notification type is refused, not pushed", async () => {
     "friendAccepted", "friendRequest", "liveStarted", "mention", "missedCall",
     "moderation", "reply", "roomInvite", "system",
   ]);
-  assert.deepEqual([...ENGAGEMENT_NOTIFICATION_TYPES].sort(), [...NEW_TYPES].sort());
+  assert.deepEqual(
+    [...ENGAGEMENT_NOTIFICATION_TYPES].sort(),
+    [...NEW_TYPES, ...PAGES_TYPES].sort(),
+  );
 });
 
 test("every new type has a deliberate sound profile", () => {
   assert.equal(soundProfileForNotification("momentComment"), SOUND_PROFILES.social);
   assert.equal(soundProfileForNotification("reelComment"), SOUND_PROFILES.social);
   assert.equal(soundProfileForNotification("serverRole"), SOUND_PROFILES.social);
+  assert.equal(soundProfileForNotification("pagePostComment"), SOUND_PROFILES.social);
   assert.equal(
     soundProfileForNotification("commentMention"),
     SOUND_PROFILES.message,
@@ -201,4 +210,47 @@ test("the registry predicate refuses anything nobody registered", () => {
   }
   assert.equal(isRegisteredNotificationType("serverEventReminder"), true);
   assert.equal(isRegisteredNotificationType("friendRequest"), true);
+});
+
+// Added 2026-09-28 (ADR-233 §2.6, package B4): the Page comment push.
+test("pagePostComment: title, payload and the Comments-and-mentions switch", () => {
+  const { PUSH_PREFERENCE_KEYS, pushPreferenceDisabled } = require("../notifications/push");
+  assert.equal(PUSH_TITLES.pagePostComment("Ada"), "Ada commented on your Page post");
+  const message = buildPushMessage({
+    tokens: ["token"],
+    type: "pagePostComment",
+    targetId: `pp_${"a".repeat(40)}`,
+    targetSubId: `pc_${"b".repeat(40)}`,
+    actorId: "actor",
+    notificationId: `pagePostComment_pc_${"b".repeat(40)}`,
+    title: PUSH_TITLES.pagePostComment("Ada"),
+    collapseId: "collapse-1",
+  });
+  assert.deepEqual(message.data, {
+    type: "pagePostComment",
+    targetId: `pp_${"a".repeat(40)}`,
+    actorId: "actor",
+    notificationId: `pagePostComment_pc_${"b".repeat(40)}`,
+    targetSubId: `pc_${"b".repeat(40)}`,
+  });
+  assert.equal(message.notification.body, "Tap to open YO Voice");
+  assert.equal(message.android.notification.channelId, SOUND_PROFILES.social.channelId);
+  // The existing "Comments and mentions" switch (written under momentComment
+  // by every installed client) silences it; so does its own key. Nothing
+  // else does, and every other type keeps its own single key.
+  assert.deepEqual([...PUSH_PREFERENCE_KEYS.pagePostComment], ["momentComment", "pagePostComment"]);
+  assert.equal(pushPreferenceDisabled({ momentComment: false }, "pagePostComment"), true);
+  assert.equal(pushPreferenceDisabled({ pagePostComment: false }, "pagePostComment"), true);
+  assert.equal(pushPreferenceDisabled({ reelComment: false, follow: false }, "pagePostComment"),
+    false);
+  assert.equal(pushPreferenceDisabled({}, "pagePostComment"), false);
+  assert.equal(pushPreferenceDisabled(undefined, "pagePostComment"), false);
+  assert.equal(pushPreferenceDisabled({ momentComment: false }, "reelComment"), false);
+  assert.equal(pushPreferenceDisabled({ reelComment: false }, "reelComment"), true);
+  assert.equal(pushPreferenceDisabled({ reelComment: true }, "reelComment"), false);
+  // The preferences screen's comments row still owns the anchor type.
+  const preferences = readApp(
+    "features/notifications/presentation/screens/notification_preferences_screen.dart",
+  );
+  assert.match(preferences, /NotificationType\.momentComment/u);
 });

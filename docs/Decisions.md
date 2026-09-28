@@ -17195,3 +17195,574 @@ likes" true for Voice Moment likes; no supported build loses anything.
 - Deploy order, activation preconditions and rollback:
   [DEPLOYMENT.md](DEPLOYMENT.md#see-who-liked-adr-230--source-only-nothing-deployed).
   Security surface: [SECURITY.md](SECURITY.md#see-who-liked-and-hide-my-likes-2026-09-28-adr-230-source-only-not-deployed).
+
+## ADR-231: Servers stay the only shared space; a Premium Page is a one-to-many publishing profile
+
+**Date:** 2026-09-28 · **Status:** DRAFT, accepted in the spec (owner
+decisions O1-O8, 2026-09-28, in chat; spec rev. 2 + §12:
+`yovoice-evidence/2026-09-28/premium-pages/spec.md`) · backend packages
+B1-B5 in source · NOT deployed · numbers are provisional until landing.
+
+### Context
+
+CLAUDE.md says "Servers are the only user-facing shared-space product", and
+Discover is a retired surface. On 2026-09-28 Kamil decided that a Premium or
+VIP account may turn **its own account** into a Page of type Business
+(Firma) or Community (Społeczność) that "reads like a server": one Page per
+account, only the owner posts, visitors follow, like and comment.
+
+### Decision
+
+A narrow amendment of the invariant: *Servers are the only user-facing
+shared space. A Premium Page is a one-to-many publishing profile owned by one
+account. It has followers, not members, and no voice, LIVE, channels, roles or
+visitor posts. A Page may link to one public Server its owner runs.*
+
+- A Page is not a Server template; the five templates are unchanged.
+- The directory is "Znajdź strony / Find Pages". "Discover" stays retired.
+- Visitor posts are a hard boundary.
+- **Following a Page grants reading only.** It never widens DM, LIVE or
+  achievement permissions (ADR-233, D13).
+
+### Reasoning
+
+Reusing the account (not a new entity) keeps identity, blocks, reports,
+avatar/banner media and account deletion in one place. Keeping Pages
+one-to-many keeps them out of the Server authority model (members, roles,
+channels, sessions), which is where shared-space complexity lives.
+
+### Consequences
+
+- CLAUDE.md, Vision.md and Features.md need the amended invariant when the
+  client lands (the lead's step; this backend package only records it).
+- There is no public follower list (ADR-233, D12).
+- A Page owner can still run Servers; the link is to one public Community or
+  Podcast server they own, read current and omitted unless active and public.
+
+## ADR-232: Six dock destinations, whole dock at 90 %
+
+**Date:** 2026-09-28 · **Status:** DRAFT (owner decision O4 and the §12
+render decisions, 2026-09-28) · Flutter lane (C1); no backend part ·
+provisional number.
+
+### Context
+
+Pages need a destination. Kamil chose a new dock tab **Treści / Content**
+between Czaty and Momenty, icon `article_outlined`, with the whole dock
+scaled to 90 % (variant 1) and nothing merged or removed.
+
+### Decision
+
+Six slots; every constant of the compact dock × 0.9 (spec §4.1.1); the
+narrow regimes of spec §4.1.2 (every target ≥ 48 px; the bead and inset
+animate with the existing spring when the width crosses 342.8 px; instant
+under Reduce Motion); expanded mode at ≥ 1.3× text with a 12 px caption; a
+43-locale sweep of the compact label before C1, recorded here when run.
+
+### Reasoning
+
+Owner decision. M3's 3-5 destination guidance is knowingly exceeded.
+
+### Consequences
+
+The dock, shell slot map, desktop rail and tour anchors change together in
+the client lane. The owner approved the narrow modes on the R1 renders
+(§12). Backend: none.
+
+## ADR-233: Premium Pages — account-as-Page, server-only posts, fan-out on read, lapse without deletion
+
+**Date:** 2026-09-28 · **Status:** DRAFT, accepted in the spec (owner
+decisions O1-O8 + §12; defaults D1-D16 are overrulable) · backend packages
+**B1 in source** (gate, `pages` doc, lifecycle, hooks, visibility index,
+badge `page`, rules) and **B3 in source** (the read wire contract, the
+follow branch of `setFollow`, D13 in direct messages, the LIVE and
+achievement exclusions, the four read callables, five indexes) and **B2 in
+source** (media reservations, publish, owner delete with evidence
+tombstones, media grants, `pagesMaintenance`, Storage rules, one index) and
+**B4 in source** (likes, comments with the link filter and the Auth-age
+limit, the owner's `pagePostComment` notification and push, VIP likers on
+Page posts) and **B5 in source** (the lapse transitions, the canonical badge
+VIP bit, `createPageReportV1`, the `moderateReport` Page arms, the operator
+moderation script, account deletion, evidence retention) · NOT deployed ·
+everything ships **switched off** · provisional number.
+
+### Context
+
+O1-O3 and O7: Premium/VIP accounts may run one Page each; posts are text,
+photo and voice with likes, comments and VIP likers (ADR-230); a lapsed VIP
+is read-only for 30 days, then hidden, and nothing is ever deleted; Premium
+cannot be bought, so Pages open to owner-granted VIPs (testers) first.
+`publicProfiles` has an exact schema in three places (rules `hasOnly`, the
+`PUBLIC_PROFILE_KEYS` guard, the `followerCount == 0` rule), and images are
+not screened automatically.
+
+### Decision
+
+- **Model.** Page = the owner's account. `pageId` is the owner's uid. Page
+  state lives in a new server-written `pages/{uid}` with an exact 26-key
+  document (`canonicalPage`, `functions/pages/contract.js`); the owner may
+  `get` it while active. `publicProfiles` and `users` gain no field (D1).
+  The public signal is `publicBadges/{uid}.page` (`business | community |
+  null`), derived inside `syncPublicBadgeForUser` so every trigger (users,
+  vipGrants, pages) runs one derivation; the new `onPageBadgeSourceChanged`
+  returns early unless existence, kind, status, ownerPaused or suspended
+  changed. The badge authorizes nothing.
+- **Capability** (`functions/pages/access.js`): a **canonical vipGrant**
+  (`canonicalLikersVipGrant`, ADR-230) on an active account. **Paid Premium
+  is refused while `PAGES_ALLOW_PAID_SOURCE = false`**; flipping it needs
+  automated image screening **and** Roadmap 0o (the Moderation Center for v2
+  reports) and a new ADR. Staff preview is refused. The grant is checked
+  independently of the likers precedence, so a VIP who also pays is
+  admitted. Re-derived inside every write transaction.
+- **Activation** (`functions/pages/activation.js`): `appConfig/pagesV1 =
+  {schemaVersion:1, readAccess, writeAccess, testerUids[≤100], lapseEnabled,
+  revision≥1}`, read uncached per call. Missing, unreadable or malformed =
+  everything disabled and `lapseEnabled:false`; a `writeAccess` wider than
+  `readAccess` is malformed. **Safety actions never read it**: owner pause,
+  owner post delete, comment delete, report, unfollow, going private. The
+  operator writes it with `functions/scripts/set_pages_activation.js`.
+- **Lifecycle** (`managePageV1`, ops create/update/pause/resume): order auth →
+  exact input → activation → rate → gate → content (create charges its
+  5/day budget first). Common write preconditions inside the transaction:
+  active account, no communication mute, verified e-mail. Create requires a
+  public profile, a canonical projection, a name that passes `name_safety`,
+  `followerCount == 0` and Creator audience off, and an 18+ attestation
+  (skipped for `creatorAgeVerified`); the birth date is never stored,
+  hashed or logged (the ledger hashes `{adultEligibility:true}`), and an
+  under-18 answer writes a dateless `pageAdultRefusals/{uid}` that blocks for
+  30 days. Kind is fixed (D16). Pause is a safety action (no activation, no
+  gate, allowed muted and unverified, idempotent, tolerant of a malformed
+  Page or index). Update and resume restore a lapsed Page to `active` in the
+  same transaction when the capability is live.
+- **Hooks on existing callables.** `updateMyDisplayName` refuses a reserved
+  or look-alike name while `pages/{uid}` exists (paused or not) and moves the
+  Page's `displayName` / `nameSearch` / `nameChangedAt` in the same
+  transaction; a malformed `pages/{uid}` fails the rename closed
+  (`data-loss`, operator repair), so corrupting the Page cannot skip name
+  safety. `setMyProfileVisibility` to friends or private **pauses** the
+  Page in the same transaction and never refuses (D5), a malformed Page or
+  visibility index included; its response keeps its exact two keys. `setCreatorAudienceEnabled {enabled:true}` is refused
+  (`pageActive`) while a Page exists.
+- **Name safety** (`functions/profile/name_safety.js`): NFKC, diacritics,
+  a confusable map applied before AND after lower-casing (Cyrillic, Greek
+  capitals and small letters, Armenian, Cherokee, Lisu, Latin/IPA small
+  capitals, leetspeak) and single-letter gluing, then
+  reserved words ("YO Voice" anywhere; VIP, Admin, Moderator, Support, Pomoc,
+  Wsparcie, Official/Oficjalny, Verified/Zweryfikowany, Staff as tokens;
+  Official, Admin, Moderator, Verified as affixes) and check-mark look-alikes
+  (✓ ✔ ✅ ☑ 🗸 🗹 √ ⍻). Page accounts only in v1.
+- **Visibility** (`pageVisibility/v1`): one server-only index
+  `{notViewable:{pageId: paused|suspended|hidden}, readOnlySince:{pageId: ms}}`
+  derived from the Page and written in the same transaction as every status
+  change (FieldPath updates touch only that Page's entries). Warn past
+  15 000 entries, alert at 20 000.
+- **Follows (B3, `setFollow`).** A Page takes followers while readAccess
+  admits the caller, `pages/{P}` is canonical, not paused, not suspended,
+  and its **live** effective status is `active` (the owner's users /
+  entitlements / vipGrants re-derived inside the follow transaction, so a
+  grant that expired by time refuses before any sweep; a readOnly Page takes
+  no new followers, D14). Those documents join the read set only when the
+  Creator path already refused, and the refusal text is the existing uniform
+  one. Following a Page writes `pageFollowIndex/{caller}` (a hint:
+  `{schemaVersion, pageIds[≤1000] oldest first, updatedAt}`) in the same
+  transaction; every unfollow drops the id (and repairs a malformed index)
+  without reading the switch. `pages.followToggle` allows 3 follows of one
+  Page per caller per 24 h and is charged on follow only (an unfollow is a
+  safety action). The edge shape, the follow notification and
+  `setUserBlock` are unchanged.
+- **D13 in direct messages (B3).** `directMessagePrivacyReferences` gains
+  `pages/{actor}` as a fourth read at all four call sites (open, send,
+  attachment reserve and finalize). Under "People you follow" the
+  recipient's follow edge does not count when the actor has a `pages`
+  document in any state (existence only, so a malformed one fails closed).
+  Starting a NEW conversation with a non-friend from an account with a
+  `pages` document is charged to `dm.pageOutbound` (10 / 24 h); reopening
+  an existing conversation or starting one with a friend is free.
+- **LIVE and achievements (B3).** `handleRoomLiveChanged` fans nothing out
+  for a host with a `pages` document; the `followers` achievement metric is
+  never recorded for such an account (friends still is).
+- **Reads (B3): the wire contract** (`functions/pages/views.js`, pinned by
+  `pages_views.test.js`). Output is exact; clients require every known key
+  and ignore unknown keys, and skip an item with an unknown enum value.
+  PostView `{postId, pageId, pageName, pageKind, kind, text, media[{mediaId,
+  type, contentType, width|null, height|null, durationMs|null}],
+  createdAtMs, likeCount, commentCount, callerLiked, commentsEnabled, state,
+  pinned}`; PageCard `{pageId, displayName, kind, category, followerCount,
+  onYoVoiceSinceMs, viewerFollows, lastPostAtMs|null}`; PageHeader
+  `{pageId, displayName, kind, category, description, followerCount,
+  postCount, onYoVoiceSinceMs, about{business|null, community{rules,
+  linkedServer{serverId,name,serverType}|null}|null}, state}`; CommentView
+  `{commentId, authorId, authorName, text, createdAtMs, isOwnPage}`.
+  `followerCount` is read from `users/{P}`; `onYoVoiceSinceMs` is the
+  Page's server-written `createdAt`, never the client-written
+  `users.createdAt`. Cursors are base64url JSON (`{v:1,t,id}` for posts and
+  comments; `{v:1,m,t|s|n,id}` for Find), validated with the id regex and a
+  safe-integer time before any read.
+- **Reads (B3): the callables.** `getPagesFeedV1 {cursor}` → `{schemaVersion,
+  posts[≤20], nextCursor, hasMore, suggestions[≤10]|null}`: the newest 300
+  index ids minus those `pageVisibility/v1` already hides, `pageId in`
+  chunks of 30 (21 per chunk, refilled on demand), a k-way merge newest
+  first with the post id as the tiebreak, the ADR-230 scan loop (page 20,
+  scan cap 60, cursor after the last consumed post), a per-Page check
+  (canonical Page, active owner, no block either way, the follow edge,
+  read-time status active or readOnly with the 30-day boundary, not paused,
+  not suspended), stale hints pruned (best effort). `getPageV1 {pageId, tab:
+  wall|photos, cursor}` → header, `viewer{isOwner, following, canFollow,
+  canMessage}` and `pinned` on the first page only; the owner sees every
+  state and their held posts. `getPagePostV1 {postId, commentCursor}` → the
+  post and comments (20 per page, scan cap 60; authors blocked either way,
+  inactive or without a canonical projection are skipped). `findPagesV1
+  {mode: suggest|search|following, query, cursor}` → PageCards (`listed`
+  Pages, scan cap 40; excludes self, blocked, hidden, and Pages renamed in
+  the last 7 days; suggest also excludes followed Pages; the `following`
+  panel pages the index newest first, 20 ids per call). Every content
+  refusal is the uniform `permission-denied` `pageUnavailable`; the switch
+  itself answers `pagesNotEnabled`. Rates: `pages.read` 60/min + 1200/h
+  (feed, Page, post), `pages.find` 30/min + 300/h.
+- **Indexes (B3).** `pagePosts (pageId, status, createdAt desc, __name__
+  desc)`, `pagePosts (pageId, status, kind, createdAt desc, __name__ desc)`,
+  `pagePostComments (postId, createdAt desc, __name__ desc)`, `pages (listed,
+  lastPostAt desc, __name__ desc)`, `pages (listed, nameSearch, __name__)`.
+  No collection-group query. `scripts/smoke_pages_indexes.js` runs the exact
+  builders (`PAGES_READ_QUERIES`) against production after the deploy.
+- **Posts (B2): reserve.** `reservePagePostMediaV1 {requestId, kind:
+  photo|voice, items[{index, contentType, size, width|null, height|null,
+  durationMs|null}]}` → `{postId, items[{mediaId, storagePath, metadata,
+  expiresAt(ms)}]}`. Photos 1-10 `image/jpeg` 128 B-4 MB whose declared
+  width/height (1-8192) must equal the uploaded JPEG's frame size at
+  publish; voice exactly one `audio/mp4` 512 B-4 MB declared 1-60 s.
+  The server allocates `postId` and every `mediaId` as digests of (caller,
+  requestId), so a retry replays the same set through the ledger and no
+  client id exists. One transaction: preconditions, gate, Page not paused
+  or suspended, no other open lease (`pageUploadInProgress`), the daily
+  budget `pagePostBudgets/{pageId}_{yyyymmdd}` (30 media reservations and
+  200 MB charged here, no reserve once 10 posts are published;
+  `pagePostBudget`), the reservations (15 min, exact 18 keys, which
+  `storage.rules` reads), the lease and the ledger. Rate `pages.reserve`
+  20/min.
+- **Posts (B2): publish.** `publishPagePostV1 {requestId, postId|null, kind,
+  text, mediaIds, commentsEnabled}` → the new PostView (no optimistic post).
+  Text is NFC, LF-only, trimmed, ≤ 5000; control, bidi and other format
+  characters are refused except ZWJ/ZWNJ (emoji sequences, Persian); a text
+  post needs a visible character and allocates its own id. Media posts name
+  a subset of their lease's media ids in display order. Per object before
+  the transaction: exact metadata, the trusted probe (`reels/probe.js`),
+  `assertNoImageMetadata` for photos (APP1-APP15 and COM refused up to SOS
+  within 256 KB, `pageMediaMetadata`; exactly one SOF frame header of
+  1-8192 px a side, equal to the declared size, else `pageMediaInvalid`),
+  plain HTTP headers (no Content-Encoding but `identity`, no Cache-Control,
+  at most an `inline` Content-Disposition; `pageMediaInvalid`), a metadata
+  re-read and the download token revoked. The transaction re-derives the gate, re-checks the Page,
+  the budget (posts + 1 ≤ 10), the lease and the live reservations, creates
+  the exact post (voice `durationMs` from the probe), deletes the lease and
+  every reservation of the set, moves `postCount`, `lastPostAt`, `listed`,
+  restores a lapsed Page, and writes the ledger. A replay is free; new work
+  costs `pages.publish` 3/10 min. **Counter invariant:** `postCount` counts
+  `published` posts only; moderation moves it when it holds, removes or
+  restores.
+- **Posts (B2): manage.** `managePagePostV1 {requestId, postId, op:
+  delete|pin|unpin|setCommentsEnabled, commentsEnabled?}` →
+  `{schemaVersion, op, postId, deleted, pinned, commentsEnabled}`; the
+  postId format is checked first; owner only, everyone else and a missing
+  post get `pageUnavailable`; `pages.manage` 30/min. **Delete** is a safety
+  action: a published post without `evidenceHold` or an open report is
+  hard-deleted (likes and comments through a durable
+  `pagePostCleanupJobs/{postId}`, 400 per batch); a held, removed or
+  reported one becomes a tombstone (`status:"deleted"`, `deletedAt`,
+  `moderationEvidence{evidenceVersion:1, metadataFingerprint}`, text and
+  media refs kept) with `pageEvidenceRetention/{postId}` (reason
+  `ownerDelete`, purgeAt now + 90 days). Each media object gets
+  `pagePostMediaDeletionJobs/{mediaId}` with `heldBy` = the post's last
+  report id (or `moderationHold` for an unreadable open-report record)
+  while a report is OPEN (`evidenceHold` or an open count), else null: a
+  held post whose reports all closed gets unheld jobs. Pin requires a published post; pin, unpin and
+  comments on/off need the gate and preconditions and are allowed while
+  paused (not suspended).
+- **Media grants (B2).** `getPagePostMediaAccessV1 {postId, mediaIds[≤10]}` →
+  `{schemaVersion, grants[{mediaId, url, expiresAtMs}]}`: paths only from the
+  post; the viewer branch needs readAccess and `canViewPage` (the owner
+  also sees `held`); the staff branch (report staff on both halves, a held,
+  removed or deleted post with `pagePostOpenReports/{postId}`, or a
+  published post with an OPEN report) needs no
+  readAccess and audits every grant in `pageStaffMediaAudit`. 90 s V4 URLs,
+  memoised 60 s per instance; `pages.media` 60/min, 600/h, 3000/day.
+- **Evidence record contract (B2 → B5).** `pagePostOpenReports/{postId} =
+  {schemaVersion:1, postId, pageId, count, lastReportId, updatedAt}`: `count`
+  is the open reports on the post and its comments, `lastReportId` the newest
+  report ever filed (kept after resolution). A malformed record reads as
+  reported (fail closed). The reporting package releases held jobs with
+  `releaseHeldPagePostMediaJobs` in the transaction that brings `count` to
+  zero.
+- **`pagesMaintenance` (B2).** Every 10 min, one instance, no activation read:
+  reservation expiry (claim `expiring`, delete the object by generation,
+  then the reservation and a matching expired lease), due unheld deletion
+  jobs (backoff 1 min doubling to 6 h; a 412 finishes the job and leaves the
+  other generation alone), post cleanup jobs, and a daily orphan sweep (≤ 1000
+  objects a run, cursor in `pageMaintenanceState/orphanSweep`) of
+  `page_posts/` objects older than 1 h that no post references, no
+  reservation covers and no job owns. B5 adds two slices (below): evidence
+  retention and the hourly lapse sweep, the only slice that reads the
+  switch (for `lapseEnabled`).
+- **Engagement (B4): `pagePostEngagementV1`.** Ops `like` / `unlike`
+  (`{requestId, op, postId}`; readAccess, verified, active; `canViewPage` +
+  post `published`; works on a readOnly Page; an unlike of a held edge skips
+  the audience and mute checks and answers `likeCount: null` when the post is
+  no longer visible; `pages.like` 60/min), `comment` (`{requestId, op,
+  postId, text}`; writeAccess, verified, active, unmuted, `canViewPage`, post
+  `published` with comments on, Page LIVE-active with the owner's capability
+  re-derived in the transaction, not paused or suspended; NFC text 1-1000,
+  control and format characters refused as in post text, the link filter;
+  server-allocated `pc_` id; `pages.comment` 20/min + `pages.commentDaily`
+  200/day + `pages.commentNewAccount` 3/min when Firebase Auth
+  `metadata.creationTime` is under 7 days, memoised per instance, an
+  unreadable record counting as new) and `deleteComment` (`{requestId, op,
+  commentId}`; a safety action: no activation read, muted and unverified
+  allowed; author or Page owner, else the uniform `pageUnavailable`;
+  `pages.commentDelete` 30/min). Each op is idempotent through the
+  integrity ledger; a replay is free. Responses (exact, pinned):
+  like/unlike `{schemaVersion, op, postId, liked, changed, likeCount|null}`;
+  comment `{schemaVersion, op, postId, comment: CommentView, commentCount}`;
+  deleteComment `{schemaVersion, op, postId, commentId, deleted}`. New
+  reasons: `commentLinks` (invalid-argument), `pageReadOnly` and
+  `pageCommentsOff` (failed-precondition); the owner commenting on their own
+  paused or suspended Page gets `pagePaused` / `pageSuspended`.
+- **The owner's comment notification (B4).** In the comment transaction:
+  `users/{P}/notifications/pagePostComment_{commentId}` via
+  `canonicalNotificationData`, type `pagePostComment`, `targetId` postId,
+  `targetSubId` commentId, `sourcePath` `pagePostComments/{commentId}`,
+  `targetLabel` "New comment on your Page post from {name}", the name
+  capped at 40 characters (builds 36-39 render unknown types as `system`
+  with that title verbatim, so the attribution comes first and survives the
+  120-character cut). Never for the owner's own
+  comment or while the owner is muted. `deleteComment` retires it in its
+  transaction; a hard-deleted post's cleanup job retires its comments' rows
+  first. Push (`onNotificationCreated`): title "{actor} commented on your
+  Page post", social sound, `pagePostCommentSourceIsCurrent` in
+  `engagement_source.js` (comment, post, Page, activation, both accounts,
+  blocks). **Preference key (Appendix C, confirmed in code):** the push
+  boundary reads `notificationPreferences.<type>`; the "Comments and
+  mentions" switch is written under `momentComment` (plus `reelComment` and
+  `commentMention`) by every client, so `pagePostComment` is governed by
+  `momentComment` AND its own key (`PUSH_PREFERENCE_KEYS`) — no new setting.
+- **VIP likers on Page posts (B4).** `listPagePostLikersV1 {postId,
+  cursor}`: pagesV1 readAccess, then `serveLikersList` unchanged (likersV1,
+  budgets, gate, content inside the uniform refusal). ADR-230's
+  `LIKERS_TARGET_TYPES` and `LIKERS_INPUT` gain `pagePost` (additive; the
+  post-id pattern is restated in `likers_paging.js` so the shared likers
+  graph loads no Pages module). Candidates `pagePosts/{id}/likes`
+  `createdAt desc, __name__ desc` (single-field index), liker surface
+  `content`. No comment target (D15).
+- **Stored shapes.** B3 fixes the stored post and comment shapes every
+  package writes (`functions/pages/post_contract.js`, `PAGE_POST_KEYS`,
+  `PAGE_COMMENT_KEYS`; readers skip a non-exact item and read a broken
+  counter as 0).
+- **Lapse (B5, `functions/pages/lapse_service.js`).** Every transition runs
+  in ONE transaction (`reconcilePage`) that re-reads `users`,
+  `entitlements`, `vipGrants`, `pages`, `pageVisibility/v1` and
+  `appConfig/pagesV1`, derives the capability there, and writes `pages` and
+  the visibility index together, so a stale reader can never overwrite a
+  restore. Writers: `onPageCapabilityEntitlementChanged` and
+  `onPageCapabilityGrantChanged` (one plain read and an early return
+  without a Page), the hourly `pagesMaintenance` slice (`pages (status,
+  lapsedAt, __name__)`, 5 × 200 Pages a run, cursor in
+  `pageMaintenanceState/lapseSweep`, a Page pays for a transaction only
+  when its pre-read says it needs one), and every Pages write path
+  (restores, B1/B2). Transitions: active without capability → `readOnly`
+  (`lapsedAt` now, out of Find); `readOnly` ≥ 30 days → `hidden` (lapsedAt
+  kept, nothing deleted); `readOnly`/`hidden` with capability → `active`.
+  `lapseEnabled:false` (and a missing or malformed switch) freezes every
+  downgrade; restores still run. The owner gets a `pageLapse` row at Day 0
+  (`pageLapse_readOnly_{lapsedAtMs}`) and Day 23
+  (`pageLapse_hidingSoon_{lapsedAtMs}`, once).
+- **Badge VIP bit (B5).** `deriveBadge` keeps the paid mirror and the staff
+  preview from `effectiveVip`, but a complimentary grant counts only when
+  `canonicalLikersVipGrant` accepts it with its `expiresAt` (the predicate
+  the capability uses), never through the fail-open `grantIsActive`. A grant
+  that expires by time is picked up by the next derivation, which a Page's
+  lapse transition triggers through `onPageBadgeSourceChanged`.
+- **Reports (B5, `createPageReportV1`).** `{requestId, targetType:
+  page|pagePost|pagePostComment, pageId, postId|null, commentId|null,
+  reason, note|null}` → `{schemaVersion, reportId, created}`. A safety
+  action: no switch, no `canViewPage` (a Page that blocked the reporter is
+  still reportable), unverified and muted callers allowed. Every id is
+  format-checked before any read; `pages.report` (10 / 10 min) is charged
+  BEFORE the target is read, so a refused probe costs the same as a report.
+  Existence only, one uniform `not-found` (`pageReportTargetMissing`) for
+  every missing state (including a removed or deleted post); own content is
+  `pageReportOwnContent`. One report per reporter per target (`reportId =
+  sha256("page-report", reporter, targetType, targetId)[0..40]`, no uid
+  prefix, so the account-deletion re-key keeps the id). The `reports/{id}`
+  v2 row carries the snapshot staff need (post text ≤ 2000, comment ≤ 1000,
+  Page description ≤ 300, media ids and types, Page name and kind). A post
+  or comment report sets the post's `evidenceHold` and bumps
+  `pagePostOpenReports/{postId}.count` in the same transaction. Reasons:
+  the rules' closed list plus `restrictedCategory`, `scam`,
+  `intellectualProperty`.
+- **Moderation (B5, `functions/pages/moderation.js`).** `moderateReport`
+  gains the Page arms inside its own transaction: on a Page report
+  `removeAndResolve` removes the post (`status:"removed"`, reason, bytes
+  kept for an appeal), removes the comment (counter and bell row) or
+  suspends the Page; new actions `holdPagePost`, `restorePagePost`,
+  `suspendPage` (claim the report, keep it open) and `liftPageSuspension`
+  (also after the report closed; the status is unchanged). Every action
+  that ends a post or comment report decrements the open-report count; at
+  zero it clears `evidenceHold`, releases the post's held media jobs, makes
+  a retained tombstone (`pageEvidenceRetention`, a deleted account's or an
+  owner-deleted post's) due and, on `resolve` / `dismiss`, restores a HELD
+  post to published (a hold never outlives the review that justified it).
+  The arms that hide content (remove, hold, suspend) are safety writes on a
+  malformed `pageVisibility/v1`; restore and lift fail closed. Each action moves
+  `postCount`, the pin, `listed` and `pageVisibility/v1` as needed, and
+  writes a `pageModeration` statement of reasons (DSA Art. 17) with English
+  text to the owner (or the comment's author). An optional
+  `moderationReason` (a report-reason key) overrides the report's reason.
+  `handleModerateReport` is exported so `scripts/pages_moderation.js`
+  (owner-guarded; `list`, `show [--media]`, `remove`, `hold`, `restore`,
+  `suspend`, `lift`, `resolve`, `dismiss`; dry run unless `--apply`) runs
+  the SAME decision, audit row included.
+- **Account deletion (B5, `functions/pages/account_deletion.js`).**
+  `content`: `pages/{uid}` and its visibility entry in one transaction;
+  each post hard-deleted with cleanup and unheld media jobs, or, while a
+  report is open (`evidenceHold`, open count), kept as a tombstone
+  with held media jobs and `pageEvidenceRetention/{postId}` (purged when the
+  report resolves or after 90 days, whichever comes first); the comments
+  the account wrote, with their counters and bell rows. `storage`:
+  `page_posts/{uid}/` objects named by an UNHELD job or an open
+  reservation, each by exact path and generation; held evidence is
+  skipped. `records`: budgets (by `pageId`); `pageFollowIndex`,
+  `pagePostMediaLeases` and `pageAdultRefusals` join the uid-keyed list.
+- **Rules**: explicit denies for every Pages collection (B2 adds
+  `pagePostCleanupJobs` and `pageMaintenanceState`); `pages/{uid}` owner-get
+  only while active. **Storage (B2)**: `page_posts/{pageId}/{postId}/{fileName}`
+  create-only against a live exact reservation (JPEG 128 B-4 MiB, `audio/mp4`
+  512 B-4 MiB, exact metadata, verified active owner); no client read at all
+  (the uploader included: a read could mint a durable download token after
+  the server revoked it); nothing else. The object headers are checked at
+  publish, because Cache-Control is not a rules resource property. **Index (B2)**:
+  `pagePostMediaDeletionJobs (heldBy, nextAttemptAt)`; the reservation and
+  cleanup-job queries use single-field indexes.
+
+### Reasoning
+
+A separate `pages` document keeps three exact `publicProfiles` contracts and
+every installed client untouched. Grant-only in code (not in copy) turns the
+critique's "grant-only until screening" into an invariant. The kill switch
+exempting safety actions means rollback can never trap a victim or an owner.
+Deriving the badge's `page` inside the one sync closes the merge-free `set()`
+race by construction. Pausing (rather than refusing) on going private keeps a
+safety action unconditional.
+
+### Consequences
+
+- **Residual risks (accepted):** App Check stays off; images are not screened
+  (mitigated by grant-only); no app-wide age gate, so minors can read Pages
+  (no follower list, no DMs via follows, outbound DM cap); follower farming
+  (achievements excluded); public Pages and 90 s media links can be scraped
+  (hourly/daily caps); ADR-230's like records of deleted accounts; comment
+  link-filter bypasses; the P2B notice for the Day-30 hide and the DSA
+  Art. 16 form are pending counsel and the website.
+- **Switch to a denormalised flag or an inbox** when p95 followed-Page count
+  > 60, feed p95 > 800 ms, or `pageVisibility` > 15 000 entries.
+- Every badge document gains `page` (null for staff/VIP without a Page): the
+  badge backfill plans it as an update, never a conflict; old clients ignore
+  the key.
+- A reserved-name refusal now blocks a rename for Page owners only.
+- Kamil needs a canonical vipGrant to test (staff preview is refused).
+- **B3 read budget.** The spec estimated ≈ 183 reads for a typical feed
+  call and ≈ 372 at 300 follows. The implemented bound
+  (`pagesFeedReadBudget`, pinned) is higher in the worst case: 5 context
+  reads per DISTINCT Page in the scanned window (up to 60, not 20, because a
+  scan may cross 60 Pages when most are hidden), refills of at most 4 × 21,
+  and 3 reads per resolved suggestion card. Typical calls stay near the
+  spec's estimate; the worst case is self-inflicted (the viewer's own
+  follows) and the stale hints that cause it are pruned on the first call.
+- **B3 cursor disclosure (accepted).** Feed and wall cursors are plain
+  `{t, id}` (spec §2.5), so a cursor that lands on a consumed-but-hidden post
+  carries that post's id and time. It can only be a post of a Page the
+  viewer follows (or followed); the likers lists keep their opaque cursors
+  because those positions are other people's uids.
+- **B2 budget unit.** §1.1 counts "30 media reservations" a day; the spec's
+  "reservations + 1" formula is read as per MEDIA ITEM (a 10-photo set
+  costs 10), not per call, so three full photo posts use the day's
+  reservations.
+- **B2 subset publish.** A media post may publish a subset of its reserved
+  set (a photo dropped after an upload failed). The unused reservations are
+  deleted with the set; an object uploaded for one is unreferenced and the
+  daily orphan sweep removes it, so the owner is not locked out for 15
+  minutes.
+- **B2 additive collections.** `pagePostCleanupJobs` (durable likes/comments
+  cleanup after a hard delete, so a crash cannot strand them) and
+  `pageMaintenanceState` (the orphan sweep's cursor) are server-only and not
+  in the spec's §1.9 table.
+- **B2 delete is rate-limited** by `pages.manage` (30/min) although it is a
+  safety action: it never reads the switch and passes muted and unverified,
+  and the cap bounds the cleanup work one caller can queue.
+- **D13 scope.** Only a NEW conversation with a non-friend is a "message
+  request" charged to `dm.pageOutbound`; messages inside an existing
+  conversation are governed by the recipient's privacy setting, which D13
+  already narrows.
+- **Unfollow reads one more document** (the caller's `pageFollowIndex`) for
+  every unfollow, Creator unfollows included; a Creator follow reads nothing
+  new.
+- **B4 link filter, narrowed.** The spec's domain pattern
+  `[\p{L}\p{N}-]{2,}\s*[.。]\s*(tld)\b` also matched every sentence
+  break followed by a TLD-like word ("itp. Co dalej?", "Loved it. Me too").
+  The implemented filter keeps the tight form and the spaced form only with
+  whitespace BEFORE the dot ("example . com", "example .com"); "example.
+  com" is an accepted bypass. It runs on the NFKC fold.
+- **B4 likes need a verified e-mail and no mute** (the Reels `setReelLike`
+  precedent); the spec lists only `canViewPage` for likes. An unlike of a
+  held edge needs neither, so no like can get stuck.
+- **B4 comment delete keeps no tombstone.** Evidence for a reported comment
+  is the report's snapshot (B5, §2.10); the comment itself is hard-deleted
+  with its counter and bell row. Account deletion and moderation removal
+  (B5) must retire the bell row the same way
+  (`retirePageCommentNotificationInTransaction`).
+- **B5 lapse notices.** No push for `pageModeration` or `pageLapse` in v1:
+  the rows carry readable English labels (old builds show them as
+  `system`), and `onNotificationCreated` skips an unknown type while keeping
+  the row. A push can be added with a title and a preference key later.
+- **B5 badge change for everyone.** The canonical VIP bit applies to every
+  account, not only Page owners: a grant in a shape the ADR-230 predicate
+  refuses stops lighting the rosette. The 2026-09-28 census found every
+  production grant canonical; the badge backfill dry run counts any flip
+  before `--apply`.
+- **B5 page_posts is not a prefix delete.** Account deletion does not add
+  `page_posts/{uid}/` to the fixed prefixes: a prefix delete cannot skip
+  held evidence. The objects are named by rows (the `content` stage turns
+  every post into jobs); anything unnamed is an orphan the daily sweep
+  removes.
+- **B5 the report budget is its own scope** (`pages.report`, 10 / 10 min),
+  like `reel.report` and `moment.report`, not one allowance shared across
+  surfaces.
+- **B5 retention.** Only an OPEN report (evidenceHold or an open count)
+  keeps a deleted account's post or holds an owner-deleted post's bytes; a
+  malformed open-report record reads as open (fail closed) and resolves to
+  zero on the next resolution (logged).
+- **Audit 2026-09-28 (security + QA review of B1-B5).**
+  - A moderator hold ends with its review: `resolve` / `dismiss` of the last
+    open report restores a held post (count 0), because the report is then
+    terminal and `restorePagePost` can no longer run.
+  - Every owner-deleted tombstone of a live account is capped at 90 days
+    (`pageEvidenceRetention` reason `ownerDelete`) and purged at the last
+    resolution; `pageEvidenceRetention` gains the `reason` value
+    `ownerDelete` (additive; server-only).
+  - Hiding arms are safety writes on a malformed visibility index.
+  - Staff open the media of a PUBLISHED post while a report on it is open.
+  - A `page` report snapshots `recentPosts` (≤ 5, text ≤ 500) into the
+    report (additive key on every Page report, `[]` for post and comment
+    reports; the query shape is account deletion's `authorPosts` index).
+  - Photos: one SOF, ≤ 8192 px a side, equal to the declared size; plain
+    object headers; no client Storage read of `page_posts/` at all (spec
+    §1.10 wins over §3.2's "uploader get").
+  - The comment bell label is "New comment on your Page post from {name ≤
+    40}".
+  - The name skeleton maps capitals before lower-casing and covers
+    Armenian, Cherokee, Lisu and the small capitals; √ and ⍻ are ticks.
+  - Accepted: the `page`-report existence oracle (SECURITY.md); a curated
+    confusable map rather than the full UTS #39 table; no mixed-script
+    refusal in v1.
+- **B5 `pageEvidenceRetention/{postId}`** and the `lapseSweep` cursor are
+  additive server-only documents not in the spec's §1.9 table.
+- Deploy and activation: [DEPLOYMENT.md](DEPLOYMENT.md#premium-pages-adr-231233--packages-b1--b2--b3--b4--b5-source-only-nothing-deployed);
+  security surface: [SECURITY.md](SECURITY.md#premium-pages-2026-09-28-adr-233-packages-b1--b2--b3--b4--b5-source-only-not-deployed).

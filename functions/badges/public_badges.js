@@ -6,10 +6,18 @@
 // authorization decisions read the authoritative role and effectiveVip(),
 // never this mirror and never an Auth claim.
 //
-// The whole schema is four fields:
+// The whole schema is five fields:
 //
 //   staffRole      one of the final staff vocabulary
-//   isVip          effectiveVip() at derivation time
+//   isVip          the paid mirror or the staff preview (effectiveVip), or
+//                  a CANONICAL vipGrant checked with its expiresAt (the
+//                  ADR-230 predicate, canonicalLikersVipGrant): the rosette
+//                  never trusts a grant shape the capability would refuse
+//                  (ADR-233 §2.8)
+//   page           "business" | "community" | null: the account runs a
+//                  visible Premium Page (ADR-233 §1.11). Presentation only:
+//                  it authorizes nothing, and every Pages callable re-reads
+//                  pages/{uid} itself
 //   schemaVersion  for future migrations of this mirror
 //   updatedAt      server time of the derivation
 //
@@ -17,9 +25,9 @@
 // private billing information), assignment reasons, audit anything.
 // Colours and labels are client concerns and live in Dart, not here.
 //
-// An ordinary account (role user, no VIP) has NO document — absence is
-// the common case, and it keeps the collection from being a mirror of the
-// entire user base.
+// An ordinary account (role user, no VIP, no visible Page) has NO document —
+// absence is the common case, and it keeps the collection from being a
+// mirror of the entire user base.
 
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { onDocumentWritten } = require("firebase-functions/v2/firestore");
@@ -29,9 +37,11 @@ const { FieldValue, Timestamp } = require("firebase-admin/firestore");
 const { STAFF_ROLES, USER_ROLES } = require("../utils/roles");
 const { isConfirmedOwner } = require("../utils/capabilities");
 const { effectiveVip } = require("../utils/entitlements");
+const { canonicalLikersVipGrant } = require("../utils/likers_access");
 const { isActiveAccountProfile } = require("../utils/premium_access");
 const { requireAuthentication } = require("../utils/auth");
 const { writeAuditLog } = require("../utils/audit");
+const { canonicalPageOrNull } = require("../pages/contract");
 const { db, normalizeText } = require("../utils/firestore");
 const {
   consumeRateLimit,
@@ -146,12 +156,45 @@ function derivePublicRole(uid, user) {
   };
 }
 
+const PAGE_BADGE_KINDS = Object.freeze(["business", "community"]);
+
+/// The Page kind a badge publishes (ADR-233 §1.11): non-null only for a
+/// canonical Page whose stored status is active or readOnly and which is
+/// neither owner-paused nor suspended. A malformed Page publishes nothing.
+/// The stored status is used (not the read-time 30-day boundary): the lapse
+/// sweep writes `hidden`, and that write re-derives the badge.
+function derivePageBadge(page) {
+  if (!page) return null;
+  if (!["active", "readOnly"].includes(page.status)) return null;
+  if (page.ownerPaused === true || page.suspended === true) return null;
+  return PAGE_BADGE_KINDS.includes(page.kind) ? page.kind : null;
+}
+
+/// The badge's VIP bit (the rosette, ADR-233 §2.8 / §4.6). The paid mirror
+/// and the staff preview come from effectiveVip exactly as before; the
+/// complimentary grant counts only when it is CANONICAL and unexpired
+/// (canonicalLikersVipGrant, the predicate the Pages capability itself
+/// uses), never through the fail-open grantIsActive. A grant that expires by
+/// time is picked up by the next derivation: a Page's lapse transition
+/// writes pages/{uid}, which re-derives the badge.
+function deriveBadgeVip({ user, grant, now }) {
+  const { vip } = effectiveVip({ user, grant: null, now });
+  return vip || canonicalLikersVipGrant(grant, now);
+}
+
 /// Derives the badge that SHOULD exist for this user, from already-loaded
 /// documents. Pure, so the whole decision is unit-testable and the
-/// backfill can reuse it byte-for-byte.
+/// backfill can reuse it byte-for-byte. `page` is the CANONICAL Page (or
+/// null); callers load it with canonicalPageOrNull.
 ///
 /// Returns null when no document should exist.
-function deriveBadge({ uid = null, user = null, grant = null, now = new Date() } = {}) {
+function deriveBadge({
+  uid = null,
+  user = null,
+  grant = null,
+  page = null,
+  now = new Date(),
+} = {}) {
   // The caller passes null when either the private profile or the Auth
   // identity is absent/inactive. In every one of those cases no public badge
   // may survive, whatever grant documents might linger.
@@ -159,13 +202,16 @@ function deriveBadge({ uid = null, user = null, grant = null, now = new Date() }
 
   const { staffRole } = derivePublicRole(uid, user);
 
-  const { vip } = effectiveVip({ user, grant, now });
+  const vip = deriveBadgeVip({ user, grant, now });
 
-  if (staffRole === USER_ROLES.USER && !vip) return null;
+  const pageKind = derivePageBadge(page);
+
+  if (staffRole === USER_ROLES.USER && !vip && pageKind === null) return null;
 
   return {
     staffRole,
     isVip: vip,
+    page: pageKind,
     schemaVersion: BADGE_SCHEMA_VERSION,
   };
 }
@@ -200,10 +246,14 @@ async function syncPublicBadgeForUser(
   const cleanUid = String(uid ?? "").trim();
   if (!cleanUid || cleanUid.includes("/")) return { outcome: "invalidUid" };
 
-  const [[userSnapshot, grantSnapshot], authUser] = await Promise.all([
+  // pages/{uid} is read HERE, in the one derivation every trigger (users,
+  // vipGrants, pages) runs, so the merge-free set() below can never drop a
+  // `page` another trigger wrote.
+  const [[userSnapshot, grantSnapshot, pageSnapshot], authUser] = await Promise.all([
     database.getAll(
       database.collection("users").doc(cleanUid),
       database.collection("vipGrants").doc(cleanUid),
+      database.collection("pages").doc(cleanUid),
     ),
     fetchAuthUser(cleanUid),
   ]);
@@ -229,6 +279,7 @@ async function syncPublicBadgeForUser(
     uid: cleanUid,
     user,
     grant: grantSnapshot.exists ? grantSnapshot.data() : null,
+    page: canonicalPageOrNull(pageSnapshot, cleanUid),
   });
 
   const ref = database.collection("publicBadges").doc(cleanUid);
@@ -245,16 +296,23 @@ async function syncPublicBadgeForUser(
   // field not in the derivation must not survive a sync. This is also
   // what heals a document that somehow acquired extra fields.
   await ref.set({ ...badge, updatedAt: FieldValue.serverTimestamp() });
-  return { outcome: "written", staffRole: badge.staffRole, isVip: badge.isVip };
+  return {
+    outcome: "written",
+    staffRole: badge.staffRole,
+    isVip: badge.isVip,
+    page: badge.page,
+  };
 }
 
 // ---------------------------------------------------------------- triggers
 //
-// Two triggers cover every path that can change what a badge derives
+// Three triggers cover every path that can change what a badge derives
 // from: users/{uid} carries the authoritative role AND premiumIdentity
 // (so role assignment, bootstrap, premium changes and account deletion
-// all land here), and vipGrants/{uid} carries the complimentary grant
-// (grant, revoke, and expiry-as-a-write).
+// all land here), vipGrants/{uid} carries the complimentary grant
+// (grant, revoke, and expiry-as-a-write), and pages/{uid} carries the
+// Premium Page state (onPageBadgeSourceChanged, defined just before the
+// batch reader).
 //
 // The one thing a write-trigger cannot see is a grant lapsing by pure
 // passage of time. Every grant that exists today is non-expiring
@@ -289,12 +347,39 @@ const onVipGrantChanged = onDocumentWritten(
   },
 );
 
+// The Premium Pages source (ADR-233 §1.11). A Page write re-derives the
+// badge ONLY when something the badge shows can change: existence, kind,
+// stored status, ownerPaused or suspended. Counter, name-mirror and profile
+// edits (postCount, lastPostAt, listed, description, ...) return early, so a
+// publishing Page does not rewrite its badge on every post.
+function pageBadgeSourceChanged(before, after) {
+  const beforeData = before?.exists ? (before.data() ?? {}) : null;
+  const afterData = after?.exists ? (after.data() ?? {}) : null;
+  if ((beforeData === null) !== (afterData === null)) return true;
+  if (beforeData === null) return false;
+  return ["kind", "status", "ownerPaused", "suspended"].some(
+    (key) => beforeData[key] !== afterData[key],
+  );
+}
+
+const onPageBadgeSourceChanged = onDocumentWritten(
+  {
+    document: "pages/{uid}",
+    region: "europe-west1",
+    secrets: ["YOVOICE_PROTECTED_OWNER_UID"],
+  },
+  async (event) => {
+    if (!pageBadgeSourceChanged(event.data?.before, event.data?.after)) return;
+    await syncPublicBadgeForUser(event.params.uid);
+  },
+);
+
 // ---------------------------------------------------------------- batch read
 //
 // Chat surfaces resolve the badges for a screenful of messages in ONE
 // call instead of a get per sender — the N+1 this endpoint exists to
 // prevent. Bounded, deduplicated, authenticated, and it returns only the
-// four public fields whatever the stored document contains.
+// five public fields whatever the stored document contains.
 
 const getPublicBadges = onCall(
   {
@@ -357,6 +442,7 @@ const getPublicBadges = onCall(
     badges[uid] = {
       staffRole,
       isVip: data.isVip === true,
+      page: PAGE_BADGE_KINDS.includes(data.page) ? data.page : null,
       schemaVersion: Number(data.schemaVersion ?? BADGE_SCHEMA_VERSION),
       updatedAt:
         typeof data.updatedAt?.toDate === "function"
@@ -374,12 +460,17 @@ module.exports = {
   BADGE_CACHE_TTL_MS,
   BADGE_RATE_LIMITS,
   MAX_BATCH_UIDS,
+  PAGE_BADGE_KINDS,
   clearPublicBadgeCacheForTests,
   deriveBadge,
+  deriveBadgeVip,
+  derivePageBadge,
   derivePublicRole,
+  pageBadgeSourceChanged,
   fetchAuthUserOrNull,
   syncPublicBadgeForUser,
   onUserBadgeSourceChanged,
   onVipGrantChanged,
+  onPageBadgeSourceChanged,
   getPublicBadges,
 };

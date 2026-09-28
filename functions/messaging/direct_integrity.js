@@ -1,3 +1,5 @@
+const { HttpsError } = require("firebase-functions/v2/https");
+
 const {
   SAFE_ID,
   activeProfile,
@@ -52,6 +54,9 @@ const DEFAULT_LIMITS = Object.freeze({
   delete: { maxEvents: 20, windowMs: 60_000 },
   conversationDelete: { maxEvents: 10, windowMs: 60_000 },
   preference: { maxEvents: 60, windowMs: 60_000 },
+  // Premium Pages D13: new conversations a Page account starts with
+  // non-friends (scope dm.pageOutbound, ADR-233 §2.9).
+  pageOutbound: { maxEvents: 10, windowMs: 24 * 60 * 60_000 },
   premiumPrivacy: { maxEvents: 20, windowMs: 60_000 },
   reaction: { maxEvents: 60, windowMs: 60_000 },
   read: { maxEvents: 120, windowMs: 60_000 },
@@ -90,6 +95,7 @@ const DIRECT_MEDIA_TYPES = Object.freeze({
     minBytes: 1024,
   }),
 });
+const PAGE_OUTBOUND_SCOPE = "dm.pageOutbound";
 const DIRECT_MESSAGE_PRIVACY = Object.freeze({
   everyone: "everyone",
   peopleYouFollow: "peopleYouFollow",
@@ -132,6 +138,16 @@ function exactFriendshipGuard(snapshot, ownerId, friendId) {
     data.schemaVersion === 1 && timestampMillis(data.establishedAt) !== null;
 }
 
+function directMessageFriends(actorFriendGuard, recipientFriendGuard, actorId, recipientId) {
+  return exactFriendshipGuard(actorFriendGuard, actorId, recipientId) &&
+    exactFriendshipGuard(recipientFriendGuard, recipientId, actorId);
+}
+
+// Premium Pages D13 (ADR-233 §2.3): following a Page is choosing what to
+// READ, not who may message you. Under "People you follow" a follow edge to
+// an account that has a pages/{uid} document (in ANY state: paused, lapsed,
+// hidden, suspended, even malformed) does not count. Existence only, so a
+// broken Page document fails closed.
 function assertDirectMessagePrivacy({
   actorId,
   recipientId,
@@ -139,28 +155,54 @@ function assertDirectMessagePrivacy({
   recipientFollowsActor,
   actorFriendGuard,
   recipientFriendGuard,
+  actorPage,
 }) {
   const privacy = directMessagePrivacy(recipientProfile);
+  const actorIsPage = actorPage?.exists === true;
   const allowed = privacy === DIRECT_MESSAGE_PRIVACY.everyone ||
-    (privacy === DIRECT_MESSAGE_PRIVACY.peopleYouFollow &&
+    (privacy === DIRECT_MESSAGE_PRIVACY.peopleYouFollow && !actorIsPage &&
       exactFollowingEdge(recipientFollowsActor, actorId)) ||
     (privacy === DIRECT_MESSAGE_PRIVACY.friends &&
-      exactFriendshipGuard(actorFriendGuard, actorId, recipientId) &&
-      exactFriendshipGuard(recipientFriendGuard, recipientId, actorId));
+      directMessageFriends(actorFriendGuard, recipientFriendGuard, actorId, recipientId));
   if (!allowed) {
     fail(
       "permission-denied",
       "This person is not accepting direct messages from you.",
     );
   }
-  return { actorId, recipientId, privacy };
+  return {
+    actorId,
+    recipientId,
+    privacy,
+    actorIsPage,
+    friends: directMessageFriends(actorFriendGuard, recipientFriendGuard, actorId, recipientId),
+  };
 }
+
+/// The boolean form, for read paths that only DISPLAY the decision
+/// (getPageV1's viewer.canMessage). A malformed privacy value is "no".
+function directMessagePrivacyAllows(input) {
+  try {
+    assertDirectMessagePrivacy(input);
+    return true;
+  } catch (error) {
+    if (error instanceof HttpsError) return false;
+    throw error;
+  }
+}
+
+// Four references, in this order: the recipient's follow edge to the actor,
+// both friendship guards, and the actor's pages/{uid} (D13). Every call site
+// spreads them and reads them back at DIRECT_MESSAGE_PRIVACY_REFERENCE_COUNT
+// consecutive offsets.
+const DIRECT_MESSAGE_PRIVACY_REFERENCE_COUNT = 4;
 
 function directMessagePrivacyReferences(db, actorId, recipientId) {
   return [
     db.doc(`users/${recipientId}/following/${actorId}`),
     db.doc(`friendshipGuards/${actorId}/friends/${recipientId}`),
     db.doc(`friendshipGuards/${recipientId}/friends/${actorId}`),
+    db.doc(`pages/${actorId}`),
   ];
 }
 
@@ -178,6 +220,7 @@ function assertDirectMessagePrivacyFromRelated({
     recipientFollowsActor: related[offset],
     actorFriendGuard: related[offset + 1],
     recipientFriendGuard: related[offset + 2],
+    actorPage: related[offset + 3],
   });
 }
 
@@ -974,6 +1017,7 @@ function createDirectMessagingService({
         targetFollowsActor,
         actorFriendGuard,
         targetFriendGuard,
+        actorPage,
       ] = await transactionGetAll(
         transaction,
         ledgerRef,
@@ -1004,13 +1048,14 @@ function createDirectMessagingService({
       assertNotRestricted(actorRestriction, "Your", timing.nowMs);
       assertNotRestricted(targetRestriction, "The selected", timing.nowMs);
       assertNotBlocked(actorBlock, targetBlock);
-      assertDirectMessagePrivacy({
+      const privacy = assertDirectMessagePrivacy({
         actorId: auth.uid,
         recipientId: targetUserId,
         recipientProfile: targetProfileSnapshot,
         recipientFollowsActor: targetFollowsActor,
         actorFriendGuard,
         recipientFriendGuard: targetFriendGuard,
+        actorPage,
       });
       let conversationId = defaultConversationId;
       let conversation = defaultConversation;
@@ -1021,6 +1066,22 @@ function createDirectMessagingService({
       const conversationRef = db.doc(`conversations/${conversationId}`);
       if (conversationId !== defaultConversationId) {
         conversation = await transaction.get(conversationRef);
+      }
+      // Premium Pages D13 (ADR-233 §2.3): an account with a pages/{uid}
+      // document may START at most 10 conversations with non-friends per
+      // 24 h. Reopening an existing conversation is free; so is a friend.
+      if (!conversation.exists && privacy.actorIsPage && !privacy.friends) {
+        const outboundRef = rateLimitReference(db, PAGE_OUTBOUND_SCOPE, auth.uid);
+        const outbound = await transaction.get(outboundRef);
+        const config = limits.pageOutbound;
+        if (!config) throw new TypeError("Missing dm.pageOutbound rate limit.");
+        consumeRateLimit(transaction, outbound, {
+          reference: outboundRef,
+          scope: PAGE_OUTBOUND_SCOPE,
+          uid: auth.uid,
+          ...timing,
+          ...config,
+        });
       }
       consume(transaction, rate, rateRef, "open", auth.uid, timing);
 
@@ -1169,18 +1230,20 @@ function createDirectMessagingService({
       const related = await transactionGetAll(transaction, ...refs);
       const [actorProfile, recipientProfile, actorRestriction,
         recipientRestriction, actorBlock, recipientBlock, pairGuard,
-        recipientFollowsActor, actorFriendGuard, recipientFriendGuard] = related;
+        recipientFollowsActor, actorFriendGuard, recipientFriendGuard,
+        actorPage] = related;
+      const afterPrivacy = 7 + DIRECT_MESSAGE_PRIVACY_REFERENCE_COUNT;
       const actorUnreadState = privateUnreadState(
-        related[10],
+        related[afterPrivacy],
         auth.uid,
         conversationId,
       );
       const recipientUnreadState = privateUnreadState(
-        related[11],
+        related[afterPrivacy + 1],
         recipientId,
         conversationId,
       );
-      const replySnapshot = replyToMessageId ? related[12] : undefined;
+      const replySnapshot = replyToMessageId ? related[afterPrivacy + 2] : undefined;
       const context = validateConversation(
         conversation,
         conversationId,
@@ -1200,6 +1263,7 @@ function createDirectMessagingService({
         recipientFollowsActor,
         actorFriendGuard,
         recipientFriendGuard,
+        actorPage,
       });
       if (existingMessage.exists) {
         fail("data-loss", "A message exists without its idempotency ledger.");
@@ -1762,12 +1826,12 @@ function createDirectMessagingService({
         offset: 7,
       });
       const actorUnreadState = privateUnreadState(
-        related[10],
+        related[7 + DIRECT_MESSAGE_PRIVACY_REFERENCE_COUNT],
         auth.uid,
         conversationId,
       );
       const recipientUnreadState = privateUnreadState(
-        related[11],
+        related[8 + DIRECT_MESSAGE_PRIVACY_REFERENCE_COUNT],
         recipientId,
         conversationId,
       );
@@ -2955,13 +3019,17 @@ module.exports = {
   DIRECT_MEDIA_MAX_SECONDS,
   // Server channel photo/video messages reuse the image and video bounds.
   DIRECT_MEDIA_TYPES,
+  DIRECT_MESSAGE_PRIVACY_REFERENCE_COUNT,
   DIRECT_MESSAGE_TYPES,
+  PAGE_OUTBOUND_SCOPE,
   canonicalConversationId,
   canonicalPairKey,
   createDirectMessagingService,
   directMediaMessageId,
   directMediaStoragePath,
   directMessagePreview,
+  directMessagePrivacyAllows,
+  directMessagePrivacyReferences,
   validateStoredDirectMedia,
   validateDirectMediaProbe,
   validateConversation,

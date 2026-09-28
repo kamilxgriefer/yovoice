@@ -308,4 +308,42 @@ describe("server-authoritative achievement bindings", () => {
     });
     assert.equal(rollback.outcome, "skipped:invalid-social-revision");
   });
+  test("a Page account's follower count is never an achievement source", async () => {
+    const counters = (friendRevision, followerRevision) => snapshot({
+      friendCount: 1,
+      followerCount: 40,
+      friendAchievementRevision: friendRevision,
+      followerAchievementRevision: followerRevision,
+    }, { updateTime: AT });
+    const recorded = runtimeRecorder();
+    const pageAccount = createAchievementSourceHandlers({
+      reader: new FakeReader({ "pages/user-1": { schemaVersion: 1, ownerPaused: true } }),
+      runtimeProvider: () => recorded.runtime,
+    });
+    const followersOnly = await pageAccount.onUserSocialCountersChanged({
+      params: { userId: "user-1" },
+      data: { before: counters(4, 7), after: counters(4, 8) },
+    });
+    assert.equal(followersOnly.outcome, "skipped:page-account-followers");
+    assert.equal(recorded.sources.length, 0);
+    // The friends metric of the same account still counts.
+    const both = await pageAccount.onUserSocialCountersChanged({
+      params: { userId: "user-1" },
+      data: { before: counters(4, 8), after: counters(5, 9) },
+    });
+    assert.equal(both.outcome, "processed");
+    assert.deepEqual(recorded.sources.map((entry) => entry.source.metric), ["friends"]);
+
+    // Control: without a pages document the followers metric is recorded.
+    const control = runtimeRecorder();
+    const ordinary = createAchievementSourceHandlers({
+      reader: new FakeReader(),
+      runtimeProvider: () => control.runtime,
+    });
+    await ordinary.onUserSocialCountersChanged({
+      params: { userId: "user-1" },
+      data: { before: counters(4, 7), after: counters(4, 8) },
+    });
+    assert.deepEqual(control.sources.map((entry) => entry.source.metric), ["followers"]);
+  });
 });

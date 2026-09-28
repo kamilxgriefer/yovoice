@@ -439,12 +439,94 @@ exports.listReportAuditTrail = listReportAuditTrail;
 const {
   onUserBadgeSourceChanged,
   onVipGrantChanged,
+  onPageBadgeSourceChanged,
   getPublicBadges,
 } = require("./badges/public_badges");
 
 exports.onUserBadgeSourceChanged = onUserBadgeSourceChanged;
 exports.onVipGrantChanged = onVipGrantChanged;
+// Premium Pages (ADR-233 §1.11): publicBadges.page follows pages/{uid}.
+exports.onPageBadgeSourceChanged = onPageBadgeSourceChanged;
 exports.getPublicBadges = getPublicBadges;
+
+/*
+|--------------------------------------------------------------------------
+| Premium Pages (ADR-231..233)
+|--------------------------------------------------------------------------
+*/
+
+// Every non-safety Pages path answers `pagesNotEnabled` until an operator
+// writes appConfig/pagesV1 (fail closed). Only canonical-grant VIPs can run
+// a Page: paid Premium is off in code (pages/access.js,
+// PAGES_ALLOW_PAID_SOURCE). No Pages export keeps a warm instance or is a
+// keep-warm target.
+const { managePageV1 } = require("./pages/lifecycle");
+const {
+  findPagesV1,
+  getPagePostV1,
+  getPageV1,
+  getPagesFeedV1,
+} = require("./pages/reads");
+
+exports.managePageV1 = managePageV1;
+// Reads (package B3): the Treści feed, a Page's profile + wall, one post with
+// its comments, and Find Pages (suggest / search / the followed-Pages panel).
+exports.getPagesFeedV1 = getPagesFeedV1;
+exports.getPageV1 = getPageV1;
+exports.getPagePostV1 = getPagePostV1;
+exports.findPagesV1 = findPagesV1;
+
+// Posts (package B2): reserve media (server-allocated ids, the daily budget
+// charged at reserve, one lease per owner), publish (trusted probe, photo
+// metadata refused, one transaction), manage (delete is a safety action;
+// pin, unpin, comments on/off), 90-second media grants (viewer and audited
+// staff branches), and the one scheduled worker (reservation expiry, media
+// deletion jobs, post cleanup, the daily orphan sweep). Storage and the probe
+// are resolved lazily: none of this loads @google-cloud/storage at a cold
+// start.
+const {
+  managePagePostV1,
+  publishPagePostV1,
+  reservePagePostMediaV1,
+} = require("./pages/posts");
+const { getPagePostMediaAccessV1 } = require("./pages/media_access");
+const { pagesMaintenance } = require("./pages/maintenance");
+
+exports.reservePagePostMediaV1 = reservePagePostMediaV1;
+exports.publishPagePostV1 = publishPagePostV1;
+exports.managePagePostV1 = managePagePostV1;
+exports.getPagePostMediaAccessV1 = getPagePostMediaAccessV1;
+exports.pagesMaintenance = pagesMaintenance;
+
+// Engagement (package B4): like, unlike, comment (link filter, Firebase Auth
+// account age for the new-account limit, the owner's pagePostComment bell
+// row in the same transaction) and deleteComment (a safety action), plus the
+// ADR-230 "See who liked" list on a Page post (behind appConfig/likersV1 AND
+// appConfig/pagesV1).
+const {
+  listPagePostLikersV1,
+  pagePostEngagementV1,
+} = require("./pages/engagement");
+
+exports.pagePostEngagementV1 = pagePostEngagementV1;
+exports.listPagePostLikersV1 = listPagePostLikersV1;
+
+// Lapse, reports and moderation (package B5): reporting a Page, a post or a
+// comment (a safety action: no switch read, no audience check, unverified
+// and muted callers allowed; the snapshot and the evidence hold in one
+// transaction), and the two capability triggers that re-derive a Page's
+// lapse state the moment its owner's entitlement or VIP grant changes (the
+// hourly pagesMaintenance slice is the backstop). The moderateReport arms
+// live in moderation/reports.js; account deletion in account/stages.js.
+const { createPageReportV1 } = require("./pages/reports");
+const {
+  onPageCapabilityEntitlementChanged,
+  onPageCapabilityGrantChanged,
+} = require("./pages/lapse_service");
+
+exports.createPageReportV1 = createPageReportV1;
+exports.onPageCapabilityEntitlementChanged = onPageCapabilityEntitlementChanged;
+exports.onPageCapabilityGrantChanged = onPageCapabilityGrantChanged;
 
 const { getMyStaffCapabilities } = require("./staff/capabilities");
 

@@ -53,6 +53,8 @@ const LIKERS_TARGET_TYPES = Object.freeze([
   "reel",
   "reelComment",
   "serverMessage",
+  // ADR-233 §2.6: a Premium Page post (content likes, opaque cursor).
+  "pagePost",
 ]);
 const TARGET_KEY = /^[a-f0-9]{64}$/u;
 const MAX_POSITION_ID_LENGTH = 1500;

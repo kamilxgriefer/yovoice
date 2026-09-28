@@ -34,6 +34,7 @@ const {
   requireRequestId,
 } = require("../integrity/guards");
 const { normalizeProfileVisibility } = require("./profile_visibility");
+const { PAGE_ERRORS } = require("../pages/contract");
 const {
   cleanupPremiumMessagingPrivacyForDeletedUser,
 } = require("../messaging/privacy_cleanup");
@@ -1060,18 +1061,24 @@ async function setCreatorAudienceEnabledHandler(
   const profileRef = database.collection("publicProfiles").doc(auth.uid);
   const ledgerRef = database.collection("integrityOperationLedgers").doc(identity.id);
   const rateRef = rateLimitReference(database, CREATOR_AUDIENCE_RATE_SCOPE, auth.uid);
+  // Premium Pages (ADR-233 §2.2): a Page's followers are Page followers, and
+  // a Creator audience would make every one of their edges publicly listable
+  // (firestore.rules canReadCreatorAudienceEdges). Enabling is refused while
+  // pages/{uid} exists, in any state; disabling is never affected.
+  const pageRef = database.collection("pages").doc(auth.uid);
   const nowMs = timestampMillis(now, null);
   if (!Number.isSafeInteger(nowMs) || nowMs < 0) {
     throw new TypeError("now must be a Firestore Timestamp.");
   }
   return database.runTransaction(async (transaction) => {
     const [userSnapshot, entitlementSnapshot, profileSnapshot, ledgerSnapshot,
-      rateSnapshot] = await transaction.getAll(
+      rateSnapshot, pageSnapshot] = await transaction.getAll(
       userRef,
       entitlementRef,
       profileRef,
       ledgerRef,
       rateRef,
+      ...(enabled ? [pageRef] : []),
     );
     const source = userSnapshot.exists ? (userSnapshot.data() ?? {}) : null;
     if (!isActiveAccountProfile(source)) {
@@ -1087,6 +1094,9 @@ async function setCreatorAudienceEnabledHandler(
         "failed-precondition",
         "Creator audience is unavailable for this account.",
       );
+    }
+    if (enabled && pageSnapshot?.exists) {
+      throw PAGE_ERRORS.creatorAudienceBlocked();
     }
     const prior = assertLedgerReplay(ledgerSnapshot, {
       kind: "profile.creator.audience.v1",

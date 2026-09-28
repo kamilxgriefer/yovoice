@@ -47,6 +47,13 @@ const {
 } = require("../scripts/backfill_badges");
 
 const { setProtectedOwnerUidForTests } = require("../utils/roles");
+const {
+  PAGE_BADGE_KINDS,
+  derivePageBadge,
+  pageBadgeSourceChanged,
+} = require("../badges/public_badges");
+const { Timestamp } = require("firebase-admin/firestore");
+const { pageDoc } = require("./helpers/pages_fixture");
 
 const db = getFirestore();
 const runBatch = getPublicBadges.run ?? getPublicBadges;
@@ -66,6 +73,8 @@ const NON_OWNER_VOCAB = [
 
 const FIXTURES = [
   `${P}plain`,
+  `${P}page-owner`,
+  `${P}page-vip`,
   `${P}vip-sub`,
   `${P}vip-grant`,
   `${P}staff-vip`,
@@ -105,6 +114,7 @@ async function wipeOwn() {
       db.collection("users").doc(uid).delete(),
       db.collection("vipGrants").doc(uid).delete(),
       db.collection("publicBadges").doc(uid).delete(),
+      db.collection("pages").doc(uid).delete(),
     ]),
     ...rateLimits.docs
       .filter((document) =>
@@ -129,9 +139,11 @@ describe("derivation", () => {
       const badge = deriveBadge({ uid: `${P}${role}`, user: { role } });
       assert.deepEqual(Object.keys(badge).sort(), [
         "isVip",
+        "page",
         "schemaVersion",
         "staffRole",
       ]);
+      assert.equal(badge.page, null);
       assert.equal(badge.staffRole, role);
       assert.equal(
         badge.isVip,
@@ -199,11 +211,33 @@ describe("derivation", () => {
   test("a complimentary grant confers the badge VIP without exposing why", () => {
     const badge = deriveBadge({
       user: { role: "user" },
-      grant: { source: "adminGrant", expiresAt: null },
+      grant: { source: "admin", expiresAt: null, revoked: false },
     });
     assert.equal(badge.isVip, true);
     // The SOURCE never reaches the mirror.
     assert.equal("source" in badge, false);
+  });
+
+  // ADR-233 §2.8: the rosette trusts only a CANONICAL grant (the ADR-230
+  // predicate the Pages capability uses), checked with its expiresAt; the
+  // fail-open grantIsActive shapes no longer light it. Paid and the staff
+  // preview are unchanged.
+  test("the badge VIP bit needs a canonical, unexpired grant", () => {
+    const now = new Date(1_900_000_000_000);
+    const vip = (grant) => deriveBadge({ user: { role: "user" }, grant, now })?.isVip === true;
+    assert.equal(vip({ source: "testerProgram", expiresAt: null, revoked: false, note: "tester" }), true);
+    assert.equal(vip({ source: "legacyRoleMigration", expiresAt: null, revoked: false }), true);
+    assert.equal(vip({ expiresAt: null }), false, "no source, no revoked flag");
+    assert.equal(vip({}), false);
+    assert.equal(vip({ source: "admin", expiresAt: null, revoked: "false" }), false);
+    assert.equal(vip({ source: "admin", expiresAt: null, revoked: false, extra: 1 }), false);
+    assert.equal(vip({ source: "admin", revoked: false,
+      expiresAt: Timestamp.fromMillis(now.getTime() - 1) }), false, "expired by time");
+    assert.equal(vip({ source: "admin", revoked: false,
+      expiresAt: Timestamp.fromMillis(now.getTime() + 1) }), true);
+    assert.equal(vip({ source: "admin", revoked: false, expiresAt: "2999-01-01" }), false);
+    // The other two sources are untouched.
+    assert.equal(deriveBadge({ user: { role: "user", premiumIdentity: true }, now }).isVip, true);
   });
 
   test("an unknown role is published as user, never repeated verbatim", () => {
@@ -259,6 +293,7 @@ describe("sync", () => {
     assert.equal(doc.data().staffRole, "moderator");
     assert.deepEqual(Object.keys(doc.data()).sort(), [
       "isVip",
+      "page",
       "schemaVersion",
       "staffRole",
       "updatedAt",
@@ -448,10 +483,12 @@ describe("getPublicBadges", () => {
     for (const badge of Object.values(result.badges)) {
       assert.deepEqual(Object.keys(badge).sort(), [
         "isVip",
+        "page",
         "schemaVersion",
         "staffRole",
         "updatedAt",
       ]);
+      assert.equal(badge.page, null);
     }
     assert.equal(result.badges[staffUid].staffRole, "superModerator");
     assert.equal(result.badges[staffUid].isVip, true);
@@ -583,7 +620,8 @@ describe("backfill", () => {
         .collection("users")
         .doc(OWNER_UID)
         .set({ role: "superAdmin", premiumIdentity: true }),
-      db.collection("vipGrants").doc(`${P}vip-grant`).set({ expiresAt: null }),
+      db.collection("vipGrants").doc(`${P}vip-grant`)
+        .set({ source: "admin", expiresAt: null, revoked: false }),
       db.collection("users").doc(`${P}vip-grant`).set({ role: "user" }),
       // A badge whose user is gone: must be swept.
       db
@@ -769,5 +807,171 @@ describe("backfill", () => {
       }
       setProtectedOwnerUidForTests(OWNER_UID);
     }
+  });
+});
+
+// ------------------------------------------------------------ Premium Pages
+//
+// publicBadges.page (ADR-233 §1.11): presentation only, derived in the ONE
+// sync every trigger runs, so a users or vipGrants write can never drop it.
+
+describe("page", () => {
+  const NOW_MS = 1_900_000_000_000;
+  const lapsedAt = Timestamp.fromMillis(NOW_MS - 1_000);
+
+  test("the page truth table", () => {
+    const base = pageDoc("owner", NOW_MS);
+    const rows = [
+      [base, "business"],
+      [{ ...base, kind: "community", category: "fan_club", business: null,
+        community: { rules: null, linkedServerId: null } }, "community"],
+      [{ ...base, status: "readOnly", lapsedAt }, "business"],
+      [{ ...base, status: "hidden", lapsedAt }, null],
+      [{ ...base, ownerPaused: true }, null],
+      [{ ...base, suspended: true, suspendedAt: lapsedAt, suspensionReason: "spam" }, null],
+      [null, null],
+    ];
+    for (const [page, expected] of rows) {
+      assert.equal(derivePageBadge(page), expected, JSON.stringify(page?.status));
+    }
+    assert.deepEqual([...PAGE_BADGE_KINDS], ["business", "community"]);
+  });
+
+  test("an ordinary account running a visible Page gets a badge with only `page`", () => {
+    const badge = deriveBadge({
+      uid: `${P}page-owner`,
+      user: { role: "user" },
+      page: pageDoc(`${P}page-owner`, NOW_MS),
+    });
+    assert.deepEqual(badge, {
+      staffRole: "user",
+      isVip: false,
+      page: "business",
+      schemaVersion: 1,
+    });
+    assert.equal(deriveBadge({
+      uid: `${P}page-owner`,
+      user: { role: "user" },
+      page: { ...pageDoc(`${P}page-owner`, NOW_MS), ownerPaused: true },
+    }), null);
+    // An inactive account publishes nothing, Page or not.
+    assert.equal(deriveBadge({
+      user: { role: "user", banned: true },
+      page: pageDoc("x", NOW_MS),
+    }), null);
+  });
+
+  test("sync reads pages/{uid}; a users write after a pages write keeps `page`", async () => {
+    const uid = `${P}page-vip`;
+    await db.collection("users").doc(uid).set({ role: "user" });
+    await db.collection("vipGrants").doc(uid).set({ source: "admin", expiresAt: null, revoked: false });
+    await db.collection("pages").doc(uid).set(pageDoc(uid, NOW_MS));
+
+    let result = await syncPublicBadgeForUser(uid);
+    assert.equal(result.page, "business");
+    // The users trigger runs the same derivation: page survives.
+    await db.collection("users").doc(uid).set({ role: "user", bio: "changed" });
+    result = await syncPublicBadgeForUser(uid);
+    assert.equal(result.page, "business");
+    let stored = (await db.collection("publicBadges").doc(uid).get()).data();
+    assert.equal(stored.page, "business");
+    assert.equal(stored.isVip, true);
+
+    // Revoking the grant leaves the Page badge (readOnly is still visible).
+    await db.collection("vipGrants").doc(uid).delete();
+    await db.collection("pages").doc(uid).set({
+      ...pageDoc(uid, NOW_MS),
+      status: "readOnly",
+      lapsedAt,
+    });
+    await syncPublicBadgeForUser(uid);
+    stored = (await db.collection("publicBadges").doc(uid).get()).data();
+    assert.equal(stored.page, "business");
+    assert.equal(stored.isVip, false);
+
+    // A paused Page with no other badge source removes the document.
+    await db.collection("pages").doc(uid).set({
+      ...pageDoc(uid, NOW_MS),
+      status: "readOnly",
+      lapsedAt,
+      ownerPaused: true,
+    });
+    result = await syncPublicBadgeForUser(uid);
+    assert.equal(result.outcome, "removed");
+
+    // A malformed Page publishes no page.
+    await db.collection("vipGrants").doc(uid).set({ source: "admin", expiresAt: null, revoked: false });
+    await db.collection("pages").doc(uid).set({ ...pageDoc(uid, NOW_MS), extra: true });
+    result = await syncPublicBadgeForUser(uid);
+    assert.equal(result.page, null);
+  });
+
+  test("the pages trigger returns early unless a badge input changed", () => {
+    const snap = (data) => ({ exists: data !== null, data: () => data });
+    const base = pageDoc("owner", NOW_MS);
+    assert.equal(pageBadgeSourceChanged(snap(null), snap(base)), true);
+    assert.equal(pageBadgeSourceChanged(snap(base), snap(null)), true);
+    assert.equal(pageBadgeSourceChanged(snap(null), snap(null)), false);
+    for (const counterOnly of [
+      { postCount: 3, listed: true, lastPostAt: lapsedAt },
+      { description: "new" },
+      { displayName: "Renamed", nameSearch: "renamed", nameChangedAt: lapsedAt },
+      { updatedAt: lapsedAt, pinnedPostId: null },
+    ]) {
+      assert.equal(pageBadgeSourceChanged(snap(base), snap({ ...base, ...counterOnly })), false,
+        JSON.stringify(Object.keys(counterOnly)));
+    }
+    for (const change of [
+      { status: "readOnly", lapsedAt },
+      { ownerPaused: true },
+      { suspended: true },
+      { kind: "community" },
+    ]) {
+      assert.equal(pageBadgeSourceChanged(snap(base), snap({ ...base, ...change })), true,
+        JSON.stringify(change));
+    }
+  });
+
+  test("the batch reader passes a valid `page` and drops anything else", async () => {
+    const good = `${P}page-owner`;
+    const bad = `${P}page-vip`;
+    await db.collection("publicBadges").doc(good).set({
+      staffRole: "user", isVip: false, page: "community", schemaVersion: 1,
+    });
+    await db.collection("publicBadges").doc(bad).set({
+      staffRole: "user", isVip: true, page: "server", schemaVersion: 1,
+    });
+    const result = await runBatch({ ...caller(`${P}page-reader`), data: { uids: [good, bad] } });
+    assert.equal(result.badges[good].page, "community");
+    assert.equal(result.badges[bad].page, null);
+  });
+
+  test("backfill plans `page`, counts page-only badges and treats a missing key as an update", async () => {
+    const pageOwner = `${P}page-owner`;
+    const vip = `${P}page-vip`;
+    await Promise.all([
+      db.collection("users").doc(pageOwner).set({ role: "user" }),
+      db.collection("pages").doc(pageOwner).set(pageDoc(pageOwner, NOW_MS)),
+      db.collection("users").doc(vip).set({ role: "user", premiumIdentity: true }),
+      // A badge written before `page` existed.
+      db.collection("publicBadges").doc(vip).set({
+        staffRole: "user", isVip: true, schemaVersion: 1,
+      }),
+    ]);
+    const args = { apply: false, project: EXPECTED_PROJECT, batchSize: 50 };
+    const dry = await backfill({ db, args, uidPrefix: `${P}page-` });
+    assert.equal(dry.pageOnlyBadges, 1);
+    assert.equal(dry.pageBadges, 1);
+    assert.equal(dry.vipOnlyBadges, 1);
+    assert.equal(dry.toCreate, 1);
+    assert.equal(dry.toUpdate, 1);
+    assert.equal(dry.conflicts, 0);
+
+    const applied = await backfill({ db, args: { ...args, apply: true }, uidPrefix: `${P}page-` });
+    assert.equal(applied.appliedWrites, 2);
+    assert.equal((await db.collection("publicBadges").doc(pageOwner).get()).data().page, "business");
+    assert.equal((await db.collection("publicBadges").doc(vip).get()).data().page, null);
+    const again = await backfill({ db, args, uidPrefix: `${P}page-` });
+    assert.equal(again.upToDate, 2);
   });
 });

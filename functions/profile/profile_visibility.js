@@ -2,6 +2,12 @@ const { Timestamp } = require("firebase-admin/firestore");
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 
 const { consumeRateLimit, rateLimitReference } = require("../integrity/guards");
+const {
+  applyPagePauseInTransaction,
+  pageForSafetyAction,
+  pageReference,
+  pageVisibilityReference,
+} = require("../pages/hooks");
 const { requireAuthentication } = require("../utils/auth");
 const { db } = require("../utils/firestore");
 
@@ -97,14 +103,27 @@ function createProfileVisibilityService({
       });
     });
 
+    const pageRef = pageReference(firestore, auth.uid);
     return firestore.runTransaction(async (transaction) => {
-      const [profileSnapshot, showcaseSnapshot, showcaseControlSnapshot] =
-        await transaction.getAll(
+      const [profileSnapshot, showcaseSnapshot, showcaseControlSnapshot,
+        pageSnapshot] = await transaction.getAll(
         profileRef,
         showcaseRef,
         showcaseControlRef,
+        pageRef,
       );
       const profile = activeProfile(profileSnapshot);
+      // Premium Pages (ADR-233 §2.2, D5): a running Page needs a public
+      // profile. Leaving "public" PAUSES the Page in this same transaction;
+      // it never refuses, because going private is a safety action. The
+      // visibility index is read only when a pause will actually be written,
+      // and before any write (Firestore transactions read first).
+      const page = visibility === "public"
+        ? null
+        : pageForSafetyAction(pageSnapshot, auth.uid);
+      const pageVisibilitySnapshot = page !== null && page.ownerPaused !== true
+        ? await transaction.get(pageVisibilityReference(firestore))
+        : null;
       const current = normalizeProfileVisibility(profile.profileVisibility);
       const changed = current !== visibility ||
         profile.profileVisibility !== visibility;
@@ -150,6 +169,18 @@ function createProfileVisibilityService({
         });
       }
 
+      if (pageVisibilitySnapshot !== null) {
+        applyPagePauseInTransaction(transaction, {
+          db: firestore,
+          uid: auth.uid,
+          page,
+          visibilitySnapshot: pageVisibilitySnapshot,
+          now,
+        });
+      }
+
+      // The response keeps its exact two keys (installed clients parse it
+      // strictly); the owner learns about the pause from pages/{uid}.
       return { visibility, changed };
     });
   }

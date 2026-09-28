@@ -265,6 +265,9 @@ const PUSH_TITLES = {
   momentComment: (actor) => `${actor} commented on your Moment`,
   reelComment: (actor) => `${actor} commented on your Yeel`,
   commentMention: (actor) => `${actor} mentioned you in a comment`,
+  // Premium Pages (ADR-233 §2.6): only the Page owner is notified, and only
+  // of comments (D9). The comment's words stay out of the push.
+  pagePostComment: (actor) => `${actor} commented on your Page post`,
   serverEventReminder: (_actor, label) =>
     label ? `Starting soon: ${label}` : "An event is starting soon",
   serverRole: (actor, label) =>
@@ -274,6 +277,21 @@ const PUSH_TITLES = {
   moderation: (_actor, label) => label || "A moderator took action on your account",
   system: (_actor, label) => label || "YoVoice",
 };
+
+// The preference keys that silence a type's push. Every type is governed by
+// its own key; a type added after the preferences screen shipped is ALSO
+// governed by the existing switch it belongs to, so installed clients keep
+// control without an update. `pagePostComment` belongs to "Comments and
+// mentions", which every client writes under `momentComment` (the row's
+// anchor type; newer clients write reelComment and commentMention with it).
+const PUSH_PREFERENCE_KEYS = Object.freeze({
+  pagePostComment: Object.freeze(["momentComment", "pagePostComment"]),
+});
+
+function pushPreferenceDisabled(preferences, type) {
+  const keys = PUSH_PREFERENCE_KEYS[type] ?? [type];
+  return keys.some((key) => preferences?.[key] === false);
+}
 
 async function deleteTokenReferences(references) {
   const unique = new Map();
@@ -415,7 +433,7 @@ async function handleNotificationCreated(event, {
     // `bellSuppressed` controls the in-app bell only. A direct-message push is
     // still expected while the app is backgrounded; active-conversation
     // foreground suppression is a client concern and does not alter delivery.
-    if (preferences[type] === false) {
+    if (pushPreferenceDisabled(preferences, type)) {
       await skip("preference-disabled");
       return;
     }
@@ -577,6 +595,7 @@ module.exports = {
   onNotificationCreated: exports.onNotificationCreated,
   PUSH_DECISION_LEDGER_TYPES,
   PUSH_DECISION_RETENTION_MS,
+  PUSH_PREFERENCE_KEYS,
   PUSH_TITLES,
   claimPushDelivery,
   completePushDelivery,
@@ -587,6 +606,7 @@ module.exports = {
   notificationSourceIsCurrent,
   pushDecisionLedgerReference,
   pushDeliveryAttemptId,
+  pushPreferenceDisabled,
   recordPushDecision,
   skipPushDelivery,
   socialNotificationSourceIsCurrent,

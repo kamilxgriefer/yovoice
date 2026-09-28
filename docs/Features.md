@@ -389,6 +389,128 @@ until an operator enables the server-only switch `appConfig/likersV1`.
   (`translations_vip_likers.dart`, `test/vip_likers_localization_test.dart`);
   the upsell's count line uses each language's plural forms.
 
+## Premium Pages (ADR-231..233, backend packages B1 + B2 + B3 + B4 + B5, source only, NOT deployed)
+
+A VIP account can turn itself into a Page of type Business or Community
+(one Page per account, only the owner posts). Backend packages B1-B5 are in
+source; the app arrives in C0-C4.
+
+- **Who.** A canonical owner-granted VIP grant only; paid Premium is off in
+  code until images are screened, and the staff preview does not count.
+  Everything answers `pagesNotEnabled` until an operator writes
+  `appConfig/pagesV1` (off / testers / everyone, separately for reading and
+  writing).
+- **`managePageV1`.** `create` (kind, category from a server list,
+  description, public Business contact fields or Community rules + one linked
+  public Server the owner runs, an 18+ birth date that is never stored),
+  `update` (kind is fixed), `pause` (always works, even muted, unverified or
+  with Pages switched off) and `resume`. A Page needs a public profile and a
+  name that is not reserved ("YO Voice", VIP, Admin, Support, Pomoc,
+  Official, Verified … and check-mark look-alikes), and cannot be created on
+  an account that already has followers.
+- **Existing settings.** Renaming checks the same name rules while you have a
+  Page; making your profile friends-only or private pauses your Page; Creator
+  audience cannot be turned on while you have a Page.
+- **Badge.** `publicBadges.page` (`business` / `community`) marks a visible
+  Page for other people's apps; it authorizes nothing.
+- **Follow (B3).** The existing Follow button works on a running Page (the
+  same edges as a Creator follow; the owner is notified). A paused,
+  suspended, hidden or read-only Page (VIP lapsed) takes no new followers;
+  unfollow always works, even with Pages switched off. Three follows of the
+  same Page per day at most.
+- **Treści feed (B3, `getPagesFeedV1`).** Newest posts of the Pages you
+  follow, 20 at a time with "load more", plus up to 10 Page suggestions on
+  the first page. Paused, suspended, hidden and blocked Pages never appear.
+- **Page profile (B3, `getPageV1`).** Header (name, kind, category,
+  description, follower count, post count, "on YO Voice since", Business
+  contact fields or Community rules + one linked public Server), your
+  Follow / Message options, the pinned post, then the wall or the Zdjęcia
+  (photos) tab. The owner sees their own Page in every state, including
+  held posts.
+- **Post detail (B3, `getPagePostV1`).** One post with its comments, 20 at a
+  time; comments from accounts you blocked (or that blocked you) are left
+  out.
+- **Find Pages (B3, `findPagesV1`).** Suggestions (newest active Pages you
+  do not follow), name search (2-60 characters, prefix) and the list of
+  Pages you follow (desktop panel). A Page renamed in the last 7 days is
+  left out of suggestions and search.
+- **Messages (B3, D13).** Following a Page never lets the Page owner message
+  you when your setting is "People you follow"; a Page account can start at
+  most 10 new conversations with non-friends a day. A Page host's LIVE
+  notifies nobody, and a Page account's followers never count toward
+  achievements.
+- **Posting (B2).** The owner posts text (up to 5000 characters), 1-10
+  photos (JPEG only, up to 4 MB each, re-encoded without metadata by the
+  app; a photo that still carries Exif/GPS, XMP, ICC or a comment is
+  refused, and so is one whose real pixel size is over 8192 a side or is
+  not the width and height the app declared) or one voice clip (up to 60 s, 4 MB). Media are reserved first
+  (`reservePagePostMediaV1`, 15 minutes, one upload set at a time), uploaded,
+  then published (`publishPagePostV1`), which checks the real bytes and
+  duration and returns the new post; there is no optimistic post. Daily
+  limits per Page: 10 posts, 30 photos or clips, 200 MB; publishing 3 times
+  per 10 minutes. A paused or suspended Page cannot post.
+- **Managing posts (B2, `managePagePostV1`).** Pin one post to the top of the
+  wall, unpin it, turn comments on or off, and delete. Delete always works
+  (even muted, unverified or with Pages switched off). A post under a report,
+  held or removed by a moderator is kept out of sight as evidence (its photos
+  and clip stay while a report on it is open); it is removed with its likes,
+  comments and files when the last report is resolved, and never later than
+  90 days after the delete. Any other post is removed at once.
+- **Photos and clips (B2, `getPagePostMediaAccessV1`).** 90-second links for
+  the media of one post the caller may see; moderators can open held,
+  removed or deleted posts that were reported, and published posts with an
+  open report, and every such view is logged. At most 60 requests a minute, 600 an hour, 3000 a day.
+- **Cleanup (B2, `pagesMaintenance`, every 10 minutes).** Abandoned uploads
+  are removed after 15 minutes, deleted posts' files and their likes and
+  comments are cleared, and once a day unreferenced files older than an hour
+  are swept.
+- **Likes (B4, `pagePostEngagementV1`).** Anyone who can see a published
+  post may like it, also while the Page is read-only (VIP lapsed); unlike
+  always works, even after a block. 60 a minute.
+- **Comments (B4).** Up to 1000 characters on a published post with
+  comments on, while the Page is running (not read-only, paused or
+  suspended). No links: web addresses, `www.` and domain-like words
+  ("bit.ly/x", "example . com") are refused. 20 a minute and 200 a day;
+  accounts younger than 7 days (by their sign-up date) 3 a minute. The
+  comment's author and the Page owner can delete it, always (even muted,
+  unverified or with Pages switched off). No comment likes in v1.
+- **Owner notification (B4).** Each comment by someone else puts "New
+  comment on your Page post from {name}" (the name cut at 40 characters) in
+  the owner's bell and pushes "{name} commented on your Page post"; the
+  existing "Comments and mentions" switch turns the push off. Deleting the
+  comment (or its post) removes the bell row. There is no notification for
+  new posts in v1.
+- **See who liked (B4, `listPagePostLikersV1`).** The ADR-230 VIP list on a
+  Page post, behind both the likers switch and the Pages switch, with the
+  same privacy rules (hidden likes, private profiles and blocks are never
+  listed).
+- **When VIP ends (B5).** The Page turns read-only at once (the owner is
+  told): the wall and feed stay readable and likes, unlikes, unfollows and
+  deletes still work, but there are no new posts, comments or follows and
+  the Page leaves Find. On day 23 the owner is told the Page will be hidden
+  in 7 days; on day 30 it is hidden (visible only to the owner). Nothing is
+  deleted, and the Page is back the moment VIP returns. The VIP rosette
+  follows the owner-granted VIP grant, checked with its expiry date.
+- **Reporting (B5, `createPageReportV1`).** Anyone can report a Page, a
+  Page post or a comment on one (spam, harassment, hate, sexual content,
+  violence, self-harm, impersonation, restricted category, scam,
+  intellectual property, other), even when the Page blocked them, while
+  muted, unverified or with Pages switched off. 10 reports per 10 minutes.
+  A reported post is kept as evidence if its owner deletes it, until the
+  report is resolved (90 days at most). A report of a whole Page also
+  records the text of its newest five posts for the moderator.
+- **Moderation (B5).** Staff can remove a post (its files are kept for an
+  appeal), hide it while they review it and show it again, remove a
+  comment, and suspend a Page or lift the suspension. A hidden post comes
+  back by itself when its last report is resolved or dismissed without
+  removal; the affected person
+  gets a notification that says what happened and why. Until the
+  Moderation Center shows Page reports, the owner works them with an
+  audited operator script.
+- **Deleting your account (B5).** Your Page, your posts and their files,
+  and the comments you wrote are deleted. A post with an open report is
+  kept out of sight as evidence for at most 90 days, then removed.
+
 ## Settings
 
 `lib/features/settings/` — Profile, Account, Privacy, Security,

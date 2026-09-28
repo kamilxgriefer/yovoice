@@ -612,6 +612,106 @@ service firebase.storage {
       allow update, delete: if false;
     }
 
+    // Premium Pages post media (ADR-233 §1.10 and §3.2, package B2). The
+    // upload capability is ONE live, server-issued reservation
+    // (pagePostMediaReservations/{mediaId}, written only by
+    // reservePagePostMediaV1 after the Pages activation, the VIP gate, the
+    // owner's write preconditions, the one-lease-per-owner rule and the
+    // Page's daily budget); the path alone grants nothing. The reservation is
+    // the second and last cross-service document (the first is the
+    // account-status read). Rev. 2 bounds: photos image/jpeg only,
+    // 128 B-4 MiB, named {mediaId}.jpg; voice audio/mp4, 512 B-4 MiB, named
+    // {mediaId}.m4a; exactly the reserved custom metadata. The publish
+    // callable then probes the bytes and refuses any photo carrying Exif,
+    // XMP, ICC or comment segments. Viewers never read bytes here: they get
+    // getPagePostMediaAccessV1's 90-second generation-bound V4 URLs. NOBODY
+    // reads through these rules, the uploader included (spec §1.10 "no
+    // client read"; audit 2026-09-28): a client read would let the uploader
+    // mint a durable download token (getDownloadURL) between the server's
+    // token revoke and the publish commit, a URL that outlives hold, removal
+    // and suspension. The object's HTTP headers (Content-Encoding,
+    // Cache-Control, Content-Disposition) are checked by publishPagePostV1,
+    // not here: Cache-Control is not a property of the Storage rules
+    // resource at all, and an unset header is absent rather than null, so a
+    // rule could not express the check portably; since nobody reads an
+    // unpublished object, the publish check is the one that matters (it
+    // refuses gzip, any Cache-Control and a non-inline disposition). Nobody
+    // lists, updates or deletes; cleanup is pagesMaintenance's Admin
+    // authority.
+    match /page_posts/{pageId}/{postId}/{fileName} {
+      function reservationPath(metadata) {
+        return /databases/(default)/documents/pagePostMediaReservations/$(metadata.get('yovoiceMediaId', ''));
+      }
+
+      function exactMetadata(metadata) {
+        let mediaId = metadata.get('yovoiceMediaId', '');
+        let type = metadata.get('yovoiceMediaType', '');
+        return metadata.keys().hasOnly([
+              'yovoicePageId', 'yovoicePostId', 'yovoiceMediaId', 'yovoiceMediaType'
+            ]) &&
+            metadata.get('yovoicePageId', '') == pageId &&
+            metadata.get('yovoicePostId', '') == postId &&
+            postId.matches('pp_[a-f0-9]{40}') &&
+            mediaId.matches('pm_[a-f0-9]{40}') &&
+            (
+              (type == 'image' && fileName == mediaId + '.jpg') ||
+              (type == 'audio' && fileName == mediaId + '.m4a')
+            );
+      }
+
+      function boundedMedia(size, contentType, metadata) {
+        let type = metadata.get('yovoiceMediaType', '');
+        return (
+              type == 'image' && contentType == 'image/jpeg' &&
+              size >= 128 && size <= 4 * 1024 * 1024
+            ) || (
+              type == 'audio' && contentType == 'audio/mp4' &&
+              size >= 512 && size <= 4 * 1024 * 1024
+            );
+      }
+
+      function liveReservation(metadata, size, contentType) {
+        let path = reservationPath(metadata);
+        let reservation = firestore.get(path).data;
+        return firestore.exists(path) &&
+            reservation.keys().hasOnly([
+              'schemaVersion', 'kind', 'pageId', 'ownerId', 'postId', 'mediaId',
+              'index', 'type', 'contentType', 'size', 'durationMs', 'width',
+              'height', 'storagePath', 'requestId', 'status', 'createdAt',
+              'expiresAt'
+            ]) &&
+            reservation.schemaVersion == 1 &&
+            reservation.kind == 'pagePostMedia' &&
+            reservation.pageId == pageId &&
+            reservation.ownerId == pageId &&
+            reservation.postId == postId &&
+            reservation.mediaId == metadata.get('yovoiceMediaId', '') &&
+            reservation.type == metadata.get('yovoiceMediaType', '') &&
+            reservation.storagePath ==
+              'page_posts/' + pageId + '/' + postId + '/' + fileName &&
+            reservation.contentType == contentType &&
+            reservation.size == size &&
+            reservation.status == 'uploading' &&
+            reservation.expiresAt is timestamp &&
+            reservation.expiresAt > request.time;
+      }
+
+      function exactReservedMedia(size, contentType, metadata) {
+        return exactMetadata(metadata) &&
+            boundedMedia(size, contentType, metadata) &&
+            liveReservation(metadata, size, contentType);
+      }
+
+      allow get, list: if false;
+      allow create: if resource == null && isVerified() && isActiveUser(pageId) &&
+          exactReservedMedia(
+            request.resource.size,
+            request.resource.contentType,
+            request.resource.metadata
+          );
+      allow update, delete: if false;
+    }
+
     // In-app bug report screenshots. The upload capability is ONE live,
     // server-issued reservation (bugReportUploadReservations/{reportId},
     // written only by submitBugReportV1 after its rate limits); the path alone

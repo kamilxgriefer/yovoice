@@ -20,6 +20,21 @@ const {
   paidCreatorAudienceEligibility,
   sourceProfileVisibleToCaller,
 } = require("../profile/public_profiles");
+const { consumeRateLimit } = require("../integrity/guards");
+const { canonicalPagesActivation, PAGES_ACTIVATION_PATH } =
+  require("../pages/activation");
+const { pageAcceptsFollowers } = require("../pages/audience");
+const { canonicalPageOrNull } = require("../pages/contract");
+const {
+  PAGES_FOLLOW_TOGGLE_LIMIT,
+  PAGES_FOLLOW_TOGGLE_SCOPE,
+  canonicalPageFollowIndex,
+  pageFollowIndexDocument,
+  pageFollowIndexReference,
+  pageFollowToggleReference,
+  pageIdsAfterFollow,
+  pageIdsAfterUnfollow,
+} = require("../pages/follows");
 
 const REGION = "europe-west1";
 const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/u;
@@ -1903,13 +1918,48 @@ const setFollow = onCall(
           });
           return { changed: false, following: true };
         }
-        if (!paidCreatorAudienceEligibility(
+        const nowMs = Date.now();
+        const creatorOk = paidCreatorAudienceEligibility(
           target,
           targetEntitlement.exists ? (targetEntitlement.data() ?? {}) : null,
-          Date.now(),
-        ) || target.creatorAudienceEnabled !== true) {
-          // Do not disclose whether Premium, Creator state, age verification
-          // or the explicit audience opt-in is the missing authority.
+          nowMs,
+        ) && target.creatorAudienceEnabled === true;
+        // Premium Pages (ADR-233 §2.3): a Page accepts followers while it is
+        // readable for the caller, not paused, not suspended and LIVE
+        // `active` (the owner's capability re-derived here, so an expired
+        // grant refuses before any sweep). Its documents join the read set
+        // only when the Creator path already refused.
+        let pageFollow = null;
+        if (!creatorOk) {
+          const indexRef = pageFollowIndexReference(db, auth.uid);
+          const toggleRef = pageFollowToggleReference(db, auth.uid, targetUserId);
+          const [pageSnapshot, activationSnapshot, grantSnapshot, indexSnapshot,
+            toggleSnapshot] = await transaction.getAll(
+            db.doc(`pages/${targetUserId}`),
+            db.doc(PAGES_ACTIVATION_PATH),
+            db.doc(`vipGrants/${targetUserId}`),
+            indexRef,
+            toggleRef,
+          );
+          const pageOk = pageAcceptsFollowers({
+            callerId: auth.uid,
+            activation: canonicalPagesActivation(activationSnapshot),
+            page: canonicalPageOrNull(pageSnapshot, targetUserId),
+            pageUser: target,
+            pageEntitlement: targetEntitlement.exists
+              ? (targetEntitlement.data() ?? null)
+              : null,
+            pageGrant: grantSnapshot.exists ? (grantSnapshot.data() ?? null) : null,
+            nowMs,
+          });
+          if (pageOk) {
+            pageFollow = { indexRef, indexSnapshot, toggleRef, toggleSnapshot };
+          }
+        }
+        if (!creatorOk && pageFollow === null) {
+          // Do not disclose whether Premium, Creator state, age verification,
+          // the explicit audience opt-in or a Page's state is the missing
+          // authority.
           throw new HttpsError(
             "failed-precondition",
             "This creator is not accepting followers.",
@@ -1921,6 +1971,23 @@ const setFollow = onCall(
           MAX_FOLLOWING,
           "You have reached the following limit.",
         );
+        if (pageFollow !== null) {
+          // 3 follows of one Page per caller per 24 h (follow churn would
+          // otherwise re-notify the owner at will). Unfollows are free.
+          consumeRateLimit(transaction, pageFollow.toggleSnapshot, {
+            reference: pageFollow.toggleRef,
+            scope: PAGES_FOLLOW_TOGGLE_SCOPE,
+            uid: auth.uid,
+            nowMs,
+            now: Timestamp.fromMillis(nowMs),
+            ...PAGES_FOLLOW_TOGGLE_LIMIT,
+          });
+          const index = canonicalPageFollowIndex(pageFollow.indexSnapshot, auth.uid);
+          transaction.set(pageFollow.indexRef, pageFollowIndexDocument(
+            pageIdsAfterFollow(index.pageIds, targetUserId),
+            FieldValue.serverTimestamp(),
+          ));
+        }
         const timestamp = FieldValue.serverTimestamp();
         transaction.create(followingRef, {
           uid: targetUserId,
@@ -1951,6 +2018,22 @@ const setFollow = onCall(
         return { changed: true, following: true };
       }
 
+      // Unfollow is a Pages SAFETY action (ADR-233 §2.1): it never reads
+      // appConfig/pagesV1 and is never rate-limited by the Page churn scope.
+      // The follow-index hint drops the target in the same transaction,
+      // whether or not an edge still exists (a stale hint is repaired too).
+      const pageIndexRef = pageFollowIndexReference(db, auth.uid);
+      const pageIndex = canonicalPageFollowIndex(
+        await transaction.get(pageIndexRef),
+        auth.uid,
+      );
+      if (pageIndex.exists &&
+          (pageIndex.malformed || pageIndex.pageIds.includes(targetUserId))) {
+        transaction.set(pageIndexRef, pageFollowIndexDocument(
+          pageIdsAfterUnfollow(pageIndex.pageIds, targetUserId),
+          FieldValue.serverTimestamp(),
+        ));
+      }
       if (!followingEdge.exists) {
         // A previous partial lifecycle may have removed the graph edge but
         // left the legacy deterministic activity row behind. Repair it so

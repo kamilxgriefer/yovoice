@@ -410,6 +410,16 @@ async function handleRoomLiveChanged(event) {
 
   const hostId = room.hostId;
   if (typeof hostId !== "string" || !hostId) return;
+  // Premium Pages (ADR-231/233 §2.3): a Page has no LIVE, and following a
+  // Page grants reading only. An account with a pages/{uid} document (any
+  // state) never fans a LIVE notification out to its followers.
+  if (hostId.includes("/")) return;
+  if ((await db.doc(`pages/${hostId}`).get()).exists) {
+    logger.info("live room notifications skipped for a Page host", {
+      roomId: event.params.roomId,
+    });
+    return;
+  }
   const session = typeof room.voiceSessionId === "string" &&
       /^[A-Za-z0-9_-]{8,128}$/u.test(room.voiceSessionId)
     ? room.voiceSessionId

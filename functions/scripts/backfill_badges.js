@@ -50,13 +50,18 @@ const {
   fetchAuthUserOrNull,
   syncPublicBadgeForUser,
 } = require("../badges/public_badges");
+const { canonicalPageOrNull } = require("../pages/contract");
 
 const EXPECTED_PROJECT = "yovoice-ec54a";
 const BATCH_SIZE = 200;
 
+// `page` joined with Premium Pages (ADR-233 §1.11). A stored badge written
+// before it has no `page` key: that is a plain update (the derivation adds
+// `page: null`), never a conflict.
 const BADGE_FIELDS = new Set([
   "staffRole",
   "isVip",
+  "page",
   "schemaVersion",
   "updatedAt",
 ]);
@@ -106,6 +111,8 @@ function emptyReport() {
     disabledAuthAccounts: 0,
     staffBadges: 0,
     vipOnlyBadges: 0,
+    pageOnlyBadges: 0,
+    pageBadges: 0,
     staffVipBadges: 0,
     toCreate: 0,
     toUpdate: 0,
@@ -132,6 +139,8 @@ function badgeMatches(existing, derived) {
   return (
     existing.staffRole === derived.staffRole &&
     existing.isVip === derived.isVip &&
+    Object.prototype.hasOwnProperty.call(existing, "page") &&
+    existing.page === derived.page &&
     existing.schemaVersion === derived.schemaVersion
   );
 }
@@ -186,10 +195,12 @@ async function scan({
 
       const grantSnapshot = await db.collection("vipGrants").doc(uid).get();
       const grant = grantSnapshot.exists ? grantSnapshot.data() : null;
+      const pageSnapshot = await db.collection("pages").doc(uid).get();
+      const page = canonicalPageOrNull(pageSnapshot, uid);
       const badgeSnapshot = await db.collection("publicBadges").doc(uid).get();
       const existing = badgeSnapshot.exists ? badgeSnapshot.data() : null;
 
-      const derived = deriveBadge({ uid, user, grant });
+      const derived = deriveBadge({ uid, user, grant, page });
 
       if (derived === null) {
         if (existing) {
@@ -202,9 +213,11 @@ async function scan({
       }
 
       const isStaff = derived.staffRole !== USER_ROLES.USER;
+      if (derived.page !== null) report.pageBadges += 1;
       if (isStaff && derived.isVip) report.staffVipBadges += 1;
       else if (isStaff) report.staffBadges += 1;
-      else report.vipOnlyBadges += 1;
+      else if (derived.isVip) report.vipOnlyBadges += 1;
+      else report.pageOnlyBadges += 1;
 
       if (badgeMatches(existing, derived)) {
         report.upToDate += 1;
