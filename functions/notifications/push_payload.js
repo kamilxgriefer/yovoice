@@ -41,6 +41,8 @@ function soundProfileForNotification(type) {
     "liveStarted",
     "momentComment",
     "reelComment",
+    // ADR-233 §2.6: a comment on the recipient's Page post.
+    "pagePostComment",
     "serverRole",
   ].includes(type)) {
     return SOUND_PROFILES.social;

@@ -4,6 +4,60 @@ An honest picture of what's actually verified in this project, and how —
 deliberately not aspirational. Several separate, unequal layers of coverage
 exist; know which one you're relying on before trusting it.
 
+## Premium Pages backend — 2026-09-28 (ADR-231..233, packages B1-B5 + the audit round, source only, NOT deployed)
+
+Every command ran through the machine lock (`tmp/lk.sh`) on the
+`pages/backend` worktree, after the security + QA audit fixes.
+
+| Suite | How it runs | Result |
+|---|---|---|
+| Functions unit + emulator (`functions/test/*.test.js`, 19 `pages_*` files among them) | `firebase emulators:exec --only auth,firestore --project demo-yovoice 'npm --prefix functions test'` | **2984 / 2984** |
+| Firestore rules (`npm test`: `rules.test.js`, premium messaging, account takeover, `pages_rules.test.js`) | `emulators:exec --only firestore --project demo-yovoice 'npm --prefix firestore-tests test'` | 592 + 4 + 6 + **11** |
+| Storage rules (`test:storage`: `storage.test.js`, `account_takeover_storage.test.js`, **`pages_storage_rules.test.js`**) | `emulators:exec --only firestore,storage --project demo-yovoice 'npm --prefix firestore-tests run test:storage'` | 76 + 2 + **6** |
+| Other suites sharing `storage.rules` (`test:server-message-media`, `test:bug-reports`, `test:family-media`) | same, `--only firestore,storage` | 9 + 7 + 11 |
+| Trigger smokes (`test:smoke`) | `emulators:exec --only functions,firestore,auth --project demo-yovoice` (without a production `FIREBASE_CONFIG`, or the Admin SDK writes to another project and the trigger "never fires") | 3 / 3 |
+
+`pages_storage_rules.test.js` is part of `test:storage`, so CI's existing
+Storage step runs it; `test:pages` and `test:pages-storage` run the Pages
+files alone. `company_files_rules.test.js` (3 pass, 2 fail) is pre-existing
+and unrelated (see the ADR-222 section below).
+
+**The audit round's regressions** (each reproduces a reviewed finding):
+hold then dismiss / resolve restores the post and a hold survives while
+another report is open (`pages_reports.test.js`); hold, close, owner delete
+leaves no job held by a closed report; the last resolution makes the
+owner-deleted tombstone due and `pagesMaintenance` purges it with its likes
+and comments, and every tombstone is purged after 90 days
+(`pages_posts.test.js`); a malformed `pageVisibility/v1` never blocks
+remove, hold or suspend while restore fails closed; staff open a published
+reported post blocked and with the kill switch on; the page-report
+`recentPosts` snapshot; the JPEG frame header (one SOF, 1-8192, equal to the
+declared size) and plain object headers at publish; the comment label cap;
+the homoglyph names ("ΥO Voice", "ᴠɪᴘ", "Yօ Voice", "ᎩO Voice", "Shop √");
+going private on a malformed Page or index (`profile_visibility.test.js`);
+the fail-closed rename on a malformed Page; the 7-day Find boundary and the
+rename-while-paused-then-resume flow (`pages_find.test.js`); staff tokens
+with the role mirror denied on every Pages collection
+(`pages_rules.test.js`); no client read of `page_posts/`, the uploader
+included (`pages_storage_rules.test.js`).
+
+**Not proven here:**
+
+- Production indexes: the emulator serves any query without an index; the
+  proof is `scripts/smoke_pages_indexes.js` (22 shapes) after the index
+  deploy (DEPLOYMENT.md step 3a).
+- The whole media path across services: the Functions suites use a
+  deterministic in-memory bucket (`test/helpers/pages_media_fixture.js`)
+  and the Storage suite seeds reservations by hand; only a contract test
+  pins that the 18 reservation keys match `storage.rules`. No test reserves
+  through the service, uploads with the client SDK through the real rules
+  and publishes against the Storage emulator. Also unexercised: V4
+  `signBlob` signing, Pub/Sub scheduling of `pagesMaintenance`, production
+  Storage's header representation (why the header check lives at publish),
+  and real devices.
+- The badge VIP bit on production data: the census before batch 2n is the
+  gate (DEPLOYMENT.md), not a test.
+
 ## Pre-registered account takeover, Phase 1 — 2026-09-25 (ADR-222, source only, NOT deployed)
 
 Every attack step in the Functions suite is the production-shaped client call:

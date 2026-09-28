@@ -44,6 +44,8 @@ const ENGAGEMENT_NOTIFICATION_TYPES = Object.freeze([
   "commentMention",
   "serverEventReminder",
   "serverRole",
+  // Premium Pages (ADR-233 §2.6): a comment on the recipient's Page post.
+  "pagePostComment",
 ]);
 
 const SAFE_SEGMENT = /^[A-Za-z0-9_-]{1,128}$/u;
@@ -473,6 +475,81 @@ async function serverRoleSourceIsCurrent({
     (ROLE_POWER[member.role] ?? 0) > (ROLE_POWER.member ?? 0);
 }
 
+/**
+ * pagePostComment (ADR-233 §2.6): the row's source is `pagePostComments/{c}`;
+ * the comment still exists, was written by the actor, belongs to the post the
+ * row names and to the recipient's Page; the post is still published; the
+ * Page exists and is not suspended; Pages are readable for the recipient
+ * (appConfig/pagesV1, so the kill switch silences pushes too); both accounts
+ * are active and unmuted and no block stands either way.
+ */
+async function pagePostCommentSourceIsCurrent({
+  recipientId,
+  notification,
+  reader,
+  firestore,
+  nowMs = Date.now(),
+}) {
+  // Lazy: the Pages graph stays out of the push trigger's cold start.
+  const { parsePageCommentSourcePath } = require("../pages/engagement_contract");
+  const source = parsePageCommentSourcePath(notification?.sourcePath);
+  const actorId = notification?.actorId;
+  if (!source || notification?.targetSubId !== source.commentId ||
+      typeof notification?.targetId !== "string" ||
+      !isValidOpaqueUid(actorId) || !isValidOpaqueUid(recipientId) ||
+      actorId === recipientId) {
+    return false;
+  }
+  const { canonicalPagesActivation, pagesReadAllowed } = require("../pages/activation");
+  const { canonicalPageOrNull } = require("../pages/contract");
+  const {
+    canonicalPageCommentData,
+    canonicalPagePostData,
+  } = require("../pages/post_contract");
+  const [
+    comment,
+    post,
+    page,
+    activation,
+    actor,
+    actorRestriction,
+    recipient,
+    recipientRestriction,
+    actorBlock,
+    recipientBlock,
+  ] = await readAll(
+    reader,
+    firestore.doc(notification.sourcePath),
+    firestore.doc(`pagePosts/${notification.targetId}`),
+    firestore.doc(`pages/${recipientId}`),
+    firestore.doc("appConfig/pagesV1"),
+    firestore.doc(`users/${actorId}`),
+    firestore.doc(`restrictions/${actorId}`),
+    firestore.doc(`users/${recipientId}`),
+    firestore.doc(`restrictions/${recipientId}`),
+    firestore.doc(`users/${actorId}/blocked/${recipientId}`),
+    firestore.doc(`users/${recipientId}/blocked/${actorId}`),
+  );
+  const commentData = canonicalPageCommentData(comment);
+  const postData = canonicalPagePostData(post);
+  const pageData = canonicalPageOrNull(page, recipientId);
+  if (!commentData || commentData.authorId !== actorId ||
+      commentData.postId !== notification.targetId ||
+      commentData.pageId !== recipientId ||
+      !postData || postData.pageId !== recipientId || postData.status !== "published" ||
+      !pageData || pageData.suspended === true ||
+      !pagesReadAllowed(canonicalPagesActivation(activation), recipientId)) {
+    return false;
+  }
+  return refusal(() => {
+    activeProfile(actor, "Actor");
+    assertNotRestricted(actorRestriction, "Actor", nowMs);
+    activeProfile(recipient, "Recipient");
+    assertNotRestricted(recipientRestriction, "Recipient", nowMs);
+    assertNotBlocked(actorBlock, recipientBlock);
+  });
+}
+
 async function engagementNotificationSourceIsCurrent(args) {
   switch (args.notification?.type) {
     case "momentComment":
@@ -484,6 +561,8 @@ async function engagementNotificationSourceIsCurrent(args) {
       return serverEventReminderSourceIsCurrent(args);
     case "serverRole":
       return serverRoleSourceIsCurrent(args);
+    case "pagePostComment":
+      return pagePostCommentSourceIsCurrent(args);
     default:
       return false;
   }
@@ -498,6 +577,7 @@ module.exports = {
   commentSourcePath,
   engagementNotificationSourceIsCurrent,
   liveCommentParent,
+  pagePostCommentSourceIsCurrent,
   parseCommentSourcePath,
   parseServerEventPath,
   serverEventReminderSourceIsCurrent,

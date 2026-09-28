@@ -219,3 +219,90 @@ test("private server-time quota serializes concurrent valid requests", async () 
   assert.equal(rejected.length, 1);
   assert.equal(rejected[0].reason.code, "resource-exhausted");
 });
+
+// Premium Pages (ADR-233 §2.2, D5): a running Page needs a public profile.
+// Leaving "public" pauses the Page in the SAME transaction and never refuses.
+test("going friends or private pauses a running Page atomically; public leaves it", async () => {
+  const { pageDoc } = require("./helpers/pages_fixture");
+  const pageRef = db.collection("pages").doc(UID);
+  const indexRef = db.doc("pageVisibility/v1");
+  try {
+    await pageRef.set(pageDoc(UID, nowMs, {
+      postCount: 1,
+      listed: true,
+      lastPostAt: Timestamp.fromMillis(nowMs - 1),
+    }));
+    await service().setMyProfileVisibility(request({ visibility: "public" }));
+    assert.equal((await pageRef.get()).data().ownerPaused, false);
+
+    nowMs += 1_000;
+    const result = await service().setMyProfileVisibility(request({ visibility: "friends" }));
+    // The response keeps its exact two keys (installed clients parse it).
+    assert.deepEqual(result, { visibility: "friends", changed: true });
+    const page = (await pageRef.get()).data();
+    assert.equal(page.ownerPaused, true);
+    assert.equal(page.listed, false);
+    assert.equal(page.updatedAt.toMillis(), nowMs);
+    assert.equal((await indexRef.get()).data().notViewable[UID], "paused");
+
+    // Already paused: going private writes nothing more to the Page.
+    nowMs += 1_000;
+    await service().setMyProfileVisibility(request({ visibility: "private" }));
+    assert.equal((await pageRef.get()).data().updatedAt.toMillis(), nowMs - 1_000);
+    assert.equal((await db.collection("users").doc(UID).get()).data().profileVisibility, "private");
+  } finally {
+    await remove(pageRef);
+  }
+});
+
+// D5 / S-M8: going private is a SAFETY hook and never refuses, whatever state
+// the Page or the visibility index is in (audit 2026-09-28: pinned).
+test("going private never refuses on a malformed Page or a malformed visibility index", async () => {
+  const { pageDoc } = require("./helpers/pages_fixture");
+  const logger = require("firebase-functions/logger");
+  const pageRef = db.collection("pages").doc(UID);
+  const indexRef = db.doc("pageVisibility/v1");
+  const savedIndex = await indexRef.get();
+  const originalError = logger.error;
+  const errors = [];
+  logger.error = (message, ...rest) => { errors.push(message); };
+  try {
+    const cases = [
+      ["an unexpected key", pageDoc(UID, nowMs, { unexpectedKey: 1 })],
+      ["a non-string status", pageDoc(UID, nowMs, { status: 42 })],
+    ];
+    for (const [label, seeded] of cases) {
+      await pageRef.set(seeded);
+      await seed({ profileVisibility: "public" });
+      nowMs += 60_000;
+      errors.length = 0;
+      const result = await service({ rateLimit: { maxEvents: 100, windowMs: 1000 } })
+        .setMyProfileVisibility(request({ visibility: "private" }));
+      assert.deepEqual(result, { visibility: "private", changed: true }, label);
+      assert.equal((await pageRef.get()).data().ownerPaused, true, label);
+      assert.equal(errors.includes("pages malformed page on a safety action"), true, label);
+    }
+
+    // A canonical Page, a malformed index: the Page is still paused (every
+    // reader re-checks ownerPaused per item) and the index is left alone.
+    await pageRef.set(pageDoc(UID, nowMs, { postCount: 1, listed: true,
+      lastPostAt: Timestamp.fromMillis(nowMs - 1) }));
+    await indexRef.set({ schemaVersion: 1, broken: true });
+    await seed({ profileVisibility: "public" });
+    nowMs += 60_000;
+    errors.length = 0;
+    const result = await service({ rateLimit: { maxEvents: 100, windowMs: 1000 } })
+      .setMyProfileVisibility(request({ visibility: "friends" }));
+    assert.deepEqual(result, { visibility: "friends", changed: true });
+    const page = (await pageRef.get()).data();
+    assert.equal(page.ownerPaused, true);
+    assert.equal(page.listed, false);
+    assert.deepEqual((await indexRef.get()).data(), { schemaVersion: 1, broken: true });
+    assert.equal(errors.includes("pages visibility index malformed on a safety action"), true);
+  } finally {
+    logger.error = originalError;
+    await remove(pageRef);
+    if (savedIndex.exists) await indexRef.set(savedIndex.data());
+    else await remove(indexRef);
+  }
+});

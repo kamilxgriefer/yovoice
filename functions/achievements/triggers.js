@@ -419,6 +419,7 @@ function createAchievementSourceHandlers({
     if (!after || !isValidOpaqueUid(uid) || !occurredAt ||
         !activeProfile(after)) return invalid("invalid-social-projection");
     const events = [];
+    let pageFollowersSkipped = false;
     for (const config of [
       { metric: "friends", value: "friendCount", version: "friendAchievementRevision" },
       { metric: "followers", value: "followerCount", version: "followerAchievementRevision" },
@@ -431,6 +432,15 @@ function createAchievementSourceHandlers({
           !Number.isSafeInteger(after[config.value]) || after[config.value] < 0) {
         return invalid("invalid-social-revision");
       }
+      // Premium Pages (ADR-233 §2.3): following a Page grants reading only.
+      // A Page account's follower count is never an achievement source, so
+      // fake-account follow farming cannot unlock anything. Any pages/{uid}
+      // document counts (paused, lapsed, even malformed).
+      if (config.metric === "followers" &&
+          (await reader.read(`pages/${uid}`)) !== null) {
+        pageFollowersSkipped = true;
+        continue;
+      }
       events.push(adaptSocialMetricSnapshot({
         uid,
         metric: config.metric,
@@ -438,7 +448,11 @@ function createAchievementSourceHandlers({
         version,
       }));
     }
-    if (events.length === 0) return invalid("unchanged-social-revision");
+    if (events.length === 0) {
+      return invalid(pageFollowersSkipped
+        ? "page-account-followers"
+        : "unchanged-social-revision");
+    }
     const results = [];
     for (const source of events) {
       results.push(await runtime().processSourceEvent(source, {

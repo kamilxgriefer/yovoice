@@ -3250,9 +3250,10 @@ service cloud.firestore {
     // setting `enabled: false` disables the GIF surface on the next catalog
     // fetch with no deploy. Read by getGifCatalog through the Admin SDK, so
     // clients never need access. The same fail-closed pattern holds the
-    // other runtime switches: serversV1, accountDeletion, and likersV1 (the
+    // other runtime switches: serversV1, accountDeletion, likersV1 (the
     // ADR-230 "See who liked" activation, written only by an operator with
-    // Admin credentials; a client can neither read nor flip it).
+    // Admin credentials; a client can neither read nor flip it) and pagesV1
+    // (the ADR-233 Premium Pages kill switch, same rule).
     match /appConfig/{configId} {
       allow read, write: if false;
     }
@@ -4935,6 +4936,74 @@ service cloud.firestore {
     // last consumed position, which may be a HIDDEN liker's uid. Server-only
     // in both directions; a TTL policy on expiresAt removes it.
     match /likerPageCursors/{token} {
+      allow read, write: if false;
+    }
+
+    // Premium Pages (ADR-233). Server-written; reached through the
+    // functions/pages callables, which re-read the capability (canonical VIP
+    // grant; paid is off in code), the activation switch appConfig/pagesV1,
+    // blocks and the Page state on every request. The owner may GET their
+    // own Page record (settings, lapse notices) while their account is
+    // active; nobody may list, create, update or delete one. The rules have
+    // no catch-all, so every explicit deny below documents intent, and
+    // subcollection paths inherit nothing, so `likes` is stated.
+    match /pages/{pageId} {
+      allow get: if isOwner(pageId) && isActiveAccount();
+      allow list, create, update, delete: if false;
+    }
+    match /pagePosts/{postId} {
+      allow read, write: if false;
+
+      match /likes/{userId} {
+        allow read, write: if false;
+      }
+    }
+    match /pagePostComments/{commentId} {
+      allow read, write: if false;
+    }
+    match /pageFollowIndex/{userId} {
+      allow read, write: if false;
+    }
+    match /pageVisibility/{docId} {
+      allow read, write: if false;
+    }
+    // Read by storage.rules through firestore.get() (an Admin-privileged
+    // cross-service read), never by a client.
+    match /pagePostMediaReservations/{mediaId} {
+      allow read, write: if false;
+    }
+    match /pagePostMediaLeases/{ownerId} {
+      allow read, write: if false;
+    }
+    match /pagePostBudgets/{budgetId} {
+      allow read, write: if false;
+    }
+    match /pagePostMediaDeletionJobs/{jobId} {
+      allow read, write: if false;
+    }
+    // The likes and comments of a hard-deleted post, removed in batches by
+    // managePagePostV1 and pagesMaintenance (package B2).
+    match /pagePostCleanupJobs/{postId} {
+      allow read, write: if false;
+    }
+    // pagesMaintenance's resumable cursors (the daily orphan sweep and the
+    // hourly lapse sweep).
+    match /pageMaintenanceState/{sliceId} {
+      allow read, write: if false;
+    }
+    // A deleted account's post kept as report evidence (package B5): purged
+    // when the report resolves or after 90 days. Never a client's.
+    match /pageEvidenceRetention/{postId} {
+      allow read, write: if false;
+    }
+    match /pagePostOpenReports/{postId} {
+      allow read, write: if false;
+    }
+    match /pageStaffMediaAudit/{auditId} {
+      allow read, write: if false;
+    }
+    // An under-18 answer at Page creation: a refusal time only, never a date.
+    match /pageAdultRefusals/{uid} {
       allow read, write: if false;
     }
 

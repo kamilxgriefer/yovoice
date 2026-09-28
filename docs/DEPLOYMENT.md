@@ -4,6 +4,526 @@ What deploys automatically, what's manual, and exactly how — for both
 deployables described in
 [ADR-014](Decisions.md#adr-014-two-deployables-one-firebase-project).
 
+## Premium Pages (ADR-231..233) — packages B1 + B2 + B3 + B4 + B5, source only, NOTHING DEPLOYED
+
+Source: branch `pages/backend` from `main` 3.4.0+39 (`f99cb1d1`). What it
+is: [ADR-233](Decisions.md#adr-233-premium-pages--account-as-page-server-only-posts-fan-out-on-read-lapse-without-deletion)
+(with ADR-231 and ADR-232); security surface:
+[SECURITY.md](SECURITY.md#premium-pages-2026-09-28-adr-233-packages-b1--b2--b3--b4--b5-source-only-not-deployed).
+Spec: `yovoice-evidence/2026-09-28/premium-pages/spec.md` §7. This section
+covers package **B1** (gate, `pages` record, lifecycle, hooks, visibility
+index, badge `page`, rules) and package **B3** (follows, D13 in direct
+messages, LIVE and achievement exclusions, the four read callables, five
+indexes and their smoke) and package **B2** (media reservations, publish,
+post management with evidence tombstones, media grants, the
+`pagesMaintenance` worker, Storage rules, one index) and package **B4**
+(likes, comments, the owner's comment notification and its push, VIP likers
+on a Page post) and package **B5** (the lapse transitions and their
+triggers, the canonical badge VIP bit, `createPageReportV1`, the
+`moderateReport` Page arms, the operator moderation script, account
+deletion and evidence retention, four indexes).
+
+Everything ships **switched off**: with `appConfig/pagesV1` absent every
+Pages op answers `pagesNotEnabled` except the safety op `pause`, and
+`PAGES_ALLOW_PAID_SOURCE` is `false` in code (grant-only).
+
+**What changes, counted (B5):**
+
+- **Indexes (4, READY before ANY B5 function — see the warning in 0a):**
+  `pagePosts (authorId ASC, createdAt DESC, __name__ DESC)`,
+  `pagePostComments (authorId ASC, createdAt DESC, __name__ DESC)`
+  (account deletion), `pages (status ASC, lapsedAt ASC, __name__ ASC)`
+  (the hourly lapse sweep) and `pagePostMediaDeletionJobs (heldBy ASC,
+  storagePath ASC)` (account deletion's unheld media under one uid). The
+  evidence-retention (`purgeAt`), reservation (`ownerId`), budget (`pageId`)
+  and moderation-list (`targetType in`) queries use automatic single-field
+  indexes.
+- **Firestore rules:** one more explicit deny, `pageEvidenceRetention`
+  (a no-op in effect). B5 adds rules tests: a Page report is read by active
+  staff through the Moderation Center's own queue query and by nobody else,
+  no client can file one, and the owner reads and marks read the
+  `pageModeration` / `pageLapse` rows. No Storage rules change.
+- **Functions (10 names):** 3 new — `createPageReportV1` (a safety action:
+  never reads the switch), `onPageCapabilityEntitlementChanged` and
+  `onPageCapabilityGrantChanged` (on `entitlements/{uid}` and
+  `vipGrants/{uid}`; one plain read and an early return for an account
+  without a Page; with the switch absent `lapseEnabled` is false, so they
+  only ever restore); 7 updated — `moderateReport` (the Page arms, four
+  Page-only actions, the optional `moderationReason`; every other report
+  type behaves identically), `pagesMaintenance` (evidence-retention and
+  hourly lapse slices), `onAccountDeletionOutboxCreated` and
+  `processAccountDeletionOutboxSchedule` (the Pages parts of the
+  `content`, `storage` and `records` stages), and `onUserBadgeSourceChanged`,
+  `onVipGrantChanged`, `onPageBadgeSourceChanged` (the badge VIP bit now
+  needs a canonical grant). `getPublicBadges` only reads stored badges and
+  needs no redeploy; `managePagePostV1` only moved a helper and behaves
+  identically. No warm instance, no keep-warm target, no new secret, no new
+  dependency. Export map 293 → 296.
+- **Data:** none written by the deploy. The badge backfill (step 4) is
+  re-run: any grant in a non-canonical shape stops lighting the rosette.
+
+**What changes, counted (B4):**
+
+- **Indexes:** none. The likers candidate query (`pagePosts/{id}/likes`,
+  `createdAt desc, __name__ desc`) is served by the automatic single-field
+  index; engagement writes by document path.
+- **Rules:** none (B4 adds a rules test: the owner reads and marks read a
+  `pagePostComment` bell row with the app's real bell queries; nobody else
+  can).
+- **Functions (4 names):** 2 new — `pagePostEngagementV1` (like, unlike,
+  comment answer `pagesNotEnabled` until the switch admits the caller; the
+  safety op `deleteComment` never reads it) and `listPagePostLikersV1`
+  (behind `appConfig/likersV1` AND `appConfig/pagesV1`); 2 updated —
+  `onNotificationCreated` (the `pagePostComment` title, social sound, the
+  "Comments and mentions" preference key and the source check) and
+  `pagesMaintenance` (the post cleanup job retires the deleted comments'
+  bell rows). The shared ADR-230 modules gain the `pagePost` target
+  (additive; `listVoiceMomentLikersV1`, `listReelLikersV1` and
+  `listServerChannelMessageReactorsV1` behave identically and need no
+  redeploy), and `notifications/engagement_source.js` gains a type (the
+  comment triggers `onMomentCommentCreated/Deleted` and
+  `onReelCommentCreated/Deleted` behave identically and need no redeploy).
+  No warm instance, no keep-warm target, no new secret, no new dependency.
+  Export map 291 → 293.
+- **Data:** none written by the deploy.
+
+**What changes, counted (B2):**
+
+- **Index (1, READY before the B2 functions):**
+  `pagePostMediaDeletionJobs (heldBy ASC, nextAttemptAt ASC)`. The
+  reservation expiry (`expiresAt`) and cleanup-job (`nextAttemptAt`) queries
+  use automatic single-field indexes.
+- **Firestore rules:** two more explicit denies, `pagePostCleanupJobs` and
+  `pageMaintenanceState` (no-ops in effect: unmatched paths were already
+  denied).
+- **Storage rules:** a new `page_posts/{pageId}/{postId}/{fileName}` block
+  (create-only against a live reservation; NO client read, the uploader
+  included; no list, update or delete). Nothing else in `storage.rules`
+  changes. The Flutter upload must not read the object back (no
+  `getDownloadURL`, no `getMetadata`): after an interrupted upload it
+  retries the create (refused only if the object already exists) and then
+  calls publish, which verifies the object server-side.
+- **Functions (5 names, all new, none updated):** `reservePagePostMediaV1`,
+  `publishPagePostV1` (512 MiB, 120 s: it probes up to ten objects),
+  `managePagePostV1`, `getPagePostMediaAccessV1` (all answer
+  `pagesNotEnabled` until `appConfig/pagesV1` admits the caller, except the
+  safety op `delete` and the audited staff media branch), and the scheduled
+  `pagesMaintenance` (every 10 minutes, `Etc/UTC`, one instance, 512 MiB,
+  300 s; creates a Cloud Scheduler job). No warm instance, no keep-warm
+  target, no new secret, no new npm dependency (the probe's `music-metadata`
+  is already a dependency). Export map 286 → 291. `moderation/reports.js`
+  only gains an export (`REPORT_STAFF_ROLES`); `moderateReport` needs no
+  redeploy for B2.
+- **Data:** none written by the deploy. The worker's first run writes
+  `pageMaintenanceState/orphanSweep` (an empty `page_posts/` listing).
+
+**What changes, counted (B3):**
+
+- **Indexes (5, deploy and wait for READY before any B3 function):**
+  `pagePosts (pageId ASC, status ASC, createdAt DESC, __name__ DESC)`,
+  `pagePosts (pageId ASC, status ASC, kind ASC, createdAt DESC, __name__ DESC)`,
+  `pagePostComments (postId ASC, createdAt DESC, __name__ DESC)`,
+  `pages (listed ASC, lastPostAt DESC, __name__ DESC)`,
+  `pages (listed ASC, nameSearch ASC, __name__ ASC)`. The other §1.12 rows
+  (account deletion, lapse sweep, reservation expiry, deletion jobs) arrive
+  with B2 and B5.
+- **Rules:** none (B3 adds only a rules test: a Page account's follower
+  edges stay unlistable to everybody but the owner).
+- **Functions (11 names):** 4 new — `getPagesFeedV1`, `getPageV1`,
+  `getPagePostV1`, `findPagesV1` (answer `pagesNotEnabled` until
+  readAccess admits the caller); 7 updated — `setFollow` (the Page branch,
+  `pageFollowIndex`, `pages.followToggle`; unfollow reads one more
+  document), `openDirectConversation` (D13 + `dm.pageOutbound`),
+  `sendDirectMessage`, `reserveDirectMessageAttachment`,
+  `finalizeDirectMessageAttachment` (D13: `pages/{actor}` is a fourth
+  privacy read), `onRoomLiveChanged` (no fan-out for a Page host),
+  `onAchievementUserSocialCountersChanged` (no `followers` metric for a Page
+  account). No deletion, no warm instance, no keep-warm target, no new
+  secret. Export map 282 → 286.
+- **Data:** none written by the deploy. `pageFollowIndex/{uid}` appears on a
+  viewer's first follow of a Page.
+
+**What changes, counted (B1):**
+
+- **Indexes:** none in B1 (the §1.12 indexes arrive with the packages whose
+  queries use them).
+- **Rules:** `pages/{uid}` owner-`get` while active; explicit
+  `allow read, write: if false` for `pagePosts` (+ `likes`),
+  `pagePostComments`, `pageFollowIndex`, `pageVisibility`,
+  `pagePostMediaReservations`, `pagePostMediaLeases`, `pagePostBudgets`,
+  `pagePostMediaDeletionJobs`, `pagePostOpenReports`, `pageStaffMediaAudit`
+  and `pageAdultRefusals` (no-ops except the owner get: unmatched paths were
+  already denied); a comment on `appConfig/*`.
+- **Functions (8 names):** 2 new — `managePageV1`,
+  `onPageBadgeSourceChanged` (binds the existing
+  `YOVOICE_PROTECTED_OWNER_UID` secret, like the other badge triggers);
+  6 updated — `updateMyDisplayName` (Page rename hook),
+  `setMyProfileVisibility` (going private pauses the Page),
+  `setCreatorAudienceEnabled` (`pageActive` refusal),
+  `onUserBadgeSourceChanged`, `onVipGrantChanged` and `getPublicBadges`
+  (badge `page`). No deletion, no warm instance (`WARM_SET` stays empty), no
+  keep-warm target, no new secret. Export map 280 → 282.
+- **Data:** none written by the deploy. The badge backfill (step 5) adds
+  `page: null` to every existing badge.
+
+### 0. Gates
+
+- `functions` suite under the Auth and Firestore emulators (`npm test`) and
+  `firestore-tests` `npm test` (now includes `pages_rules.test.js`), green on
+  the merged commit.
+- Capture the released Firestore ruleset and the current revisions of the six
+  updated names, plus one `getPublicBadges` response for a staff account (for
+  the key diff in step 3).
+- B3: capture the current revisions of the seven updated B3 names and the
+  released index list (`gcloud firestore indexes composite list`).
+- B4: capture the current revisions of `onNotificationCreated` and
+  `pagesMaintenance`.
+- B5: capture the current revisions of the seven updated B5 names; run the
+  VIP grant census (`node scripts/census_vip_grants.js --project
+  yovoice-ec54a`). **HARD GATE for batch 2n:** the census must report zero
+  non-canonical grants. The B5 badge VIP bit applies to EVERY account (not
+  only Page owners): after 2n and the step 4 backfill, any grant the ADR-230
+  predicate refuses (for example a bare `{expiresAt:null}` or the old
+  `{source:"adminGrant"}` shape) stops lighting that person's rosette. The
+  unit suite rewrote its fixtures to canonical shapes and cannot prove the
+  production data; only this census can. A non-zero count means: repair
+  those grants to the canonical shape first (owner-guarded grant script),
+  re-run the census, and only then deploy 2n.
+- B2: `firestore-tests` `npm run test:storage` under
+  `--only firestore,storage` (it now ends with `pages_storage_rules.test.js`;
+  `test:pages-storage` runs that file alone) and the existing
+  `test:server-message-media`, which shares `storage.rules`, green; capture
+  the released Storage ruleset (`firebase` console → Storage → Rules, or the
+  Rules API release for `firebase.storage/<bucket>`).
+
+### 0a. Indexes (B3) — first, and READY before the B3 functions
+
+```bash
+firebase deploy --only firestore:indexes --project yovoice-ec54a --non-interactive
+```
+
+Answer **No** if the CLI offers to delete indexes that exist only in the
+console (never `--force` here). Wait until every new index is `READY`
+(`gcloud firestore indexes composite list --project=yovoice-ec54a
+--format='table(name,state)'`), then run the smoke in step 3a.
+
+B2's index ships in the same `firestore:indexes` deploy (the file carries
+all ten Pages indexes with B5's four); wait for every one to be READY.
+
+**B5 warning — account deletion depends on these indexes.** The deletion
+workers' `content` and `storage` stages run the Pages queries for EVERY
+deleted account, Page or not. Deploying `onAccountDeletionOutboxCreated` /
+`processAccountDeletionOutboxSchedule` before `pagePosts (authorId,
+createdAt, __name__)`, `pagePostComments (authorId, createdAt, __name__)`
+and `pagePostMediaDeletionJobs (heldBy, storagePath)` are READY makes those
+stages fail with `FAILED_PRECONDITION` and back off toward dead-letter.
+Run the step 3a smoke (all 21 shapes PASS) before step 2m.
+
+### 1. Rules
+
+```bash
+firebase deploy --only firestore:rules --project yovoice-ec54a --non-interactive
+# B2: Storage rules (the page_posts block)
+firebase deploy --only storage --project yovoice-ec54a --non-interactive
+```
+
+B5 changes only `firestore.rules` (one deny); no Storage rules deploy.
+
+Read each released source back; byte-identical to `firestore.rules` and
+`storage.rules`. Deploy Storage rules before the B2 functions: without them
+no upload can land, and with them and no function nothing can reserve.
+
+### 2. Functions — new modules first, then the writers of existing contracts
+
+```bash
+# 2a. the two new names (nothing calls them yet; managePageV1 is switched off)
+firebase deploy --only functions:managePageV1,functions:onPageBadgeSourceChanged \
+  --project yovoice-ec54a --non-interactive
+# 2b. the badge derivation (every trigger must run the same one)
+firebase deploy --only functions:onUserBadgeSourceChanged,functions:onVipGrantChanged,functions:getPublicBadges \
+  --project yovoice-ec54a --non-interactive
+# 2c. the profile hooks
+firebase deploy --only functions:updateMyDisplayName,functions:setMyProfileVisibility,functions:setCreatorAudienceEnabled \
+  --project yovoice-ec54a --non-interactive
+```
+
+B3, after the indexes are READY:
+
+```bash
+# 2d. the four new read callables (switched off until readAccess admits a caller)
+firebase deploy --only functions:getPagesFeedV1,functions:getPageV1,functions:getPagePostV1 \
+  --project yovoice-ec54a --non-interactive
+firebase deploy --only functions:findPagesV1 --project yovoice-ec54a --non-interactive
+# 2e. follows and the follow-edge consumers
+firebase deploy --only functions:setFollow,functions:onRoomLiveChanged,functions:onAchievementUserSocialCountersChanged \
+  --project yovoice-ec54a --non-interactive
+# 2f. direct messages (D13 + dm.pageOutbound)
+firebase deploy --only functions:openDirectConversation,functions:sendDirectMessage,functions:reserveDirectMessageAttachment \
+  --project yovoice-ec54a --non-interactive
+firebase deploy --only functions:finalizeDirectMessageAttachment --project yovoice-ec54a --non-interactive
+```
+
+B2, after its index is READY and the Storage rules are released:
+
+```bash
+# 2g. posts (switched off until writeAccess admits a caller; delete is a safety op)
+firebase deploy --only functions:reservePagePostMediaV1,functions:publishPagePostV1,functions:managePagePostV1 \
+  --project yovoice-ec54a --non-interactive
+# 2h. media grants and the worker (the worker creates its Cloud Scheduler job)
+firebase deploy --only functions:getPagePostMediaAccessV1,functions:pagesMaintenance \
+  --project yovoice-ec54a --non-interactive
+```
+
+B4 (no index, no rules):
+
+```bash
+# 2i. engagement and the likers list (switched off; deleteComment is a safety op)
+firebase deploy --only functions:pagePostEngagementV1,functions:listPagePostLikersV1 \
+  --project yovoice-ec54a --non-interactive
+# 2j. the push boundary learns pagePostComment; the worker retires comment rows
+firebase deploy --only functions:onNotificationCreated,functions:pagesMaintenance \
+  --project yovoice-ec54a --non-interactive
+```
+
+B5, after its four indexes are READY and the step 3a smoke passes:
+
+```bash
+# 2k. the report callable and the capability triggers (restore-only while
+#     the switch is absent: lapseEnabled reads false)
+firebase deploy --only functions:createPageReportV1,functions:onPageCapabilityEntitlementChanged,functions:onPageCapabilityGrantChanged \
+  --project yovoice-ec54a --non-interactive
+# 2l. moderation arms and the worker's evidence-retention + lapse slices
+firebase deploy --only functions:moderateReport,functions:pagesMaintenance \
+  --project yovoice-ec54a --non-interactive
+# 2m. account deletion (ONLY after the smoke: see the 0a warning)
+firebase deploy --only functions:onAccountDeletionOutboxCreated,functions:processAccountDeletionOutboxSchedule \
+  --project yovoice-ec54a --non-interactive
+# 2n. the badge VIP bit (ONLY after a census with zero non-canonical grants;
+#     then re-run the step 4 backfill)
+firebase deploy --only functions:onUserBadgeSourceChanged,functions:onVipGrantChanged,functions:onPageBadgeSourceChanged \
+  --project yovoice-ec54a --non-interactive
+```
+
+Deploy 2j before testers mode: a `pagePostComment` row reaching the OLD
+`onNotificationCreated` has no title for it and is skipped as an unknown
+type (`pushSkipReason: "unknown-type"`, row kept), never pushed unchecked.
+
+Batches of at most three (the 2026-09-26 CPU-quota failure). Run each with
+`--dry-run` first. If a trigger batch asks for `--force` only because of a
+retry policy, add it: a name-scoped `--only` plans no deletion.
+
+### 3. Read back
+
+1. All 8 ACTIVE in `europe-west1`
+   (`gcloud functions list --v2 --regions=europe-west1 --project=yovoice-ec54a`).
+2. `managePageV1` with a controlled account: `{op:"create", …}` answers
+   `failed-precondition` `details.reason == "pagesNotEnabled"`;
+   `{op:"pause"}` answers `pageNotFound`.
+3. `getPublicBadges` for the captured staff account: the same keys plus
+   `page: null`.
+4. Smoke unchanged behaviour: a non-Page rename, a go-private and back, a
+   Creator audience toggle on a paid Creator (if one exists).
+5. Logs: no `severity>=ERROR` from the eight services in the first hour.
+6. B3: all 11 names ACTIVE. `getPagesFeedV1 {cursor:null}` answers
+   `pagesNotEnabled`; a Creator follow and unfollow of a paid Creator (if one
+   exists) is unchanged; a DM between two ordinary accounts under each
+   privacy setting is unchanged; an ordinary host's LIVE still notifies
+   (if rooms are still in use).
+7. B2: all 5 names ACTIVE (`pagesMaintenance` as a scheduled function with
+   an enabled `firebase-schedule-pagesMaintenance-europe-west1` job).
+   `reservePagePostMediaV1` and `publishPagePostV1` answer `pagesNotEnabled`;
+   `managePagePostV1 {requestId, op:"delete", postId:"pp_" + 40×"0"}` answers
+   `permission-denied` `pageUnavailable` (it never reads the switch). After
+   one scheduled run, the logs show `pages maintenance` with every slice
+   `processed: 0` and the orphan slice `ran: true, listed: 0`.
+
+8. B4: all 4 names ACTIVE. `pagePostEngagementV1 {requestId, op:"like",
+   postId:"pp_" + 40×"0"}` answers `pagesNotEnabled`;
+   `{requestId, op:"deleteComment", commentId:"pc_" + 40×"0"}` answers
+   `permission-denied` `pageUnavailable` (it never reads the switch);
+   `listPagePostLikersV1 {postId:"pp_" + 40×"0", cursor:null}` answers
+   `pagesNotEnabled`. An ordinary Moment or Yeel comment still pushes (the
+   `momentComment` / `reelComment` path is unchanged), and
+   `onNotificationCreated` logs no new error class in the first hour.
+
+9. B5: all 10 names ACTIVE. `createPageReportV1 {requestId, targetType:
+   "page", pageId:<a uid with no Page>, postId:null, commentId:null,
+   reason:"spam", note:null}` answers `not-found` `pageReportTargetMissing`
+   (and costs one `pages.report` unit). A `moderateReport` claim/resolve on
+   an ordinary report behaves as before; `{action:"suspendPage"}` on it
+   answers `failed-precondition`. After one scheduled run, `pages
+   maintenance` logs `evidenceRetention.processed: 0` and `lapse.ran:
+   true` with `transitions: 0`. If account deletion is enabled, the next
+   processed deletion logs `pages` in its `content` details and completes.
+
+### 3a. Index smoke (B3) — a hard gate before testers mode
+
+```bash
+cd functions
+node scripts/smoke_pages_indexes.js --project yovoice-ec54a
+# after the first real Page and post exist (testers mode), prove the tiebreak too:
+node scripts/smoke_pages_indexes.js --project yovoice-ec54a --page <uid> --post <pp_…>
+```
+
+Read-only; it runs the exact query builders of the four read callables
+(`PAGES_READ_QUERIES`: feed chunk, visitor and owner wall, visitor and
+owner Zdjęcia, comments, Find suggest, Find search) and, since B2, of the
+worker (`PAGES_MAINTENANCE_QUERIES`: reservation expiry, due unheld media
+deletion jobs, post cleanup jobs) and, since B4, the Page post likers
+candidates through the ADR-230 fetcher itself and, since B5, the lapse
+sweep (both its null and its timestamp cursor), the four account-deletion
+queries, the evidence-retention slice, the Page report's recent-posts
+snapshot (`PAGES_REPORT_QUERIES.recentPosts`, the account-deletion
+`authorPosts` index) and the operator moderation list — 22 shapes, each
+with a startAfter page — and prints counts and PASS/FAIL
+only. Any `FAIL` with code
+9 (`FAILED_PRECONDITION`) is a missing index: do not open testers mode.
+
+### 4. Badge backfill
+
+```bash
+cd functions
+YOVOICE_PROTECTED_OWNER_UID=… node scripts/backfill_badges.js --project yovoice-ec54a          # dry run
+YOVOICE_PROTECTED_OWNER_UID=… node scripts/backfill_badges.js --project yovoice-ec54a --apply
+```
+
+Expect every existing badge as `toUpdate` (the missing `page` key), zero
+`conflicts`, `pageBadges: 0` before any Page exists; a second dry run is all
+`upToDate`. After B5's 2n, run it again: a VIP-only badge whose grant the
+canonical check refuses is planned as `toDelete` (or an `isVip` update for
+staff) — that count must match the census from step 0.
+
+### 4a. Tester-phase moderation (B5)
+
+The Moderation Center does not render Page reports yet (Roadmap 0o). The
+owner works the queue with the owner-guarded script, which runs the same
+`handleModerateReport` as the callable (audit row included) and is a dry
+run unless `--apply`:
+
+```bash
+cd functions
+export YOVOICE_PROTECTED_OWNER_UID=…
+node scripts/pages_moderation.js --project yovoice-ec54a list
+node scripts/pages_moderation.js --project yovoice-ec54a show <reportId>
+node scripts/pages_moderation.js --project yovoice-ec54a show <reportId> --media --apply   # 5-min URLs, audited
+node scripts/pages_moderation.js --project yovoice-ec54a remove <reportId> [--reason <key>] --apply
+#   also: hold | restore | suspend | lift | resolve [--resolution <key>] | dismiss
+```
+
+`list` scans at most 500 Page reports (single-field `targetType in`) and
+prints open and in-review ones with their snapshots (a `page` report also
+shows `recentPosts`), never the reporter.
+
+A hold lasts only while a report on the post is open: `resolve` or
+`dismiss` of the LAST open report restores a held post (the owner gets
+"Your Page post is visible again"); to keep it down, use `remove`. An
+owner-deleted post under review is a tombstone for at most 90 days
+(`pageEvidenceRetention`, reason `ownerDelete`), purged by
+`pagesMaintenance` right after the last resolution.
+
+### 5. Testers mode (Kamil's go; after B2-B5 and their index smoke)
+
+Kamil needs a **canonical** `vipGrants/{uid}` (staff preview is refused);
+check with `node scripts/census_vip_grants.js --project yovoice-ec54a`.
+
+```bash
+cd functions
+# dry run: prints the current and requested state, writes nothing
+node scripts/set_pages_activation.js --project yovoice-ec54a \
+  --read testers --write testers --testers <uidA>,<uidB> --lapse true
+node scripts/set_pages_activation.js --project yovoice-ec54a \
+  --read testers --write testers --testers <uidA>,<uidB> --lapse true --apply
+```
+
+The script writes the exact document with `set()` (no merge), bumps
+`revision`, refuses a configuration the callables would read as disabled
+(for example write wider than read) and fails unless the read-back matches.
+Opening to everyone later is `--read all --write all --testers "" --lapse true`.
+
+B5 operator smoke in testers mode (spec §7 step 6): a controlled tester
+reports a post of another controlled Page → `pages_moderation.js list`,
+`show`, `show --media --apply` (audit rows appear), `hold` then `restore`
+then `resolve`, and `remove` on a second report (the owner gets the
+`pageModeration` row; the post's `evidenceHold` clears at the last
+resolution). Lapse: give a controlled Page owner a canonical grant whose
+`expiresAt` is in the past — `onPageCapabilityGrantChanged` turns the Page
+`readOnly` at once (Day-0 `pageLapse` row, out of Find, visitors cannot
+follow or comment); a grant with `expiresAt: null` restores it.
+
+### 6. Alerts (before testers mode)
+
+Log-based metrics over `cloud_run_revision`: `jsonPayload.message="pages
+visibility index near cap"` (warn) and `"pages visibility index at cap"`
+(page); `"pages activation malformed"` and `"pages activation unreadable"`
+(an operator typo switches everything off); `"pages malformed page on a
+safety action"`. B3 adds `"pages malformed record skipped"` (a writer broke
+an exact post, comment or Page shape; payload is the kind and a count, no
+ids), `"pages visibility index malformed on read"` (page) and `"pages follow
+index prune failed"` (warn, best-effort hint maintenance). B2 adds `"pages
+maintenance slice failed"` (page; payload is the slice name and an error
+code), `"pages malformed reservation"` (page), `"pages media deletion
+retry"` (warn; alert when it repeats for an hour), `"pages post cleanup
+found a live post"` (page: a cleanup job pointed at an existing post, which
+it refused to touch), `"pages post count underflow"` (page) and `"pages
+post cleanup deferred"` (warn; the durable job finishes it). **Budget
+alert (spec §7 step 11):** `"pages budget exhausted"` (warn; payload
+`limit: posts | reservations | bytes`, no uid) — a spike means Pages are
+hitting 10 posts / 30 media / 200 MB a day. B4 adds `"pages auth age
+unavailable"` (warn; the Admin `getUser` for the new-account comment limit
+failed and the stricter limit applied; payload is the error code only),
+`"pages like count underflow"` and `"pages comment count underflow"`
+(page: a counter was already 0 on a decrement), and the existing
+`"likers budget exhausted"` now also counts Page post lists. B5 adds
+`"pages lapse transition"` (info; payload `outcome`: a spike of `readOnly`
+means grants are ending — or capability derivation misfired, in which case
+set `--lapse false`), `"pages lapse skipped a malformed page"` and `"pages
+lapse sweep found malformed pages"` (page), `"pages report filed"` (info;
+payload `targetType`, for a report-volume metric), `"pages moderation
+found a malformed post"` / `"… page"`, `"pages open-report record
+malformed on report"` / `"… on resolve"`, `"pages deletion removed a
+malformed post"` / `"… comment"` and `"pages evidence retention row
+malformed"` (page).
+
+### Rollback
+
+- **Everything Pages:** `node scripts/set_pages_activation.js --project
+  yovoice-ec54a --read disabled --write disabled --lapse false --apply` —
+  immediate, no deploy. Pause and going private keep working.
+- **Functions:** redeploy the six updated names from `f99cb1d1`; the badge
+  `page` key then stays on already-written documents until the next sync and
+  is ignored by every client. The two new names can stay (switched off).
+- **Rules:** re-release the captured ruleset (only the owner `get` of
+  `pages/{uid}` differs in effect).
+- **B3 functions:** redeploy the seven updated names from `f99cb1d1`. The
+  follow edges a Page gained stay valid ordinary edges; `pageFollowIndex`
+  documents stay (server-only, unread by the old code). With `readAccess`
+  disabled the four read callables answer `pagesNotEnabled` and can stay.
+- **B3 indexes:** leave them (unused indexes cost nothing to serve).
+- **B2:** the kill switch stops reserve, publish, pin and viewer grants at
+  once; owner delete, the staff media branch and the worker keep running
+  (they only remove or audit). To remove B2 entirely, delete the five
+  functions by name (`firebase functions:delete reservePagePostMediaV1
+  publishPagePostV1 managePagePostV1 getPagePostMediaAccessV1
+  pagesMaintenance --region europe-west1`), which also removes the
+  scheduler job, and re-release the captured Storage ruleset. Posts and
+  media stay (server-only, unread); nothing is deleted by a rollback.
+- **B4:** the kill switch stops like, unlike, comment and the likers list
+  at once (`appConfig/likersV1 enabled:false` also stops the list);
+  comment delete keeps working. To remove B4, delete
+  `pagePostEngagementV1` and `listPagePostLikersV1` by name and redeploy
+  `onNotificationCreated` and `pagesMaintenance` from the captured
+  revisions; existing `pagePostComment` rows then stay in the bell (the old
+  push boundary skips them) and likes and comments stay server-only.
+- **B5:** the lapse brake is `--lapse false` (downgrades stop at once,
+  restores continue); the kill switch does not stop reporting (a safety
+  action). To remove B5, delete `createPageReportV1`,
+  `onPageCapabilityEntitlementChanged` and `onPageCapabilityGrantChanged`
+  by name and redeploy the seven updated names from their captured
+  revisions (the badge VIP bit then reverts to `grantIsActive` on the next
+  sync). Reports, `pagePostOpenReports`, tombstones, held media jobs and
+  `pageEvidenceRetention` rows stay server-only and inert; nothing is
+  deleted by a rollback. Leave the indexes.
+
 ## "See who liked" (ADR-230) — backend DEPLOYED 2026-09-28, lists switched OFF
 
 **Deploy record (2026-09-28, from `a68a3396`):** census 14/14 canonical

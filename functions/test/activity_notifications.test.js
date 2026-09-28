@@ -802,3 +802,51 @@ test("the DM notification trigger retries, bounded, on the canonical path",
         }
       });
   });
+
+// Premium Pages (ADR-231/233 §2.3): following a Page grants reading only. A
+// host with a pages/{uid} document (any state) never fans LIVE out.
+test("a Page host's LIVE room notifies no follower", async () => {
+  const host = "activity-page-host";
+  const follower = "activity-page-follower";
+  const roomId = "activity-page-room";
+  await db.doc(`users/${host}`).set({ displayName: "Page host" });
+  await db.doc(`users/${follower}`).set({ displayName: "Follower" });
+  await db.doc(`pages/${host}`).set({ schemaVersion: 1, ownerPaused: true });
+  await db.doc(`users/${host}/followers/${follower}`).set({
+    uid: follower,
+    followedAt: Timestamp.now(),
+  });
+  const room = db.doc(`rooms/${roomId}`);
+  await room.set({
+    hostId: host,
+    isLive: true,
+    visibility: "public",
+    name: "Page room",
+    voiceSessionId: "voice-session-page-0001",
+  });
+  await handleRoomLiveChanged({
+    params: { roomId },
+    data: { before: { data: () => ({ isLive: false }) }, after: await room.get() },
+  });
+  assert.equal((await db.collection(`users/${follower}/notifications`).get()).size, 0);
+  assert.equal((await db.collection("roomLiveFanoutOutbox")
+    .where("hostId", "==", host).get()).size, 0);
+
+  // Without the Page document the same room notifies (control).
+  await db.doc(`pages/${host}`).delete();
+  await room.update({ isLive: false });
+  await room.update({ isLive: true, voiceSessionId: "voice-session-page-0002" });
+  await handleRoomLiveChanged({
+    params: { roomId },
+    data: { before: { data: () => ({ isLive: false }) }, after: await room.get() },
+  });
+  assert.equal((await db.collection(`users/${follower}/notifications`).get()).size, 1);
+
+  // Leave nothing live behind: other suites list the emulator's live rooms.
+  await room.delete();
+  for (const path of [`users/${host}`, `users/${follower}`]) {
+    await db.recursiveDelete(db.doc(path));
+  }
+  const outboxes = await db.collection("roomLiveFanoutOutbox").where("hostId", "==", host).get();
+  await Promise.all(outboxes.docs.map((document) => document.ref.delete()));
+});

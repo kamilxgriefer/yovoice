@@ -90,7 +90,12 @@ function inspectColdStart() {
   return inspection;
 }
 
-// Every export of functions/index.js, sorted. 280 names (274 + the three
+// Every export of functions/index.js, sorted. 296 names (293 + the three
+// ADR-233 Premium Pages B5 exports below; 293 = 291 + the two
+// ADR-233 Premium Pages B4 engagement exports below; 291 = 286 + the five
+// ADR-233 Premium Pages B2 post exports below; 286 = 282 + the four
+// ADR-233 Premium Pages B3 read callables below; 282 = 280 + the two
+// ADR-233 Premium Pages B1 exports below; 280 = 274 + the three
 // ADR-230 likers lists, the two ADR-230 comment-like toggles and the ADR-230
 // "Hide my likes" setter below; build 36
 // integration: 261 at the common base, +1 request to speak, +3 account
@@ -121,7 +126,28 @@ function inspectColdStart() {
 // setMomentCommentLikeV1 (Stage B) and setReelCommentLikeV1 (Reels) join it
 // too; they are deliberately NOT behind that switch, and neither is
 // setMyLikesHiddenV1 (Profile), so people can opt out before any list is
-// exposed. `deliverBugReportV1` is NOT in it: both of its
+// exposed. 2026-09-28 (ADR-233, Premium Pages package B1, 280 + 2 = 282):
+// managePageV1 (answers pagesNotEnabled until appConfig/pagesV1 is written,
+// except its safety op `pause`) and the badge trigger onPageBadgeSourceChanged
+// join it. 2026-09-28 (ADR-233, package B3, 282 + 4 = 286): the read
+// callables getPagesFeedV1, getPageV1, getPagePostV1 and findPagesV1 join it
+// (every one answers pagesNotEnabled until appConfig/pagesV1 allows reading;
+// none is warm or a keep-warm target). 2026-09-28 (ADR-233, package B2,
+// 286 + 5 = 291): reservePagePostMediaV1, publishPagePostV1,
+// managePagePostV1 and getPagePostMediaAccessV1 (all but the safety op
+// `delete` and the audited staff media branch answer pagesNotEnabled until
+// appConfig/pagesV1 admits the caller) and the scheduled worker
+// pagesMaintenance join it; none is warm or a keep-warm target, and the
+// Storage SDK stays lazy. 2026-09-28 (ADR-233, package B4, 291 + 2 =
+// 293): pagePostEngagementV1 (like, unlike, comment; its safety op
+// `deleteComment` never reads the switch) and listPagePostLikersV1 (behind
+// appConfig/likersV1 AND appConfig/pagesV1) join it; neither is warm or a
+// keep-warm target. 2026-09-28 (ADR-233, package B5, 293 + 3 = 296):
+// createPageReportV1 (a safety action: it never reads appConfig/pagesV1) and
+// the capability triggers onPageCapabilityEntitlementChanged and
+// onPageCapabilityGrantChanged (one plain read and an early return for an
+// account without a Page) join it; none is warm or a keep-warm target.
+// `deliverBugReportV1` is NOT in it: both of its
 // delivery channels are source-gated off in index.js. Extending this list is
 // the deliberate review step the header describes, not a drive-by edit.
 const EXPORT_NAMES = Object.freeze([
@@ -147,6 +173,7 @@ const EXPORT_NAMES = Object.freeze([
   "createDirectCallToken",
   "createLiveKitToken",
   "createMomentComment",
+  "createPageReportV1",
   "createReelComment",
   "createReelCommentReport",
   "createReelReport",
@@ -207,6 +234,7 @@ const EXPORT_NAMES = Object.freeze([
   "finalizeServerCompanyFileV1",
   "finalizeServerFamilyMemoryV1",
   "finalizeVoiceCommentDraft",
+  "findPagesV1",
   "forceEndRoom",
   "getAdminAuditLog",
   "getAdminClub",
@@ -218,6 +246,10 @@ const EXPORT_NAMES = Object.freeze([
   "getGifCatalog",
   "getMutualFriends",
   "getMyStaffCapabilities",
+  "getPagePostMediaAccessV1",
+  "getPagePostV1",
+  "getPageV1",
+  "getPagesFeedV1",
   "getPremiumBillingContext",
   "getProfileMediaAccess",
   "getPublicBadges",
@@ -243,12 +275,15 @@ const EXPORT_NAMES = Object.freeze([
   "listAdminRooms",
   "listAdminUsers",
   "listBugReportsV1",
+  "listPagePostLikersV1",
   "listReelLikersV1",
   "listReels",
   "listReelsV2",
   "listReportAuditTrail",
   "listServerChannelMessageReactorsV1",
   "listVoiceMomentLikersV1",
+  "managePagePostV1",
+  "managePageV1",
   "markDirectConversationRead",
   "migrateDirectIntegrityConversation",
   "migrateIntegrityMoment",
@@ -284,6 +319,9 @@ const EXPORT_NAMES = Object.freeze([
   "onMomentCommentCreated",
   "onMomentCommentDeleted",
   "onNotificationCreated",
+  "onPageBadgeSourceChanged",
+  "onPageCapabilityEntitlementChanged",
+  "onPageCapabilityGrantChanged",
   "onPinnedCreatorEntitlementChanged",
   "onPinnedCreatorProfileChanged",
   "onPinnedMomentEligibilityChanged",
@@ -299,11 +337,14 @@ const EXPORT_NAMES = Object.freeze([
   "onUserPrivacySourceChanged",
   "onVipGrantChanged",
   "openDirectConversation",
+  "pagePostEngagementV1",
+  "pagesMaintenance",
   "processAccountDeletionOutboxSchedule",
   "processPendingContentCleanupSchedule",
   "processPendingReelCleanupSchedule",
   "processPendingServerControlOutboxSchedule",
   "processServerChannelMessageMediaDeletionJobs",
+  "publishPagePostV1",
   "publishPublicShowcaseSchedule",
   "publishPublicStatsSchedule",
   "receiveLiveKitAchievementWebhook",
@@ -320,6 +361,7 @@ const EXPORT_NAMES = Object.freeze([
   "reportGifAsset",
   "reserveDirectMessageAttachment",
   "reserveMomentDraft",
+  "reservePagePostMediaV1",
   "reserveProfileMediaUpload",
   "reserveReelDraft",
   "reserveReelDraftV2",
@@ -640,4 +682,47 @@ test("the likers modules load no SDK beyond the callable baseline", () => {
     "utils/premium_access.js",
     "utils/roles.js",
   ]);
+});
+
+// ADR-233 (Premium Pages, B1 + B3 + B2 + B4 + B5): the gate, the activation switch,
+// the contract, the catalog, the lapse function, the name filter, (B3) the
+// audience predicate, the follow index, the post contract and the read wire
+// contract, and (B2) the post write contract, the JPEG metadata walker and
+// the Storage adapter (which receives its bucket; it never constructs one),
+// and (B4) the engagement contract (link filter, like edge, bell-row ids,
+// which the push trigger's source check loads lazily), and (B5) the report,
+// moderation-notice and evidence-retention contract
+// are the modules every later Pages package, setFollow and the
+// profile hooks share. They add no SDK beyond the
+// callable baseline (never Firestore or Storage: only visibility.js and the
+// callable modules touch Firestore), and the catalog and the name filter load
+// no npm package at all.
+test("the shared Pages modules load no SDK beyond the callable baseline", () => {
+  const baseline = inspectModuleGraph(["./integrity/guards.js"]);
+  const shared = inspectModuleGraph([
+    "./pages/access.js",
+    "./pages/activation.js",
+    "./pages/audience.js",
+    "./pages/contract.js",
+    "./pages/engagement_contract.js",
+    "./pages/follows.js",
+    "./pages/lapse.js",
+    "./pages/media_contract.js",
+    "./pages/media_probe.js",
+    "./pages/media_storage.js",
+    "./pages/post_contract.js",
+    "./pages/report_contract.js",
+    "./pages/views.js",
+  ]);
+  assert.deepEqual(shared.packages, baseline.packages);
+  for (const subsystem of ["firestore", "storage", "messaging", "database"]) {
+    assert.equal(
+      shared.adminSubsystems.includes(subsystem),
+      false,
+      `the shared Pages modules must not load firebase-admin/${subsystem}`,
+    );
+  }
+  for (const pure of ["./profile/name_safety.js", "./pages/catalog.js"]) {
+    assert.deepEqual(inspectModuleGraph([pure]).packages, [], pure);
+  }
 });

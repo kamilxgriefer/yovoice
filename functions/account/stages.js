@@ -120,6 +120,12 @@ const UID_KEYED_DOCUMENTS = Object.freeze([
   "achievementMigrations",
   "billingCheckoutLocks",
   "serverFamilyOwnerReservations",
+  // Premium Pages (ADR-233 §2.11): the feed's follow hint, the open upload
+  // lease and the under-18 refusal record. pages/{uid} itself goes in the
+  // `content` stage, with its pageVisibility/v1 entry.
+  "pageFollowIndex",
+  "pagePostMediaLeases",
+  "pageAdultRefusals",
 ]);
 
 // Every Storage prefix owned by exactly one uid (storage.rules).
@@ -137,7 +143,14 @@ const UID_KEYED_DOCUMENTS = Object.freeze([
 // serverMessageMediaObjects/{messageId} row per published object carrying its
 // owner, path and generation, and the storage stage walks those rows (plus any
 // open upload reservation) after the fixed prefixes — see
-// sweepServerMessageMedia below. THE OTHER FOUR ARE NOT SWEPT BY THIS
+// sweepServerMessageMedia below. A tenth, page_posts/{uid}/ (Premium Page
+// post photos and voice, ADR-233), IS keyed by the uid but is deliberately
+// NOT a prefix delete: an object a held deletion job names is report evidence
+// that must survive until the report resolves or 90 days pass. The `content`
+// stage turns every post into deletion jobs, and the storage stage deletes
+// each object an UNHELD job or an open reservation names, by exact path and
+// generation (sweepTail, pages/account_deletion.js); anything unnamed is an
+// orphan the daily pagesMaintenance sweep removes. THE OTHER FOUR ARE NOT SWEPT BY THIS
 // PIPELINE AT ALL, and the disclosure below is the complete one — an earlier
 // revision of this comment named only the first two, which made the gap look
 // half the size it is:
@@ -237,6 +250,7 @@ function createAccountDeletionStages({
   logger = console,
   limits: limitOverrides = {},
   environment = process.env,
+  pages = null,
 } = {}) {
   if (!db || typeof db.collection !== "function") {
     throw new TypeError("A Firestore database is required.");
@@ -249,6 +263,16 @@ function createAccountDeletionStages({
     throw new TypeError("A Storage bucket resolver is required.");
   }
   const limits = resolveLimits(limitOverrides);
+  // Premium Pages (ADR-233 §2.11): its own module, created lazily so a stage
+  // runner that never reaches a Pages step loads nothing extra.
+  let pagesDeletion = pages;
+  function pagesStages() {
+    if (pagesDeletion === null) {
+      const { createPagesAccountDeletion } = require("../pages/account_deletion");
+      pagesDeletion = createPagesAccountDeletion({ db, logger });
+    }
+    return pagesDeletion;
+  }
 
   async function deletePage(query) {
     const snapshot = await query.get();
@@ -278,8 +302,9 @@ function createAccountDeletionStages({
 
   // --------------------------------------------------------------- content
 
-  async function runContent(uid) {
+  async function runContent(uid, cursor) {
     let removed = 0;
+    if (cursor?.pages) return runPagesContent(uid, cursor.pages, removed);
     for (const collectionName of ["voiceMoments", "reels"]) {
       const snapshot = await db
         .collection(collectionName)
@@ -297,7 +322,16 @@ function createAccountDeletionStages({
         return { done: false, cursor: null, details: { removed } };
       }
     }
-    return { done: true, cursor: null, details: { removed } };
+    return runPagesContent(uid, { step: 0 }, removed);
+  }
+
+  /// The Premium Pages part of `content`: the Page, its posts (a report's
+  /// evidence is retained as a tombstone), the comments the account wrote.
+  async function runPagesContent(uid, pagesCursor, removed) {
+    const outcome = await pagesStages().runContent(uid, pagesCursor);
+    return outcome.done
+      ? { done: true, cursor: null, details: { removed, pages: outcome.details } }
+      : { done: false, cursor: { pages: outcome.cursor }, details: { removed, pages: outcome.details } };
   }
 
   // ---------------------------------------------------------------- social
@@ -634,13 +668,13 @@ function createAccountDeletionStages({
     const prefixes = uidStoragePrefixes(uid);
     const index = cursorStep(cursor);
     if (index >= prefixes.length) {
-      const swept = await sweepServerMessageMedia(uid, resolveBucket());
+      const swept = await sweepTail(uid, resolveBucket());
       return swept.more
-        ? { done: false, cursor: { step: index }, details: { serverMessageMedia: swept.removed } }
+        ? { done: false, cursor: { step: index }, details: swept.details }
         : {
           done: true,
           cursor: null,
-          details: { prefixes: prefixes.length, serverMessageMedia: swept.removed },
+          details: { prefixes: prefixes.length, ...swept.details },
         };
     }
     const bucket = resolveBucket();
@@ -661,11 +695,27 @@ function createAccountDeletionStages({
     }
     // The fixed prefixes are clear; the channel media page runs in the same
     // call, so an account without any keeps finishing this stage here.
-    const swept = await sweepServerMessageMedia(uid, bucket);
+    const swept = await sweepTail(uid, bucket);
     return {
       done: !swept.more,
       cursor: swept.more ? { step: next } : null,
-      details: { deleted: slice, serverMessageMedia: swept.removed },
+      details: { deleted: slice, ...swept.details },
+    };
+  }
+
+  /// After the fixed prefixes: the Servers channel media page, then the
+  /// Premium Pages media page (page_posts/{uid}/ objects named by an unheld
+  /// deletion job or an open reservation; objects a HELD job names are
+  /// report evidence and stay until the report resolves or 90 days pass).
+  async function sweepTail(uid, bucket) {
+    const server = await sweepServerMessageMedia(uid, bucket);
+    if (server.more) {
+      return { more: true, details: { serverMessageMedia: server.removed } };
+    }
+    const pagesMedia = await pagesStages().sweepStorage(uid, bucket);
+    return {
+      more: pagesMedia.more,
+      details: { serverMessageMedia: server.removed, pagesMedia: pagesMedia.removed },
     };
   }
 
@@ -842,6 +892,16 @@ function createAccountDeletionStages({
       };
     }
 
+    if (step === 6) {
+      // Premium Pages: the per-day posting budget rows (keyed by pageId).
+      const outcome = await pagesStages().removeRecords(uid);
+      return {
+        done: false,
+        cursor: { step: outcome.done ? 7 : 6 },
+        details: { pageBudgetsDeleted: outcome.removed },
+      };
+    }
+
     return { done: true, cursor: null, details: { step: "complete" } };
   }
 
@@ -932,7 +992,7 @@ function createAccountDeletionStages({
 
   const RUNNERS = Object.freeze({
     revoke: (uid) => runRevoke(uid),
-    content: (uid) => runContent(uid),
+    content: (uid, cursor) => runContent(uid, cursor),
     social: (uid, cursor) => runSocial(uid, cursor),
     messaging: (uid, cursor) => runMessaging(uid, cursor),
     storage: (uid, cursor) => runStorage(uid, cursor),

@@ -8,6 +8,11 @@ const {
   consumeRateLimit,
   rateLimitReference,
 } = require("../integrity/guards");
+const {
+  canonicalPage,
+  pageReference,
+  pageRenameUpdate,
+} = require("../pages/hooks");
 
 const REGION = "europe-west1";
 const DISPLAY_NAME_COOLDOWN_MS = 30 * 24 * 60 * 60 * 1000;
@@ -160,8 +165,12 @@ function createDisplayNameService({
       });
     });
 
+    // Premium Pages (ADR-233 §2.2): while pages/{uid} exists, paused or not,
+    // a rename must pass name_safety and moves the Page's name mirror in the
+    // same transaction. Accounts without a Page read one absent document.
+    const pageRef = pageReference(firestore, auth.uid);
     const result = await firestore.runTransaction(async (transaction) => {
-      const snapshot = await transaction.get(profileRef);
+      const [snapshot, pageSnapshot] = await transaction.getAll(profileRef, pageRef);
       const profile = activeProfile(snapshot);
       const currentDisplayName = typeof profile.displayName === "string"
         ? profile.displayName
@@ -207,6 +216,11 @@ function createDisplayNameService({
         );
       }
 
+      const page = canonicalPage(pageSnapshot, auth.uid);
+      if (page !== null) {
+        // Throws pageNameReserved before any write is queued.
+        transaction.update(pageRef, pageRenameUpdate(displayName, now));
+      }
       transaction.update(profileRef, {
         displayName,
         displayNameChangedAt: now,
