@@ -24,9 +24,12 @@ import 'package:yovoice/features/moments/presentation/widgets/moments_feed_view.
 import 'package:yovoice/features/moments/presentation/widgets/yo_moments_chrome.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/reels/data/services/reel_service.dart';
+import 'package:yovoice/features/reels/data/services/yeels_posted_flag.dart';
 import 'package:yovoice/features/reels/presentation/screens/reel_composer_screen.dart';
 import 'package:yovoice/features/reels/presentation/screens/reels_feed_screen.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_card.dart';
+import 'package:yovoice/features/reels/presentation/widgets/yeels_create_invitation.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_create_ring_button.dart';
 import 'package:yovoice/shared/widgets/overlays/immersive_feed_chrome.dart';
 import 'package:yovoice/shared/widgets/overlays/immersive_overlay_atoms.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
@@ -91,6 +94,7 @@ class MomentsScreen extends StatefulWidget {
     this.onOpenFindCreators,
     this.friendService,
     this.followService,
+    this.yeelsPostedFlag,
     super.key,
   });
 
@@ -165,6 +169,12 @@ class MomentsScreen extends StatefulWidget {
   /// Test/host seam for the existing Reel composer route.
   final Future<void> Function()? onCreateReel;
 
+  /// Injection seam for "this account has published a Yeel", which retires
+  /// the create ring's invitation echo (ADR-229); production shares
+  /// [YeelsPostedFlag.instance] with the composer.
+  @visibleForTesting
+  final YeelsPostedFlag? yeelsPostedFlag;
+
   @override
   State<MomentsScreen> createState() => _MomentsScreenState();
 }
@@ -191,6 +201,20 @@ class _MomentsScreenState extends State<MomentsScreen> with RouteAware {
   ReelFeedScope _reelsScope = ReelFeedScope.discover;
   ModalRoute<void>? _observedRoute;
   bool _routeIsCurrent = true;
+
+  /// The bounded invitation echo of the Yeels create ring (ADR-229): it
+  /// runs only while the Yeels format is the visible one.
+  late final YeelsCreateInvitation _createInvitation = YeelsCreateInvitation(
+    postedFlag: widget.yeelsPostedFlag,
+  );
+
+  /// Whether this layout draws the ring at all: below 1100 px. The wide
+  /// header keeps its own create control, so a wide window is no visit.
+  bool _createRingShown = true;
+
+  /// The Yeels feed's empty state offers "Create Yeel" itself; the ring
+  /// stays quiet meanwhile so two calls to create never compete.
+  bool _feedOffersCreate = false;
 
   @override
   void initState() {
@@ -247,6 +271,7 @@ class _MomentsScreenState extends State<MomentsScreen> with RouteAware {
     _reelsVisible.dispose();
     _reelsRefreshRequests.dispose();
     _voiceRefreshRequests.dispose();
+    _createInvitation.dispose();
     super.dispose();
   }
 
@@ -258,6 +283,27 @@ class _MomentsScreenState extends State<MomentsScreen> with RouteAware {
         _destinationVisible && _format == YoMomentsFormat.voice;
     _reelsVisible.value =
         _destinationVisible && _format == YoMomentsFormat.reels;
+    _syncInvitation();
+  }
+
+  /// A visit is the Yeels format shown, with its ring, in the shown
+  /// destination; a route over it (a sheet, a dialog, the composer) or the
+  /// feed's own empty-state offer only pauses the visit. Touches timers
+  /// only, so it is safe from a layout callback.
+  void _syncInvitation() {
+    _createInvitation.update(
+      visible:
+          (widget.isVisible?.value ?? true) &&
+          _format == YoMomentsFormat.reels &&
+          _createRingShown,
+      paused: !_routeIsCurrent || _feedOffersCreate,
+    );
+  }
+
+  void _setFeedOffersCreate(bool value) {
+    if (_feedOffersCreate == value) return;
+    _feedOffersCreate = value;
+    _syncInvitation();
   }
 
   /// The selected format's tab activated again: that format reads what it is
@@ -300,13 +346,19 @@ class _MomentsScreenState extends State<MomentsScreen> with RouteAware {
   }
 
   Future<void> _openReelComposer() async {
+    // Opening the composer answers the ring's invitation for this visit.
+    _createInvitation.noteEngaged();
     final override = widget.onCreateReel;
     if (override != null) {
       await override();
       return;
     }
     await Navigator.of(context).push<String>(
-      MaterialPageRoute<String>(builder: (_) => const ReelComposerScreen()),
+      MaterialPageRoute<String>(
+        builder: (_) => ReelComposerScreen(
+          onPublished: (_) => _createInvitation.markViewerPosted(),
+        ),
+      ),
     );
   }
 
@@ -317,6 +369,8 @@ class _MomentsScreenState extends State<MomentsScreen> with RouteAware {
   }
 
   Future<void> _showCreateChooser() async {
+    // So does opening the chooser: no pulse after the viewer has engaged.
+    _createInvitation.noteEngaged();
     final palette = context.appPalette;
     final choice = await showModalBottomSheet<_YoMomentsCreateChoice>(
       context: context,
@@ -390,6 +444,10 @@ class _MomentsScreenState extends State<MomentsScreen> with RouteAware {
                 textScale: MediaQuery.textScalerOf(context).scale(1),
               );
               final immersiveReels = !layout.showsLocalPanel;
+              if (immersiveReels != _createRingShown) {
+                _createRingShown = immersiveReels;
+                _syncInvitation();
+              }
               final showBack =
                   !widget.isRootTab && Navigator.of(context).canPop();
               return Column(
@@ -468,6 +526,7 @@ class _MomentsScreenState extends State<MomentsScreen> with RouteAware {
                               onFormatSelected: _selectFormat,
                               onFormatReselected: _reselectFormat,
                               onCreate: () => unawaited(_showCreateChooser()),
+                              createEchoes: _createInvitation.echoes,
                             ),
                             // The same row for the page canvas: 600–1099,
                             // and a phone with nothing to overlay yet.
@@ -478,6 +537,7 @@ class _MomentsScreenState extends State<MomentsScreen> with RouteAware {
                               onFormatSelected: _selectFormat,
                               onFormatReselected: _reselectFormat,
                               onCreate: () => unawaited(_showCreateChooser()),
+                              createEchoes: _createInvitation.echoes,
                               onCanvas: true,
                             ),
                             refreshRequests: _reelsRefreshRequests,
@@ -491,6 +551,9 @@ class _MomentsScreenState extends State<MomentsScreen> with RouteAware {
                             // production service when no host seam is supplied.
                             friendService: widget.friendService,
                             onCreate: _openReelComposer,
+                            onViewerChanged: _createInvitation.setViewer,
+                            onViewerYeelSeen: _createInvitation.noteOwnYeel,
+                            onEmptyCreateOfferChanged: _setFeedOffersCreate,
                           )
                         else
                           const SizedBox.shrink(
@@ -529,6 +592,9 @@ class _MomentsScreenState extends State<MomentsScreen> with RouteAware {
 /// [onFormatReselected] makes the selected tab live: activating it again
 /// calls back with its format (Yeels refreshes its pool that way) and the
 /// tab announces "Refresh". Without it the selected tab stays inert.
+///
+/// [createEchoes] drives the create ring's invitation echo (ADR-229); only
+/// the Yeels rows pass it, so the Głos row's ring never pulses.
 ImmersiveFeedHeaderSlots buildImmersiveMomentsHeader(
   BuildContext context, {
   required bool showBack,
@@ -537,6 +603,7 @@ ImmersiveFeedHeaderSlots buildImmersiveMomentsHeader(
   required VoidCallback onCreate,
   ValueChanged<YoMomentsFormat>? onFormatReselected,
   bool onCanvas = false,
+  ValueListenable<int>? createEchoes,
 }) {
   final copy = AppLocalizations.of(context);
   final palette = context.appPalette;
@@ -579,16 +646,16 @@ ImmersiveFeedHeaderSlots buildImmersiveMomentsHeader(
             hoverPlateColor: onCanvas ? palette.surfaceMuted : null,
           )
         : null,
-    // The create `+` is the screen's one CTA: the refine-look R6 disc at 48
-    // (the logo's gradient, a white glyph and the one coloured lift), on the
-    // canvas and over footage alike (spec §8.4). Same control, key and
-    // spoken label in both; over media its light ignores the app theme.
-    trailing: OverlayBrandDiscButton(
+    // The create `+` is the screen's one CTA: the gradient ring (ADR-229,
+    // the owner's variant B) — a 2 px logo-gradient ring round a 40 px
+    // circle in the 48 px target, glass over footage and clear on the
+    // canvas. Same control, key and spoken label in both.
+    trailing: YoCreateRingButton(
       key: const ValueKey('moments-create-cta'),
-      icon: Icons.add_rounded,
       semanticLabel: copy.text('CREATE', 'UTWÓRZ'),
       onTap: onCreate,
       onMedia: !onCanvas,
+      echoes: createEchoes,
     ),
   );
 }

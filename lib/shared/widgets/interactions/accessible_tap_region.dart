@@ -22,6 +22,8 @@ class AccessibleTapRegion extends StatefulWidget {
     this.focusContrastColor,
     this.focusNode,
     this.focusRingInsets = EdgeInsets.zero,
+    this.onFocusChange,
+    this.paintsIndicators = true,
     super.key,
   });
 
@@ -58,6 +60,19 @@ class AccessibleTapRegion extends StatefulWidget {
   /// under the status bar or run through text laid over it (the profile
   /// hero's banner) keeps its ring on the part the user actually sees.
   final EdgeInsets focusRingInsets;
+
+  /// Called when this region gains or loses keyboard focus.
+  final ValueChanged<bool>? onFocusChange;
+
+  /// False when the child draws every state itself: no focus, hover or
+  /// selected ring on the region's edge and no ink wash or splash. The region
+  /// still owns the button semantics, the tooltip, Enter/Space and the
+  /// minimum target, and reports hover and focus through [onHover] and
+  /// [onFocusChange] so the child can paint them. A control whose visible
+  /// shape is smaller than its target (the Moments create ring, a 40 px
+  /// circle in a 48 px target) uses this, because a ring on the region's own
+  /// edge would touch or crowd the shape it belongs to.
+  final bool paintsIndicators;
 
   @override
   State<AccessibleTapRegion> createState() => _AccessibleTapRegionState();
@@ -106,13 +121,18 @@ class _AccessibleTapRegionState extends State<AccessibleTapRegion> {
             if (_showsFocusHighlight != focused) {
               setState(() => _showsFocusHighlight = focused);
             }
+            widget.onFocusChange?.call(focused);
           },
           customBorder: customBorder,
           borderRadius: borderRadius,
           mouseCursor: widget.onTap == null
               ? SystemMouseCursors.basic
               : SystemMouseCursors.click,
+          splashFactory: widget.paintsIndicators
+              ? null
+              : NoSplash.splashFactory,
           overlayColor: WidgetStateProperty.resolveWith((states) {
+            if (!widget.paintsIndicators) return Colors.transparent;
             if (states.contains(WidgetState.pressed)) {
               return palette.interactiveForeground.withValues(alpha: .14);
             }
@@ -138,7 +158,7 @@ class _AccessibleTapRegionState extends State<AccessibleTapRegion> {
                   child: widget.child,
                 ),
               ),
-              if (contrastedFocus)
+              if (contrastedFocus && widget.paintsIndicators)
                 Positioned.fill(
                   left: widget.focusRingInsets.left,
                   top: widget.focusRingInsets.top,
@@ -162,41 +182,43 @@ class _AccessibleTapRegionState extends State<AccessibleTapRegion> {
                     ),
                   ),
                 ),
-              Positioned.fill(
-                left: widget.focusRingInsets.left,
-                top: widget.focusRingInsets.top,
-                right: widget.focusRingInsets.right,
-                bottom: widget.focusRingInsets.bottom,
-                child: IgnorePointer(
-                  child: Padding(
-                    padding: EdgeInsets.all(contrastedFocus ? 2 : 0),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 120),
-                      decoration: BoxDecoration(
-                        shape: widget.circular
-                            ? BoxShape.circle
-                            : BoxShape.rectangle,
-                        borderRadius: innerBorderRadius,
-                        border: Border.all(
-                          color: _showsFocusHighlight
-                              ? contrastedFocus
-                                    ? Colors.white
-                                    : palette.focus
-                              : widget.selected == true
-                              ? widget.selectedBorderColor ??
-                                    palette.interactiveForeground
-                              : _hovered && widget.onTap != null
-                              ? palette.borderStrong
-                              : Colors.transparent,
-                          width: _showsFocusHighlight || widget.selected == true
-                              ? 2
-                              : 1,
+              if (widget.paintsIndicators)
+                Positioned.fill(
+                  left: widget.focusRingInsets.left,
+                  top: widget.focusRingInsets.top,
+                  right: widget.focusRingInsets.right,
+                  bottom: widget.focusRingInsets.bottom,
+                  child: IgnorePointer(
+                    child: Padding(
+                      padding: EdgeInsets.all(contrastedFocus ? 2 : 0),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 120),
+                        decoration: BoxDecoration(
+                          shape: widget.circular
+                              ? BoxShape.circle
+                              : BoxShape.rectangle,
+                          borderRadius: innerBorderRadius,
+                          border: Border.all(
+                            color: _showsFocusHighlight
+                                ? contrastedFocus
+                                      ? Colors.white
+                                      : palette.focus
+                                : widget.selected == true
+                                ? widget.selectedBorderColor ??
+                                      palette.interactiveForeground
+                                : _hovered && widget.onTap != null
+                                ? palette.borderStrong
+                                : Colors.transparent,
+                            width:
+                                _showsFocusHighlight || widget.selected == true
+                                ? 2
+                                : 1,
+                          ),
                         ),
                       ),
                     ),
                   ),
                 ),
-              ),
             ],
           ),
         ),

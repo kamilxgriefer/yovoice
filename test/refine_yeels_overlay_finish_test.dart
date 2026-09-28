@@ -12,6 +12,7 @@ import 'package:yovoice/features/moments/presentation/screens/moments_screen.dar
 import 'package:yovoice/features/reels/data/services/reel_service.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_playback_coordinator.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_progress_row.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_create_ring_button.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_gradient_disc.dart';
 import 'package:yovoice/shared/widgets/cards/yo_card.dart';
 import 'package:yovoice/shared/widgets/overlays/immersive_feed_chrome.dart';
@@ -218,9 +219,8 @@ void main() {
     });
 
     for (final onCanvas in <bool>[true, false]) {
-      testWidgets('the Moments header "+" is the disc (onCanvas: $onCanvas)', (
-        tester,
-      ) async {
+      testWidgets('the Moments header "+" is the create ring '
+          '(onCanvas: $onCanvas)', (tester) async {
         late ImmersiveFeedHeaderSlots slots;
         await tester.pumpWidget(
           MaterialApp(
@@ -240,11 +240,12 @@ void main() {
             ),
           ),
         );
-        final create = tester.widget<OverlayBrandDiscButton>(
+        // ADR-229: the gradient ring replaced the R6 disc in this row.
+        final create = tester.widget<YoCreateRingButton>(
           find.byKey(const ValueKey('moments-create-cta')),
         );
         expect(create.onMedia, !onCanvas);
-        expect(create.icon, Icons.add_rounded);
+        expect(find.byType(OverlayBrandDiscButton), findsNothing);
         expect(find.bySemanticsLabel('CREATE'), findsOneWidget);
       });
     }

@@ -66,6 +66,9 @@ class ReelsFeedScreen extends StatefulWidget {
     this.refreshRequests,
     this.initialScope = ReelFeedScope.discover,
     this.onScopeChanged,
+    this.onViewerChanged,
+    this.onViewerYeelSeen,
+    this.onEmptyCreateOfferChanged,
     super.key,
   });
 
@@ -128,6 +131,22 @@ class ReelsFeedScreen extends StatefulWidget {
   /// is where its refresh lives. The same path as every other refresh
   /// control, so it is a no-op while a load is already running.
   final Listenable? refreshRequests;
+
+  /// Told the signed-in viewer's id when the feed starts and whenever the
+  /// account changes (null when signed out).
+  final ValueChanged<String?>? onViewerChanged;
+
+  /// Told the viewer's id whenever a page this feed loaded anyway holds a
+  /// Yeel the viewer authored — how YO Moments learns, without a request of
+  /// its own, that the create ring's invitation is no longer needed
+  /// (ADR-229).
+  final ValueChanged<String>? onViewerYeelSeen;
+
+  /// Told whether the feed's empty state currently offers "Create Yeel"
+  /// (reported after the frame, only on a change). YO Moments keeps the
+  /// create ring's invitation echo quiet meanwhile, so two calls to create
+  /// never compete on one screen (ADR-229).
+  final ValueChanged<bool>? onEmptyCreateOfferChanged;
 
   @override
   State<ReelsFeedScreen> createState() => _ReelsFeedScreenState();
@@ -198,6 +217,9 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
   late bool _ownOnly = widget.initialScope == ReelFeedScope.own;
   bool _includeSeen = false;
   bool _hasWatchedReels = false;
+
+  /// What [ReelsFeedScreen.onEmptyCreateOfferChanged] was last told.
+  bool _reportedEmptyCreateOffer = false;
   double _chromeHeight = 0;
 
   /// True only while [_showFirstPage] moves the pager itself.
@@ -266,6 +288,7 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
     widget.isVisible?.addListener(_handleHostVisibilityChanged);
     widget.refreshRequests?.addListener(_refresh);
     _viewerId = _service.currentUserId;
+    widget.onViewerChanged?.call(_viewerId);
     _identitySubscription = _service.identityChanges.listen(
       _identityChanged,
       onError: (Object error, StackTrace stack) {
@@ -288,6 +311,7 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
 
   void _identityChanged(String? uid) {
     if (!mounted || uid == _viewerId) return;
+    widget.onViewerChanged?.call(uid);
     _loadGeneration++;
     _identityRevision++;
     _expiryTimer?.cancel();
@@ -475,6 +499,10 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
 
   @override
   void dispose() {
+    // A feed replaced or gone offers nothing any more.
+    if (_reportedEmptyCreateOffer) {
+      widget.onEmptyCreateOfferChanged?.call(false);
+    }
     _loadGeneration++;
     _identitySubscription?.cancel();
     _expiryTimer?.cancel();
@@ -645,6 +673,9 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
             ? const _ReelFeedScanPaused()
             : null;
       });
+      if (viewer != null && loaded.any((item) => item.authorId == viewer)) {
+        widget.onViewerYeelSeen?.call(viewer);
+      }
       _revalidateAvailability();
       _prefetchNeighbor();
     } catch (error) {
@@ -1354,10 +1385,32 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
     );
   }
 
+  /// Mirrors the conditions under which [_buildStage] draws the empty state
+  /// with its "Create Yeel" action.
+  bool get _offersEmptyCreate =>
+      widget.onCreate != null &&
+      !_loading &&
+      !_loadingMore &&
+      _error == null &&
+      _items.isEmpty &&
+      !_hasWatchedReels;
+
+  void _reportEmptyCreateOffer() {
+    final callback = widget.onEmptyCreateOfferChanged;
+    if (callback == null) return;
+    final offers = _offersEmptyCreate;
+    if (offers == _reportedEmptyCreateOffer) return;
+    _reportedEmptyCreateOffer = offers;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _reportedEmptyCreateOffer == offers) callback(offers);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
+    _reportEmptyCreateOffer();
     final body = Material(
       key: const ValueKey<String>('reels-stage'),
       // Deliberately transparent: the moments-studio canvas the destination

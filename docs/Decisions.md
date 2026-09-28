@@ -16881,3 +16881,131 @@ reels behind your avatar, and one row gives the footage back 60 px.
   100/200 %, high contrast, focus and state matrices, each looked at by the
   engineer and an independent accessibility reviewer. Nothing was checked on
   a device, simulator or real browser before landing — UNVERIFIED there.
+
+## ADR-229: The create ring and a bounded invitation echo on Yeels
+
+**Date:** 2026-09-28 · **Status:** accepted (owner, 2026-09-28: the top-right
+"+" on the Yeels tab "looked bad"; from rendered options he chose variant B,
+the gradient ring, and asked for a gentle occasional pulse "to invite users
+to add their own Yeel") · **Amends**
+[ADR-227](#adr-227-the-refine-look--afterglows-finish-on-the-30-layout-under-a-light-budget)
+decision 7 ("Honest motion") and the refine-look spec's matching principle
+([spec §2, principle 7](briefs/2026-09-25-refine-look/spec.md), "never an idle
+loop") for this one control only.
+
+### Context
+
+In the one-row Yeels chrome (ADR-228) the create `+` was the R6 disc at 48 —
+a filled logo-gradient disc with a coloured lift — sitting beside the 36 px
+avatar. Over footage it read as a 48 px blob with a magenta smudge. Kamil
+compared rendered variants and picked B: a ring, not a disc. He also wanted
+the button to invite a first Yeel now and then, which ADR-227's "motion
+starts only from a real event … never an idle loop" did not allow.
+
+### Decision
+
+1. **`YoCreateRingButton`** (`lib/shared/widgets/buttons/`): a 48 px target
+   with a 40 px visible circle; a 2 px `AppGradients.primary` ring (the one
+   lit thing, nothing filled); over footage a blurred black @ .28 glass
+   (hover .38) over a neutral black @ .18 contact shadow and a white `+`; on
+   the canvas a clear inside (hover `surfaceMuted`) and a `textPrimary` `+`.
+   The `+` is painted: two 16 px bars, 2.6 px, round caps. Disabled: a
+   `border` ring and a `textTertiary` `+`. High contrast: glass @ .60, no
+   shadow, a 1 px outer hairline (white over media, `borderStrong` on the
+   canvas). `YoPressFeedback.disc` press. `AccessibleTapRegion` keeps the
+   button node, label, tooltip, Enter/Space and the 48 px target but paints
+   nothing (new `paintsIndicators: false`, plus `onFocusChange`); the button
+   draws its own keyboard focus ring at radius 22–24 (white with a 1.5 px
+   black edge over footage, `palette.focus` on the canvas). Over bright
+   footage in normal contrast the ring and glass show the control's extent
+   only faintly (about 1.4–1.6:1 against the frame); the white `+` (≥ 6.48:1)
+   is the cue that identifies the control, which meets WCAG 1.4.11, so the
+   normal-contrast media variant deliberately keeps the approved render and
+   adds no hairline — high contrast adds the white one.
+2. **Where:** only the trailing slot of `buildImmersiveMomentsHeader` — the
+   Głos and Yeels rows below 1100 px (canvas and media variants). The
+   ≥ 1100 header, the toolbar, the local panel and every other create
+   button are unchanged. Key `moments-create-cta` and the label
+   "CREATE"/"UTWÓRZ" are unchanged. `OverlayBrandDiscButton` stays in
+   `immersive_overlay_atoms.dart` (its own tests still cover it) but has no
+   production caller now.
+3. **The invitation echo — the amendment to ADR-227 decision 7.** Only an
+   echo copy of the ring moves: its radius grows 1.0 → 1.12 — the value of
+   the render the owner approved, "deliberately gentle"; a first build used
+   1.22, which at its peak read as a second glowing ring and pushed the
+   bloom about 4 px outside the 48 px box, and review put it back
+   (`Curves.easeOutCubic`, 1600 ms) at a constant 2 px stroke over a 4 px
+   bloom blurred at sigma 3 and drawn at .55 of the echo's opacity; the
+   opacity rises to .90 at 28 % (`easeOut`) and falls to 0
+   (`easeInOutSine`). The button itself never moves. Exact bounds:
+   - first echo **3 s** into a visit, then one every **40 s**, **at most 3
+     per visit**;
+   - a **visit** starts each time the Yeels format becomes visible — Yeels
+     selected, the Moments destination shown by the shell, the app in the
+     foreground — and ends when any of those stops (Głos selected, another
+     tab, the app backgrounded); the count restarts with the next visit;
+   - a route over the screen (the create sheet, any sheet or dialog, the
+     composer) **pauses** the visit: nothing plays, the count is kept, and
+     the next echo is re-timed from the moment it is uncovered; so does the
+     feed's own empty state while it offers "Create Yeel", so two calls to
+     create never compete;
+   - once the viewer **engages** — opens the create chooser or the
+     composer — the rest of that visit stays quiet (the invitation was
+     answered); the next visit may invite again. No session-wide cap on
+     top: the owner defined the bound per visit;
+   - a width that does not draw the ring (≥ 1100, where the wide header
+     keeps its own create control) is no visit at all;
+   - **never on Głos** (its row passes no echo source; `IndexedStack` keeps
+     both formats' tickers alive, so the gate is the screen's own format and
+     visibility state, not `TickerMode`);
+   - **never** under Reduce Motion, accessible navigation or `TickerMode` off
+     (`AppMotion.decorative`), under high contrast, while the button is
+     disabled, or while it has keyboard focus or a hovering pointer (an echo
+     passing through the focus ring would read as a change of focus); focus
+     or hover arriving mid-echo ends it;
+   - **gone for good** once the viewer has published a Yeel: a per-account,
+     device-local flag (`YeelsPostedFlag`, SharedPreferences key
+     `yeels.create_invitation.posted.v1.<uid>`) set when the Yeel composer
+     completes a publish, and also when a feed page the app loaded anyway
+     holds a Yeel the viewer authored (Discover or "Twoje Yeels"). No new
+     backend call and no schema change.
+4. **No idle loop even so.** The schedule (`YeelsCreateInvitation`) uses
+   one-shot `Timer`s and only emits an event; the ring runs a 1600 ms
+   controller once per event. Between echoes nothing ticks, so
+   `pumpAndSettle` never waits on it, and `dispose` cancels the pending
+   timer. The echo repaints inside its own `RepaintBoundary`, with the
+   static face (glass blur, ring, `+`) in another, so an echo frame
+   re-records only the echo, not the feed chrome around it.
+
+### Reasoning
+
+A ring keeps the light budget honest: the gradient is a 2 px line, not a
+lit slab, and it reads as a peer of the avatar instead of competing with the
+footage. The owner explicitly asked for the invitation; bounding it (three
+echoes a visit, gone once the viewer has posted, off for every reduced-motion
+and contrast setting) keeps it an invitation rather than nagging, and keeps
+the rest of ADR-227's motion rule intact for every other control.
+
+### Consequences
+
+- `AccessibleTapRegion` gained `paintsIndicators` and `onFocusChange`; the
+  default path is unchanged.
+- `ReelsFeedScreen` gained `onViewerChanged`, `onViewerYeelSeen` and
+  `onEmptyCreateOfferChanged`; `MomentsScreen` and `ReelComposerScreen`
+  gained a `yeelsPostedFlag` test seam. The composer marks the flag only
+  after a completed publish (not on a cancel, a refused reserve or a failed
+  finalize — `test/reels_composer_test.dart`).
+- The ≥ 1100 header still draws the older filled create disc; making it the
+  ring too is a separate, owner-level consistency decision, deliberately
+  out of this change.
+- The flag is local: a new device or a reinstall shows up to three echoes a
+  visit again until the feed or a publish confirms the account has Yeels.
+- Evidence: `test/yeels_create_ring_test.dart` (geometry, colours, focus,
+  high contrast, disabled, semantics, the echo and its schedule with fake
+  time, including re-visits, Głos, the posted flag and no pending timers;
+  no echo under focus, hover or accessible navigation; an unchanged
+  semantics tree during an echo; Tab focus on the Moments screen in high
+  contrast and RTL; 200 % text at 320/390 in LTR and RTL; engagement, the
+  empty feed, ≥ 1100 and an account switch) and Flutter test-renderer frames at 320/390/768/1440, Dark/Pearl, over
+  dark and bright footage, at the echo's peak, with focus and in high
+  contrast. Not checked on a device, simulator or real browser.

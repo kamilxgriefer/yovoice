@@ -16,6 +16,7 @@ import 'package:yovoice/features/reels/data/models/reel_composition.dart';
 import 'package:yovoice/features/reels/data/services/reel_service.dart';
 import 'package:yovoice/features/reels/data/services/reel_upload.dart';
 import 'package:yovoice/features/reels/data/services/reel_video_probe.dart';
+import 'package:yovoice/features/reels/data/services/yeels_posted_flag.dart';
 import 'package:yovoice/features/reels/presentation/reel_visuals.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_draft_preview.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_trim_strip.dart';
@@ -40,6 +41,7 @@ class ReelComposerScreen extends StatefulWidget {
     this.audioPlayerFactory,
     this.videoControllerFactory,
     this.onPublished,
+    this.yeelsPostedFlag,
     super.key,
   });
 
@@ -58,6 +60,11 @@ class ReelComposerScreen extends StatefulWidget {
   /// Optional test/platform override for the local preview decoder.
   final ReelVideoControllerFactory? videoControllerFactory;
   final ValueChanged<String>? onPublished;
+
+  /// Test seam for where a completed publish is recorded (ADR-229);
+  /// production uses [YeelsPostedFlag.instance], shared with YO Moments.
+  @visibleForTesting
+  final YeelsPostedFlag? yeelsPostedFlag;
 
   @override
   State<ReelComposerScreen> createState() => _ReelComposerScreenState();
@@ -878,6 +885,16 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
         },
       );
       if (!mounted || !_ownsDraft(generation)) return;
+      // The account has a Yeel now: the create ring stops inviting one
+      // (ADR-229). Device-local and best effort; never blocks the publish.
+      final owner = _ownerId;
+      if (owner != null) {
+        unawaited(
+          (widget.yeelsPostedFlag ?? YeelsPostedFlag.instance).markPosted(
+            owner,
+          ),
+        );
+      }
       widget.onPublished?.call(reelId);
       if (Navigator.of(context).canPop()) Navigator.of(context).pop(reelId);
     } catch (error, stackTrace) {

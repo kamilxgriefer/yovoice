@@ -11,6 +11,7 @@ import 'package:image_picker/image_picker.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/reels/data/services/reel_service.dart';
+import 'package:yovoice/features/reels/data/services/yeels_posted_flag.dart';
 import 'package:yovoice/features/reels/data/models/reel_composition.dart';
 import 'package:yovoice/features/reels/presentation/screens/reel_composer_screen.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_composition_canvas.dart';
@@ -602,6 +603,7 @@ void main() {
     var finalizeCount = 0;
     final finalizePayloads = <Map<String, Object?>>[];
     String? publishedId;
+    final posted = YeelsPostedFlag(store: _MemoryPostedStore());
     final service = ReelService(
       auth: MockFirebaseAuth(
         signedIn: true,
@@ -653,6 +655,7 @@ void main() {
           service: service,
           imagePicker: _ImagePickerStub(),
           onPublished: (value) => publishedId = value,
+          yeelsPostedFlag: posted,
         ),
       ),
     );
@@ -686,12 +689,22 @@ void main() {
     expect(tester.widget<ChoiceChip>(permanent).onSelected, isNull);
     expect(find.text('Availability is locked for this retry.'), findsOneWidget);
     expect(tester.widget<TextField>(caption).readOnly, isTrue);
+    expect(
+      posted.knows('creator-1'),
+      isFalse,
+      reason: 'ADR-229: a failed finalize is no Yeel; the ring keeps inviting',
+    );
 
     await tester.ensureVisible(find.text('Publish Yeel'));
     await tester.tap(find.text('Publish Yeel'));
     await tester.pumpAndSettle();
 
     expect(publishedId, 'retry_reel');
+    expect(
+      posted.knows('creator-1'),
+      isTrue,
+      reason: 'ADR-229: a completed publish retires the invitation echo',
+    );
     expect(reserveCount, 1);
     expect(uploadCount, 1);
     expect(finalizeCount, 2);
@@ -760,11 +773,13 @@ void main() {
             onProgress,
           }) async => '123',
     );
+    final posted = YeelsPostedFlag(store: _MemoryPostedStore());
     await tester.pumpWidget(
       MaterialApp(
         home: ReelComposerScreen(
           service: service,
           imagePicker: _ImagePickerStub(),
+          yeelsPostedFlag: posted,
         ),
       ),
     );
@@ -799,6 +814,11 @@ void main() {
       reason: 'availability is only locked once a reservation holds it',
     );
     expect(find.text('Availability is locked for this retry.'), findsNothing);
+    expect(
+      posted.knows('creator-1'),
+      isFalse,
+      reason: 'ADR-229: a refused reserve published nothing',
+    );
 
     // Editing at all is only possible because the field is live again; the
     // payload below is what proves the retry rebuilt its plan from it.
@@ -809,6 +829,7 @@ void main() {
 
     expect(reserveCount, 2);
     expect(finalizePayloads, hasLength(1));
+    expect(posted.knows('creator-1'), isTrue);
     expect(
       (finalizePayloads.single['composition']!
           as Map<Object?, Object?>)['caption'],
@@ -1040,4 +1061,15 @@ class _MutableComposerService extends ReelService {
     uid = value;
     changes.add(value);
   }
+}
+
+/// ADR-229: an in-memory store for the "has published a Yeel" flag.
+class _MemoryPostedStore implements YeelsPostedStore {
+  final Set<String> posted = <String>{};
+
+  @override
+  Future<bool> read(String userId) async => posted.contains(userId);
+
+  @override
+  Future<void> write(String userId) async => posted.add(userId);
 }

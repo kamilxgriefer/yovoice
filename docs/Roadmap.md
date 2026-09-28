@@ -14,6 +14,23 @@ someone decide what to pick up next.
 
 ---
 
+## In progress / next build — after 3.3.0 (38)
+
+**Status: source on `yeels/create-ring`, not yet on `main`; no version bump
+yet.** Client-only.
+
+- **The Yeels / Głos create ring and its invitation echo** (ADR-229,
+  [Decisions](Decisions.md#adr-229-the-create-ring-and-a-bounded-invitation-echo-on-yeels)):
+  the phone-row `+` is now the owner's variant B — a 2 px logo-gradient ring
+  round a 40 px circle (glass over footage, clear on the canvas) — and on
+  Yeels an echo of the ring invites a first Yeel 3 s into a visit, then every
+  40 s, at most three per visit; never on Głos, under Reduce Motion or high
+  contrast, under keyboard focus or hover, beside the empty feed's own
+  "Create Yeel", or after the viewer has opened create in that visit, and
+  gone once the viewer has posted a Yeel (device-local flag).
+  Verified by `test/yeels_create_ring_test.dart` and test-renderer frames;
+  **not verified on a device, simulator or real browser.**
+
 ## YO Voice 3.3.0 (38) — YO Moments: the Głos list (G4) and one-row Yeels (Y3) (ADR-228) — 2026-09-28
 
 **Status: on `main` as `3.3.0+38`; the release record (web deploy, store

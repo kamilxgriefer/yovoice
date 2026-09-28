@@ -18,6 +18,7 @@ import 'package:yovoice/features/reels/presentation/screens/reels_feed_screen.da
 import 'package:yovoice/features/reels/presentation/widgets/reel_card.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_composition_canvas.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reels_toolbar.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_create_ring_button.dart';
 import 'package:yovoice/shared/widgets/overlays/immersive_feed_chrome.dart';
 import 'package:yovoice/shared/widgets/overlays/immersive_overlay_atoms.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
@@ -1061,8 +1062,8 @@ void main() {
         find.byKey(formatTabs),
       );
       expect(switcher.onCanvas, isTrue);
-      final disc = tester.widget<OverlayBrandDiscButton>(find.byKey(createCta));
-      expect(disc.onMedia, isFalse);
+      final create = tester.widget<YoCreateRingButton>(find.byKey(createCta));
+      expect(create.onMedia, isFalse);
       final ring =
           tester
                   .widget<Container>(
@@ -1111,7 +1112,7 @@ void main() {
         isFalse,
       );
       expect(
-        tester.widget<OverlayBrandDiscButton>(find.byKey(createCta)).onMedia,
+        tester.widget<YoCreateRingButton>(find.byKey(createCta)).onMedia,
         isTrue,
       );
       await openOwn(tester);
