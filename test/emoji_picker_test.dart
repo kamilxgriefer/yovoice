@@ -529,9 +529,16 @@ void main() {
     // apart silently.
 
     test('direct-message reactions match the Cloud Functions allowlist', () {
+      // The allowlist lives in a dependency-free leaf since ADR-230, so the
+      // likers modules can share its order; direct_integrity.js imports it.
       final functions = File(
-        'functions/messaging/direct_integrity.js',
+        'functions/messaging/direct_reactions.js',
       ).readAsStringSync();
+      expect(
+        File('functions/messaging/direct_integrity.js').readAsStringSync(),
+        contains('require("./direct_reactions")'),
+        reason: 'direct messages must validate against the shared allowlist',
+      );
       final block = RegExp(
         r'ALLOWED_DIRECT_REACTIONS\s*=\s*Object\.freeze\(\[(.*?)\]\)',
         dotAll: true,
