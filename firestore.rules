@@ -2544,6 +2544,12 @@ service cloud.firestore {
       // NB: premiumIdentity is deliberately NOT in this allowlist — it is
       // the public mirror of the server-managed entitlement and may only
       // be written by Cloud Functions (Admin SDK bypasses rules).
+      // Likewise likesHidden / likesHiddenUpdatedAt ("Hide my likes",
+      // ADR-230) are server-written by setMyLikesHiddenV1 only, exactly like
+      // profileVisibility; they are absent from this allowlist and from
+      // userCreateAllowed. Because the allowlist is a diff (affectedKeys),
+      // an older client's update of other fields keeps working on a document
+      // that already holds them.
       allow update: if isSignedIn() &&
           (
             isOwner(userId)
@@ -3243,7 +3249,10 @@ service cloud.firestore {
     // Server-owned feature configuration, same shape as publicStats/live:
     // setting `enabled: false` disables the GIF surface on the next catalog
     // fetch with no deploy. Read by getGifCatalog through the Admin SDK, so
-    // clients never need access.
+    // clients never need access. The same fail-closed pattern holds the
+    // other runtime switches: serversV1, accountDeletion, and likersV1 (the
+    // ADR-230 "See who liked" activation, written only by an operator with
+    // Admin credentials; a client can neither read nor flip it).
     match /appConfig/{configId} {
       allow read, write: if false;
     }
@@ -4870,9 +4879,19 @@ service cloud.firestore {
       allow update: if false;
       allow delete: if false;
 
+      // ADR-140 likes read bridge, CLOSED by ADR-230 (owner decision
+      // 2026-09-28). This read let any signed-in Build 19-or-older or
+      // modified client list every liker uid of a published Moment with no
+      // block, profile-visibility, mute or "Hide my likes" filter. No build
+      // 36+ client path reads this subcollection (likes arrive through the
+      // getVoiceMomentViewV2 projection: callerLiked and topReactions), and
+      // neither does the website. Build 19 and older lose their Moment like
+      // lists (they degrade; they do not crash). Likers are reached only
+      // through listVoiceMomentLikersV1 and topReactions, which apply the
+      // ADR-230 liker filter server-side. Writes stay callable-only
+      // (setMomentLike moves the edge and the root likeCount atomically).
       match /likes/{userId} {
-        allow read: if canReadParentMoment();
-        allow create, update, delete: if false;
+        allow read, write: if false;
       }
 
       match /comments/{commentId} {
@@ -4890,6 +4909,32 @@ service cloud.firestore {
     // reader validates an exact key set that an additive field would fail.
     // The notification writer and the push boundary are the only readers.
     match /commentMentions/{mentionId} {
+      allow read, write: if false;
+    }
+
+    // Comment likes (ADR-230): a flat server-only store, keyed by
+    // commentKey ("v:{momentId}:{commentId}" or "r:{reelId}:{commentId}").
+    // Comment documents stay byte-identical (their readers validate an exact
+    // key set), so the edge and its counter live here instead. The only
+    // writers are setMomentCommentLikeV1 / setReelCommentLikeV1 (edge and
+    // counter in ONE Admin transaction) and the comment-delete purge; the
+    // only readers are listVoiceMomentLikersV1 / listReelLikersV1 and the V2
+    // views' opt-in includeCommentLikes, which apply the liker filter and
+    // the parent's audience rule. Deliberately NOT named `likes`: that id is
+    // shared by voiceMoments and reels, and a third shape there would ride
+    // along with any future `likes` collection-group rule, query or index.
+    match /commentLikes/{edgeId} {
+      allow read, write: if false;
+    }
+    match /commentLikeCounters/{commentKey} {
+      allow read, write: if false;
+    }
+
+    // Opaque "See who liked" pagination state (ADR-230). The token is 32
+    // random bytes; the document holds the viewer, a target digest and the
+    // last consumed position, which may be a HIDDEN liker's uid. Server-only
+    // in both directions; a TTL policy on expiresAt removes it.
+    match /likerPageCursors/{token} {
       allow read, write: if false;
     }
 

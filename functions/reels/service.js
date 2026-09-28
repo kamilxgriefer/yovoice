@@ -83,6 +83,30 @@ const {
   normalizeMentionUserIds,
   writeCommentMentions,
 } = require("../notifications/comment_mentions");
+const {
+  applyCommentLikeToggle,
+  commentLikeKey,
+  commentLikeReferences,
+  commentLikeUserIdOf,
+  commentLikeWriteState,
+  HIDDEN_COMMENT_LIKE_COUNT,
+  commentUnavailable,
+  isCommentRefusal,
+  loadCommentLikeStates,
+  requireIncludeCommentLikes,
+  validateCommentLike,
+} = require("../engagement/comment_likes");
+const { LIKER_CONTEXT_MAX_READS } = require("../engagement/liker_audience");
+const { LIKERS_SURFACES } = require("../engagement/likers_activation");
+const { LIKERS_ADMISSION_READS } = require("../engagement/likers_admission");
+const { serveLikersList } = require("../engagement/likers_callable");
+const {
+  LIKERS_CHUNK,
+  LIKERS_MAX_FETCHED,
+  LIKERS_PAGE_SIZE,
+  LIKERS_SCAN_CAP,
+  queryCandidateFetcher,
+} = require("../engagement/likers_paging");
 
 const RESERVATION_TTL_MS = 30 * 60 * 1000;
 const MEDIA_GRANT_TTL_MS = 90 * 1000;
@@ -108,6 +132,27 @@ const REEL_CLEANUP_LEGACY_SWEEP_STATE_PATH =
 const REEL_FEED_BATCH_SIZE = 4;
 const MAX_REEL_SCAN_PER_REQUEST = 24;
 const MAX_REEL_AUTHORS_PER_REQUEST = 8;
+// "See who liked" (ADR-230), one listReelLikersV1 page. Fixed part: admission
+// (activation 1 + likers budgets 3 + the caller's users, entitlements,
+// vipGrants and restrictions 4), a cursor document 1 on later pages, the Reel
+// and its availability 2 (+ the comment 1), and the Yeel audience context of
+// each distinct parent author other than the caller: users, restrictions and
+// both blocks 4. The response-time expiry re-check reads nothing. Per
+// candidate: at most three chunks of 21 edges and 5 (public) to
+// LIKER_CONTEXT_MAX_READS.content (friends-only) context reads per consumed
+// liker. Typical = first page, 21 edges, 20 visible public likers.
+const REEL_LIKERS_READ_BUDGETS = Object.freeze({
+  reelTypical:
+    LIKERS_ADMISSION_READS + 2 + 4 + LIKERS_CHUNK + LIKERS_PAGE_SIZE * 5,
+  reelWorst:
+    LIKERS_ADMISSION_READS + 1 + 2 + 4 + LIKERS_MAX_FETCHED +
+    LIKERS_SCAN_CAP * LIKER_CONTEXT_MAX_READS.content,
+  commentTypical:
+    LIKERS_ADMISSION_READS + 3 + 4 * 2 + LIKERS_CHUNK + LIKERS_PAGE_SIZE * 5,
+  commentWorst:
+    LIKERS_ADMISSION_READS + 1 + 3 + 4 * 2 + LIKERS_MAX_FETCHED +
+    LIKERS_SCAN_CAP * LIKER_CONTEXT_MAX_READS.content,
+});
 const DEFAULT_LIMITS = Object.freeze({
   reserve: Object.freeze({ maxEvents: 12, windowMs: 60 * 60 * 1000 }),
   finalize: Object.freeze({ maxEvents: 24, windowMs: 60 * 60 * 1000 }),
@@ -3163,6 +3208,164 @@ function createReelService({
     });
   }
 
+  // Like or unlike one Yeel comment (ADR-230), the setMomentCommentLikeV1
+  // contract on the Yeel side. Not gated on Premium and not behind
+  // appConfig/likersV1. The comment document is never written (its
+  // validator takes an exact key set); the edge and the counter live in the
+  // flat commentLikes / commentLikeCounters store and move together.
+  //
+  // Liking needs the Yeel CONTENT rule for the Reel author and for the
+  // commenter (the rule reelView applies before it projects a comment), so a
+  // withheld comment cannot be liked. Unliking an edge the caller already
+  // holds skips both: it reveals nothing, and a like must never get stuck
+  // behind a later block or mute. Every Reel or comment refusal is one
+  // uniform `permission-denied`.
+  async function setReelCommentLikeV1(request) {
+    const auth = requireActor(request);
+    const data = requireExactInput(
+      request.data,
+      ["commentId", "liked", "reelId", "requestId"],
+      ["commentId", "liked", "reelId", "requestId"],
+    );
+    const reelId = requireId(data.reelId, "reelId");
+    const commentId = requireId(data.commentId, "commentId");
+    const requestId = requireRequestId(data.requestId);
+    const liked = requireBoolean(data.liked, "liked");
+    const identity = operationIdentity(
+      "reel.comment.like",
+      auth.uid,
+      requestId,
+      { commentId, liked, reelId },
+    );
+    // The `like` budget is shared with Yeel likes (60/min).
+    const attempt = await beginEngagementAttempt({
+      identity,
+      kind: "reel.comment.like",
+      uid: auth.uid,
+      scope: "like",
+    });
+    if (attempt.replay) return attempt.replay;
+
+    const target = {
+      parentKind: "reel",
+      parentId: reelId,
+      commentId,
+      userId: auth.uid,
+    };
+    const references = commentLikeReferences(db, target);
+    return db.runTransaction(async (transaction) => {
+      const attemptTime = timing();
+      const ledgerRef = ledgerReference(identity);
+      const [
+        ledger,
+        reelSnapshot,
+        availabilitySnapshot,
+        comment,
+        edge,
+        counter,
+        viewerProfile,
+        viewerRestriction,
+      ] = await transactionGetAll(
+        transaction,
+        ledgerRef,
+        reelReference(reelId),
+        availabilityReference(reelId),
+        reelCommentReference(reelId, commentId),
+        references.edgeRef,
+        references.counterRef,
+        db.doc(`users/${auth.uid}`),
+        db.doc(`restrictions/${auth.uid}`),
+      );
+      const replay = assertLedgerReplay(ledger, {
+        kind: "reel.comment.like",
+        uid: auth.uid,
+        inputHash: identity.inputHash,
+      });
+      if (replay) return replay;
+      activeProfile(viewerProfile, "Your");
+      let authorIds;
+      try {
+        const { reel } = engageableReel(
+          reelSnapshot,
+          availabilitySnapshot,
+          attemptTime.nowMs,
+        );
+        const commentData = validateReelComment(comment, reelId);
+        authorIds = [...new Set([reel.authorId, commentData.authorId])];
+      } catch (error) {
+        throw commentUnavailable(error);
+      }
+      const state = commentLikeWriteState(target, {
+        edgeSnapshot: edge,
+        counterSnapshot: counter,
+      });
+      // Review S9: an unlike of a like the caller holds is never refused,
+      // so a like cannot get stuck. The audience is still evaluated: when
+      // it would refuse, the unlike runs but the answer carries the stable
+      // HIDDEN_COMMENT_LIKE_COUNT instead of the fresh count (ADR-230).
+      // The caller's own profile and restriction are their own state, not
+      // something the audience hides: they refuse a like with their own
+      // error and do not mask an unlike (activeProfile already ran above).
+      const heldUnlike = !liked && state.liked;
+      if (!heldUnlike) {
+        assertReelViewerState(viewerProfile, viewerRestriction, attemptTime.nowMs);
+      }
+      let audienceHidden = false;
+      const audienceIds = authorIds.filter((authorId) => authorId !== auth.uid);
+      const audience = audienceIds.length === 0
+        ? []
+        : await transactionGetAll(
+          transaction,
+          ...audienceIds.flatMap((authorId) =>
+            reelAudienceReferences(auth.uid, authorId)),
+        );
+      try {
+        audienceIds.forEach((authorId, index) => {
+          assertReelAuthorAudience({
+            viewerId: auth.uid,
+            authorId,
+            authorProfile: audience[index * 4],
+            authorRestriction: audience[index * 4 + 1],
+            viewerBlock: audience[index * 4 + 2],
+            authorBlock: audience[index * 4 + 3],
+            nowMs: attemptTime.nowMs,
+          });
+        });
+      } catch (error) {
+        if (!heldUnlike || !isCommentRefusal(error)) {
+          throw heldUnlike ? error : commentUnavailable(error);
+        }
+        audienceHidden = true;
+      }
+      const toggle = applyCommentLikeToggle(transaction, {
+        references,
+        target,
+        state,
+        liked,
+        now: attemptTime.now,
+      });
+      const result = {
+        reelId,
+        commentId,
+        liked,
+        changed: toggle.changed,
+        likeCount: audienceHidden ? HIDDEN_COMMENT_LIKE_COUNT : toggle.likeCount,
+      };
+      transaction.create(
+        ledgerRef,
+        ledgerData({
+          kind: "reel.comment.like",
+          uid: auth.uid,
+          requestId,
+          inputHash: identity.inputHash,
+          result,
+          now: attemptTime.now,
+        }),
+      );
+      return result;
+    });
+  }
+
   async function createReelComment(request) {
     const auth = requireActor(request);
     // `mentionUserIds` is OPTIONAL and additive (ADR-213). Absent — which is
@@ -3972,11 +4175,23 @@ function createReelService({
     const auth = requireActor(request, { verified: false });
     const data = requireExactInput(
       request.data,
-      ["commentCursor", "commentLimit", "commentTypes", "reelId"],
+      [
+        "commentCursor",
+        "commentLimit",
+        "commentTypes",
+        "includeCommentLikes",
+        "reelId",
+      ],
       ["reelId"],
     );
     const reelId = requireId(data.reelId, "reelId");
     const commentTypes = validateCommentTypes(data.commentTypes);
+    // OPT-IN (ADR-230), alongside commentTypes: installed builds parse this
+    // response with an exact key set and never send the flag, so their
+    // requests and responses stay byte-identical.
+    const includeCommentLikes = requireIncludeCommentLikes(
+      data.includeCommentLikes,
+    );
     const commentLimit = data.commentLimit === undefined ||
         data.commentLimit === null
       ? MAX_REEL_THREAD_COMMENTS
@@ -3990,8 +4205,9 @@ function createReelService({
       : decodeReelCommentCursor(data.commentCursor, { reelId });
     // Also proves the viewer's own account is active and not muted.
     const attemptTime = await consumeReadLimit(auth.uid, "view");
+    let view;
     try {
-      return await reelView(auth, reelId, {
+      view = await reelView(auth, reelId, {
         attemptTime,
         commentLimit,
         commentCursor,
@@ -4013,6 +4229,20 @@ function createReelService({
       }
       throw error;
     }
+    if (!includeCommentLikes) return view;
+    // Keyed on the PROJECTED comments only (after the audience and
+    // commentTypes filters), so a withheld comment gets no entry. Two plain
+    // queries after the view's reads, no transaction.
+    return {
+      ...view,
+      commentLikes: await loadCommentLikeStates({
+        db,
+        parentKind: "reel",
+        parentId: reelId,
+        commentIds: view.comments.map((comment) => comment.commentId),
+        viewerId: auth.uid,
+      }),
+    };
   }
 
   async function reelView(auth, reelId, {
@@ -4169,6 +4399,129 @@ function createReelService({
       // thread's pagination in place.
       nextCommentCursor,
     };
+  }
+
+  // "See who liked" for a Yeel or one of its comments (ADR-230). Premium /
+  // canonical VIP / staff preview only, behind appConfig/likersV1. The parent
+  // is authorized with the Yeel CONTENT rule, exactly as getReelViewV2 shows
+  // it: a published, unexpired Reel whose author is active, unmuted and not
+  // blocked either way (a private-profile author's Reel is still listable)
+  // and, for a comment target, a canonical text or voice comment whose author
+  // passes the same rule. The LIKERS are then filtered by the one liker
+  // predicate, which does apply profile visibility: a list exposes a person.
+  // Nothing here charges the Yeel `view` budget, and nothing runs in a
+  // read-write transaction.
+  async function listReelLikersV1(request) {
+    return serveLikersList({
+      db,
+      Timestamp,
+      request,
+      family: "reel",
+      surface: LIKERS_SURFACES.CONTENT,
+      time: timing,
+      logger: log ?? undefined,
+      openTarget: async ({ input, auth, timing: requestTime }) => {
+        const { reelId, commentId } = input;
+        const reelRef = reelReference(reelId);
+        const commentRef = commentId === null
+          ? null
+          : reelCommentReference(reelId, commentId);
+        const [reelSnapshot, availabilitySnapshot, commentSnapshot] =
+          await getAll(
+            reelRef,
+            availabilityReference(reelId),
+            ...(commentRef === null ? [] : [commentRef]),
+          );
+        const { reel, availability } = engageableReel(
+          reelSnapshot,
+          availabilitySnapshot,
+          requestTime.nowMs,
+        );
+        const comment = commentRef === null
+          ? null
+          : validateReelComment(commentSnapshot, reelId);
+        const authorIds = [
+          ...new Set([
+            reel.authorId,
+            ...(comment === null ? [] : [comment.authorId]),
+          ]),
+        ].filter((authorId) => authorId !== auth.uid);
+        const audienceSnapshots = authorIds.length === 0
+          ? []
+          : await getAll(...authorIds.flatMap((authorId) =>
+            reelAudienceReferences(auth.uid, authorId)));
+        authorIds.forEach((authorId, index) => {
+          assertReelAuthorAudience({
+            viewerId: auth.uid,
+            authorId,
+            authorProfile: audienceSnapshots[index * 4],
+            authorRestriction: audienceSnapshots[index * 4 + 1],
+            viewerBlock: audienceSnapshots[index * 4 + 2],
+            authorBlock: audienceSnapshots[index * 4 + 3],
+            nowMs: requestTime.nowMs,
+          });
+        });
+
+        let fetchCandidates;
+        if (commentRef === null) {
+          fetchCandidates = queryCandidateFetcher({
+            query: reelRef.collection("likes"),
+            documentIdField: FieldPath.documentId(),
+            toLikerId: (document) => {
+              try {
+                return validateReelLike(document, reelId, document.id)
+                  ? document.id
+                  : null;
+              } catch (_) {
+                // A malformed edge is skipped (but consumed), never an
+                // identity oracle.
+                return null;
+              }
+            },
+          });
+        } else {
+          const commentKey = commentLikeKey("reel", reelId, commentId);
+          fetchCandidates = queryCandidateFetcher({
+            query: db
+              .collection("commentLikes")
+              .where("commentKey", "==", commentKey),
+            documentIdField: FieldPath.documentId(),
+            toLikerId: (document) => {
+              const userId = commentLikeUserIdOf(document.id, commentKey);
+              if (userId === null) return null;
+              try {
+                return validateCommentLike(document, {
+                  parentKind: "reel",
+                  parentId: reelId,
+                  commentId,
+                  userId,
+                })
+                  ? userId
+                  : null;
+              } catch (_) {
+                return null;
+              }
+            },
+          });
+        }
+
+        return {
+          fetchCandidates,
+          // The bounded scan can cross the availability deadline: a Reel is
+          // never listed at `expiresAt` because the request began earlier
+          // (the same response-clock check reelView makes).
+          recheck: async () => {
+            const responseTime = timing();
+            if (
+              availability.expiresAtMs !== null &&
+              availability.expiresAtMs <= responseTime.nowMs
+            ) {
+              fail("failed-precondition", "The Reel has expired.");
+            }
+          },
+        };
+      },
+    });
   }
 
   function cleanupBackoffMs(attemptCount) {
@@ -5321,6 +5674,7 @@ function createReelService({
     getReelMediaAccess,
     getReelMediaAccessV2,
     getReelViewV2,
+    listReelLikersV1,
     listReels,
     listReelsV2,
     processCleanupOutbox,
@@ -5329,6 +5683,7 @@ function createReelService({
     reserveReelDraft,
     reserveReelDraftV2,
     reserveReelVoiceCommentDraft,
+    setReelCommentLikeV1,
     setReelLike,
   });
 }
@@ -5346,6 +5701,7 @@ module.exports = {
   REEL_CLEANUP_MAX_ATTEMPTS,
   REEL_EXPIRY_EVIDENCE_RETENTION_MS,
   REEL_FEED_BATCH_SIZE,
+  REEL_LIKERS_READ_BUDGETS,
   RESERVATION_TTL_MS,
   createReelService,
 };

@@ -246,8 +246,12 @@ const SERVERS_V1_EXPORT_NAMES = Object.freeze([
 // `releaseServerChannelSessionIfEmptyV1` to the frozen manifest. Recomputed
 // from the merged registration below, not relaxed — these seven exports are
 // still outside it, which is why none of those numbers moved for them.
+// listServerChannelMessageReactorsV1 ("See who reacted", ADR-230) joins the
+// same extension: behind this activation gate AND appConfig/likersV1 (both
+// `enabled` and `serverMessagesEnabled`), still outside the frozen manifest.
 const SERVER_MESSAGE_CALLABLE_METHODS = Object.freeze({
   setServerChannelMessageReactionV1: "messageReactions",
+  listServerChannelMessageReactorsV1: "messageReactions",
   reserveServerChannelMessageMediaV1: "messageMedia",
   finalizeServerChannelMessageMediaV1: "messageMedia",
   getServerChannelMessageMediaAccessV1: "messageMedia",

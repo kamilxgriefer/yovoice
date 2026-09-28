@@ -47,6 +47,12 @@ const REEL_CALLABLE_METHODS = Object.freeze({
   // ceiling and the staged App Check switch stay identical across the surface.
   reserveReelVoiceCommentDraft: "reserveReelVoiceCommentDraft",
   finalizeReelVoiceCommentDraft: "finalizeReelVoiceCommentDraft",
+  // "See who liked" (ADR-230) for a Yeel or one of its comments: Premium /
+  // canonical VIP / staff preview only, behind appConfig/likersV1. Not warm.
+  listReelLikersV1: "listReelLikersV1",
+  // Comment likes (ADR-230) on a Yeel comment: everyone may like; not gated
+  // and not behind appConfig/likersV1. Not warm.
+  setReelCommentLikeV1: "setReelCommentLikeV1",
 });
 // Reel callables that keep one always-on instance. Empty since ADR-226
 // (2026-09-26): the publish pair (reserveReelDraftV2, finalizeReelDraftV2) and

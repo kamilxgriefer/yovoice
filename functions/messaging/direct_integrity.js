@@ -41,6 +41,7 @@ const {
   validatePrivateReadState,
   validatePrivateUnreadState,
 } = require("./premium_privacy");
+const { ALLOWED_DIRECT_REACTIONS } = require("./direct_reactions");
 
 const DEFAULT_LIMITS = Object.freeze({
   open: { maxEvents: 12, windowMs: 60_000 },
@@ -89,14 +90,6 @@ const DIRECT_MEDIA_TYPES = Object.freeze({
     minBytes: 1024,
   }),
 });
-const ALLOWED_DIRECT_REACTIONS = Object.freeze([
-  "❤️",
-  "😂",
-  "🔥",
-  "😮",
-  "😢",
-  "👍",
-]);
 const DIRECT_MESSAGE_PRIVACY = Object.freeze({
   everyone: "everyone",
   peopleYouFollow: "peopleYouFollow",

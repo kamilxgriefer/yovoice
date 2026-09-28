@@ -311,6 +311,44 @@ Store/Google Play purchase adapters and an IAP client are not configured.
 `verifyPurchase` therefore declines today; only the guarded
 `adminSetPremiumEntitlements` admin path can issue a working grant.
 
+**One exception: "See who liked" (ADR-230).** A canonical `vipGrants/{uid}`
+(exact keys, allowlisted source, `revoked: false`, Timestamp-or-null expiry)
+authorizes this one capability next to paid Premium and the staff preview; a
+VIP grant still unlocks nothing else.
+
+### Likes and "See who liked" (ADR-230, backend in source, NOT deployed; no client yet)
+
+- **Comment likes.** Voice Moment and Yeel comments can be liked through
+  `setMomentCommentLikeV1` / `setReelCommentLikeV1` (idempotent, everyone,
+  not gated). Likes live in the server-only `commentLikes` /
+  `commentLikeCounters` store; comment documents are unchanged. The views
+  return per-comment `{likeCount, callerLiked}` only when asked with
+  `includeCommentLikes: true`, so installed builds see identical responses.
+  Deleting a comment purges its likes.
+- **Lists.** `listVoiceMomentLikersV1` (a Moment or one of its comments),
+  `listReelLikersV1` (a Yeel or one of its comments) and
+  `listServerChannelMessageReactorsV1` (who reacted to a Server message, with
+  an optional emoji filter) return pages of 20 people
+  (`userId`, `displayName`, `reaction`), newest first (Server: emoji order,
+  then uid), with an opaque cursor. Paid Premium, a canonical VIP grant or the
+  staff preview is required (`likersAccessRequired` otherwise). Blocked
+  (either way), private or friends-only (unless friends), muted, suspended
+  and deleted accounts, and people with Hide my likes on, are never listed;
+  you always see your own like. Counts never change. Budgets: 10 lists a
+  minute, 120 an hour, 500 a day. Every existing like is listable once
+  switched on.
+- **Switched, not deployed.** Every list answers `likersNotEnabled` until an
+  operator writes `appConfig/likersV1` (`enabled`, and `serverMessagesEnabled`
+  for the Server list), which happens only after the privacy policy and the
+  Hide-my-likes build are out on every platform for 7 days
+  ([DEPLOYMENT.md](DEPLOYMENT.md#see-who-liked-adr-230--source-only-nothing-deployed)).
+- **Hide my likes.** `setMyLikesHiddenV1 {hidden}` stores the private
+  `users/{uid}.likesHidden`; it removes you from every YO Voice likers list
+  and from Top reactions at once, and works before the lists are switched on.
+  Server channel members still receive the raw reaction map of messages in
+  channels they can read (recorded in ADR-230).
+- **Closed:** the Build 19-era direct read of `voiceMoments/{id}/likes`.
+
 ## Settings
 
 `lib/features/settings/` — Profile, Account, Privacy, Security,

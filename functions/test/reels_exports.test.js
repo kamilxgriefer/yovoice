@@ -152,6 +152,10 @@ test("every registered Reel callable is implemented by the real service", () => 
     "createReelComment",
     "deleteReelComment",
     "getReelViewV2",
+    // ADR-230: "See who liked" for a Yeel and its comments, and the Yeel
+    // comment-like toggle.
+    "listReelLikersV1",
+    "setReelCommentLikeV1",
   ]) {
     assert.ok(
       Object.values(REEL_CALLABLE_METHODS).includes(method),

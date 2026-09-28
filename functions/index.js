@@ -388,6 +388,9 @@ exports.processAccountDeletionOutboxSchedule =
 const { onProfileIdentityChanged } = require("./profile/fanout");
 const { updateMyDisplayName } = require("./profile/display_name");
 const { setMyProfileVisibility } = require("./profile/profile_visibility");
+// "Hide my likes" (ADR-230). Not behind appConfig/likersV1: people can opt
+// out before any likers list is exposed.
+const { setMyLikesHiddenV1 } = require("./profile/likes_visibility");
 const {
   confirmCreatorAdultEligibility,
   onAuthUserDeleted,
@@ -400,6 +403,7 @@ exports.onProfileIdentityChanged = onProfileIdentityChanged;
 exports.confirmCreatorAdultEligibility = confirmCreatorAdultEligibility;
 exports.updateMyDisplayName = updateMyDisplayName;
 exports.setMyProfileVisibility = setMyProfileVisibility;
+exports.setMyLikesHiddenV1 = setMyLikesHiddenV1;
 exports.onAuthUserDeleted = onAuthUserDeleted;
 exports.onUserPrivacySourceChanged = onUserPrivacySourceChanged;
 exports.searchPublicProfiles = searchPublicProfiles;

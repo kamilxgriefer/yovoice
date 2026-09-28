@@ -858,6 +858,173 @@ test("a malformed comment is withheld without failing the page", async () => {
 });
 
 // ---------------------------------------------------------------------------
+// getReelViewV2 includeCommentLikes (ADR-230): an opt-in request flag. Builds
+// 36-38 parse the view with an EXACT key set and never send it.
+// ---------------------------------------------------------------------------
+
+// Records which collections a service queries, so a test can prove an
+// unflagged view never touches the comment-like store.
+function queriedCollections(db) {
+  const seen = [];
+  const collection = db.collection.bind(db);
+  db.collection = (path) => {
+    seen.push(path);
+    return collection(path);
+  };
+  return seen;
+}
+
+function commentLikeRequest(uid, commentId, liked = true, requestId) {
+  return {
+    auth: { uid, token: { email_verified: true } },
+    data: {
+      reelId: REEL_ID,
+      commentId,
+      liked,
+      requestId: requestId ?? `comment-like-${uid}-${commentId.slice(0, 8)}-${liked}`,
+    },
+  };
+}
+
+test("an unflagged view is byte-identical and never reads comment likes", async () => {
+  const { db, service } = engagementFixture();
+  const created = await service.createReelComment(commentRequest());
+  const before = await service.getReelViewV2(viewRequest());
+  await service.setReelCommentLikeV1(commentLikeRequest(OTHER, created.commentId));
+  await service.setReelCommentLikeV1(commentLikeRequest(VIEWER, created.commentId));
+  const seen = queriedCollections(db);
+  const after = await service.getReelViewV2(viewRequest());
+  assert.deepEqual(after, before);
+  assert.deepEqual(Object.keys(after).sort(), [
+    "comments",
+    "commentsTruncated",
+    "nextCommentCursor",
+    "reel",
+    "schemaVersion",
+  ]);
+  assert.equal(after.schemaVersion, 2);
+  assert.deepEqual(
+    seen.filter((path) => path.startsWith("commentLike")),
+    [],
+  );
+  // With the commentTypes probe of current clients, still no new key.
+  const typed = await service.getReelViewV2(
+    viewRequest({ commentTypes: ["text", "voice"] }),
+  );
+  assert.equal(Object.hasOwn(typed, "commentLikes"), false);
+});
+
+test("a flagged view adds exactly commentLikes for the projected comments, +2 reads", async () => {
+  const { db, service } = engagementFixture();
+  const mine = await service.createReelComment(commentRequest());
+  const theirs = await service.createReelComment({
+    auth: { uid: OTHER, token: { email_verified: true } },
+    data: { reelId: REEL_ID, text: "Second", requestId: "comment-other-00002" },
+  });
+  await service.setReelCommentLikeV1(commentLikeRequest(OTHER, mine.commentId));
+  await service.setReelCommentLikeV1(commentLikeRequest(VIEWER, mine.commentId));
+  await service.setReelCommentLikeV1(commentLikeRequest(AUTHOR, theirs.commentId));
+
+  const unflagged = await service.getReelViewV2(viewRequest());
+  const queriesBefore = db.metrics.queryCalls;
+  await service.getReelViewV2(viewRequest());
+  const unflaggedQueries = db.metrics.queryCalls - queriesBefore;
+  const flaggedBefore = db.metrics.queryCalls;
+  const flagged = await service.getReelViewV2(
+    viewRequest({ includeCommentLikes: true }),
+  );
+  assert.equal(db.metrics.queryCalls - flaggedBefore, unflaggedQueries + 2);
+
+  assert.deepEqual(Object.keys(flagged).sort(), [
+    "commentLikes",
+    "comments",
+    "commentsTruncated",
+    "nextCommentCursor",
+    "reel",
+    "schemaVersion",
+  ]);
+  // Everything else is exactly the unflagged response.
+  const { commentLikes, ...rest } = flagged;
+  assert.deepEqual(rest, unflagged);
+  assert.deepEqual(
+    Object.keys(commentLikes).sort(),
+    flagged.comments.map(({ commentId }) => commentId).sort(),
+  );
+  assert.deepEqual(commentLikes[mine.commentId], { likeCount: 2, callerLiked: true });
+  assert.deepEqual(commentLikes[theirs.commentId], { likeCount: 1, callerLiked: false });
+  for (const entry of Object.values(commentLikes)) {
+    assert.deepEqual(Object.keys(entry).sort(), ["callerLiked", "likeCount"]);
+  }
+  // The comment objects themselves never gain a key.
+  for (const comment of flagged.comments) {
+    assert.equal(Object.hasOwn(comment, "likeCount"), false);
+  }
+});
+
+test("a withheld comment has no commentLikes entry", async () => {
+  const { db, service } = engagementFixture();
+  const mine = await service.createReelComment(commentRequest());
+  const blocked = await service.createReelComment({
+    auth: { uid: OTHER, token: { email_verified: true } },
+    data: { reelId: REEL_ID, text: "Blocked later", requestId: "comment-other-00003" },
+  });
+  await service.setReelCommentLikeV1(commentLikeRequest(AUTHOR, blocked.commentId));
+  // A voice comment is withheld from a caller that did not declare "voice".
+  db.seed(`reels/${REEL_ID}/comments/${VOICE_ID}`, {
+    schemaVersion: 1,
+    type: "voice",
+    reelId: REEL_ID,
+    authorId: VIEWER,
+    authorName: `Name ${VIEWER}`,
+    text: "",
+    durationSeconds: 5,
+    createdAt: new Date(NOW_MS + 5),
+    storagePath: VOICE_PATH,
+    mediaGeneration: "88",
+    mediaSize: 4096,
+    mediaContentType: "audio/mp4",
+  });
+  db.seed(`users/${VIEWER}/blocked/${OTHER}`, { uid: OTHER, blockedAt: new Date(NOW_MS) });
+
+  const textOnly = await service.getReelViewV2(viewRequest({ includeCommentLikes: true }));
+  assert.deepEqual(Object.keys(textOnly.commentLikes), [mine.commentId]);
+  const withVoice = await service.getReelViewV2(viewRequest({
+    includeCommentLikes: true,
+    commentTypes: ["text", "voice"],
+  }));
+  assert.deepEqual(
+    Object.keys(withVoice.commentLikes).sort(),
+    [mine.commentId, VOICE_ID].sort(),
+  );
+  assert.equal(Object.hasOwn(withVoice.commentLikes, blocked.commentId), false);
+});
+
+test("includeCommentLikes is the literal true or absent; refusals keep one envelope", async () => {
+  const { db, service } = engagementFixture();
+  for (const value of [false, null, "true", 1]) {
+    await rejects(
+      service.getReelViewV2(viewRequest({ includeCommentLikes: value })),
+      "invalid-argument",
+    );
+  }
+  // Input faults are refused before the view budget is charged.
+  assert.equal(rateState(db, "reel.view"), undefined);
+  const flaggedEmpty = await service.getReelViewV2(viewRequest({ includeCommentLikes: true }));
+  assert.deepEqual(flaggedEmpty.commentLikes, {});
+
+  const blocked = engagementFixture();
+  blocked.db.seed(`users/${AUTHOR}/blocked/${VIEWER}`, {
+    uid: VIEWER,
+    blockedAt: new Date(NOW_MS),
+  });
+  await assert.rejects(
+    blocked.service.getReelViewV2(viewRequest({ includeCommentLikes: true })),
+    (error) => error.code === "permission-denied" &&
+      error.message === "This Reel is unavailable.",
+  );
+});
+
+// ---------------------------------------------------------------------------
 // Feed projection
 // ---------------------------------------------------------------------------
 

@@ -90,7 +90,9 @@ function inspectColdStart() {
   return inspection;
 }
 
-// Every export of functions/index.js, sorted. 274 names (build 36
+// Every export of functions/index.js, sorted. 280 names (274 + the three
+// ADR-230 likers lists, the two ADR-230 comment-like toggles and the ADR-230
+// "Hide my likes" setter below; build 36
 // integration: 261 at the common base, +1 request to speak, +3 account
 // takeover, +8 in-app bug reports; then +1 keep-warm pinger).
 // 2026-09-26 (ADR-226, cost plan C3): keepWarmHotPathsSchedule joins the map
@@ -111,7 +113,15 @@ function inspectColdStart() {
 // updateBugReportStatusV1 and sweepBugReportRetentionSchedule join it (261 +
 // 6 = 267 on its branch). 2026-09-25 (bug report rights requests): the
 // owner-only deleteBugReportV1 and deleteBugReportScreenshotV1 join it (267 +
-// 2 = 269 on its branch). `deliverBugReportV1` is NOT in it: both of its
+// 2 = 269 on its branch). 2026-09-28 (ADR-230, "See who liked"):
+// listVoiceMomentLikersV1 (Stage B), listReelLikersV1 (Reels) and
+// listServerChannelMessageReactorsV1 (the Server message extension, outside
+// the frozen 55-base manifest) join it; every one answers likersNotEnabled
+// until appConfig/likersV1 is written. The comment-like toggles
+// setMomentCommentLikeV1 (Stage B) and setReelCommentLikeV1 (Reels) join it
+// too; they are deliberately NOT behind that switch, and neither is
+// setMyLikesHiddenV1 (Profile), so people can opt out before any list is
+// exposed. `deliverBugReportV1` is NOT in it: both of its
 // delivery channels are source-gated off in index.js. Extending this list is
 // the deliberate review step the header describes, not a drive-by edit.
 const EXPORT_NAMES = Object.freeze([
@@ -233,9 +243,12 @@ const EXPORT_NAMES = Object.freeze([
   "listAdminRooms",
   "listAdminUsers",
   "listBugReportsV1",
+  "listReelLikersV1",
   "listReels",
   "listReelsV2",
   "listReportAuditTrail",
+  "listServerChannelMessageReactorsV1",
+  "listVoiceMomentLikersV1",
   "markDirectConversationRead",
   "migrateDirectIntegrityConversation",
   "migrateIntegrityMoment",
@@ -347,11 +360,14 @@ const EXPORT_NAMES = Object.freeze([
   "setDirectMessageReaction",
   "setDirectTyping",
   "setFollow",
+  "setMomentCommentLikeV1",
   "setMomentLike",
+  "setMyLikesHiddenV1",
   "setMyProfileVisibility",
   "setOwnRoomParticipantMute",
   "setParticipantMute",
   "setPremiumMessagingPrivacyV1",
+  "setReelCommentLikeV1",
   "setReelLike",
   "setRoomModerationStatus",
   "setRoomStatusSelf",
@@ -546,4 +562,82 @@ test("a missing Storage bucket still fails at load, not at the first upload", ()
     },
     stdio: ["ignore", "ignore", "pipe"],
   });
+});
+
+// ADR-230: the likers modules are shared by the Voice (Stage B), Reel and
+// Server message cold starts. In a fresh process they must add no SDK beyond
+// the callable baseline (integrity/guards pulls firebase-functions/v2/https,
+// which loads the firebase-admin app, auth and app-check cores): never the
+// Firestore, Storage or Messaging SDKs, and never the direct-messaging graph
+// (the reaction picker comes from the messaging/direct_reactions leaf).
+// utils/likers_access is pure and loads no npm package at all.
+const LIKERS_LOCAL_GRAPH = Object.freeze([
+  "achievements/identity.js",
+  "engagement/liker_audience.js",
+  "engagement/liker_cursors.js",
+  "engagement/likers_activation.js",
+  "engagement/likers_admission.js",
+  "engagement/likers_callable.js",
+  "engagement/likers_paging.js",
+  "integrity/guards.js",
+  "messaging/direct_reactions.js",
+  "profile/media_contract.js",
+  "servers/authority.js",
+  "servers/contract.js",
+  "utils/likers_access.js",
+  "utils/premium_access.js",
+  "utils/roles.js",
+]);
+
+function inspectModuleGraph(modules) {
+  const script = [
+    `for (const name of ${JSON.stringify(modules)}) require(name);`,
+    "const path = require('node:path');",
+    "const cache = Object.keys(require.cache);",
+    "const nodeModules = path.sep + 'node_modules' + path.sep;",
+    "const packages = [...new Set(cache.filter((key) => key.includes(nodeModules))",
+    "  .map((key) => { const rest = key.slice(key.lastIndexOf(nodeModules) + nodeModules.length).split(path.sep);",
+    "    return rest[0].startsWith('@') ? rest.slice(0, 2).join('/') : rest[0]; }))].sort();",
+    "const adminSubsystems = [...new Set(cache",
+    "  .filter((key) => key.includes(nodeModules + 'firebase-admin' + path.sep + 'lib' + path.sep))",
+    "  .map((key) => key.split(path.sep + 'lib' + path.sep)[1].split(path.sep)[0]))].sort();",
+    "const local = cache.filter((key) => !key.includes(nodeModules))",
+    "  .map((key) => path.relative(process.cwd(), key).split(path.sep).join('/')).sort();",
+    "process.stdout.write(JSON.stringify({ packages, adminSubsystems, local }));",
+  ].join(" ");
+  return JSON.parse(execFileSync(process.execPath, ["-e", script], {
+    cwd: FUNCTIONS_DIR,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  }));
+}
+
+test("the likers modules load no SDK beyond the callable baseline", () => {
+  const baseline = inspectModuleGraph(["./integrity/guards.js"]);
+  const likers = inspectModuleGraph([
+    "./engagement/likers_callable.js",
+    "./engagement/comment_likes.js",
+    "./utils/likers_access.js",
+  ]);
+  assert.deepEqual(likers.packages, baseline.packages);
+  for (const subsystem of ["firestore", "storage", "messaging", "database"]) {
+    assert.equal(
+      likers.adminSubsystems.includes(subsystem),
+      false,
+      `the likers modules must not load firebase-admin/${subsystem}`,
+    );
+  }
+  assert.deepEqual(
+    likers.local.filter((file) => file !== "engagement/comment_likes.js"),
+    [...LIKERS_LOCAL_GRAPH],
+  );
+  assert.equal(likers.local.includes("messaging/direct_integrity.js"), false);
+
+  const access = inspectModuleGraph(["./utils/likers_access.js"]);
+  assert.deepEqual(access.packages, []);
+  assert.deepEqual(access.local, [
+    "utils/likers_access.js",
+    "utils/premium_access.js",
+    "utils/roles.js",
+  ]);
 });

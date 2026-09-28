@@ -36,7 +36,13 @@ const USER_CALLABLE_METHODS = Object.freeze({
   getVoiceMomentsFeedV2: ["moments", "getVoiceMomentsFeedV2"],
   getVoiceMomentViewV2: ["moments", "getVoiceMomentViewV2"],
   getVoiceMomentMediaAccess: ["moments", "getVoiceMomentMediaAccess"],
+  // "See who liked" (ADR-230): Premium / canonical VIP / staff preview only,
+  // behind the server-only appConfig/likersV1 switch.
+  listVoiceMomentLikersV1: ["moments", "listVoiceMomentLikersV1"],
   setMomentLike: ["moments", "setMomentLike"],
+  // Comment likes (ADR-230): everyone may like a comment; not gated and not
+  // behind appConfig/likersV1.
+  setMomentCommentLikeV1: ["moments", "setMomentCommentLikeV1"],
   createMomentComment: ["moments", "createMomentComment"],
   reserveVoiceCommentDraft: ["moments", "reserveVoiceCommentDraft"],
   finalizeVoiceCommentDraft: ["moments", "finalizeVoiceCommentDraft"],

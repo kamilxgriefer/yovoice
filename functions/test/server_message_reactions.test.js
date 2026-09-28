@@ -91,6 +91,7 @@ test("Server message reactions: the extension table registers behind the activat
     clock: () => NOW,
     messageReactions: {
       setServerChannelMessageReactionV1: async (bound) => { calls.push(bound); return { ok: true }; },
+      listServerChannelMessageReactorsV1: async (bound) => { calls.push(bound); return { listed: true }; },
     },
     messageMedia: Object.fromEntries([
       ...Object.entries(SERVER_MESSAGE_CALLABLE_METHODS)
@@ -116,6 +117,18 @@ test("Server message reactions: the extension table registers behind the activat
   });
   assert.equal(SERVER_MESSAGE_CALLABLE_METHODS.setServerChannelMessageReactionV1, "messageReactions");
   assert.ok(SERVER_MESSAGE_EXPORT_NAMES.includes("setServerChannelMessageReactionV1"));
+  // ADR-230: "See who reacted" rides the same extension, gate and options.
+  assert.equal(SERVER_MESSAGE_CALLABLE_METHODS.listServerChannelMessageReactorsV1, "messageReactions");
+  assert.ok(SERVER_MESSAGE_EXPORT_NAMES.includes("listServerChannelMessageReactorsV1"));
+  const lister = functions.listServerChannelMessageReactorsV1;
+  assert.equal(lister.kind, "callable");
+  assert.equal(lister.options.region, "europe-west1");
+  assert.equal(lister.options.memory, "256MiB");
+  assert.equal(lister.options.minInstances, 0);
+  assert.equal(lister.options.enforceAppCheck, false);
+  assert.equal("secrets" in lister.options, false);
+  await rejects(lister.handler(request("gate-user", { serverId: "s" })), "failed-precondition");
+  assert.equal(calls.length, 0, "a disabled Servers gate never reaches the lister");
   const entry = functions.setServerChannelMessageReactionV1;
   assert.equal(entry.kind, "callable");
   assert.equal(entry.options.region, "europe-west1");

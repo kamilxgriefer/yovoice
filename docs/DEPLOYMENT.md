@@ -4,6 +4,219 @@ What deploys automatically, what's manual, and exactly how — for both
 deployables described in
 [ADR-014](Decisions.md#adr-014-two-deployables-one-firebase-project).
 
+## "See who liked" (ADR-230) — source only, NOTHING DEPLOYED
+
+Source: branch `vip/likers` on `main` 3.3.0+38 (`b492ca0c`). What it is:
+[ADR-230](Decisions.md#adr-230-see-who-liked-is-a-premium-or-vip-capability-behind-an-activation-switch-comment-likes-live-in-a-flat-server-only-store);
+security surface:
+[SECURITY.md](SECURITY.md#see-who-liked-and-hide-my-likes-2026-09-28-adr-230-source-only-not-deployed).
+The lists are **switched, not deployed**: after every step below they answer
+`likersNotEnabled` until step 7 writes `appConfig/likersV1`. Comment likes and
+Hide my likes are not behind that switch and work as soon as they deploy.
+
+**What changes, counted:**
+
+- **Indexes:** 51 → **53** composites (two `commentLikes`: `commentKey` ASC,
+  `createdAt` DESC, `__name__` DESC; `userId` ASC, `commentKey` ASC) and one
+  new TTL override, `likerPageCursors.expiresAt` (`indexes: []`).
+- **Rules:** explicit `allow read, write: if false` for `commentLikes`,
+  `commentLikeCounters` and `likerPageCursors` (no-ops: unmatched paths were
+  already denied), comments only on `appConfig/*` and `users/{uid}`, and the
+  ADR-140 `voiceMoments/{id}/likes/{uid}` read **closed** (owner decision
+  2026-09-28): Build ≤ 19 loses its Moment like lists; builds 36-38 and the
+  website never read that path.
+- **Functions (10 names):** 6 new — `listVoiceMomentLikersV1`,
+  `setMomentCommentLikeV1`, `listReelLikersV1`, `setReelCommentLikeV1`,
+  `listServerChannelMessageReactorsV1` (the Servers message extension:
+  behind the Servers activation gate and `callableAccess`, outside the frozen
+  62/56/55 manifest, flat export name like `setServerChannelMessageReactionV1`),
+  `setMyLikesHiddenV1` (Profile); 4 updated — `getVoiceMomentViewV2`
+  (`includeCommentLikes`; Top reactions honour Hide my likes),
+  `getReelViewV2` (`includeCommentLikes`), `onMomentCommentDeleted` and
+  `onReelCommentDeleted` (purge a deleted comment's likes first). That is 6
+  new + 4 updated; no deletion, no warm instance (`WARM_SET` stays empty),
+  no new secret.
+- **Data:** none written by the deploy. `appConfig/likersV1` is written in
+  step 7 by an operator, never by a callable.
+
+### 0. Gates before anything is deployed
+
+- `functions` suite under the Auth and Firestore emulators (`npm test`),
+  `firestore-tests` `npm test` (rules), `test:servers` (the reaction-map
+  case) — all green on the merged commit.
+- Capture, before changing anything: the released Firestore ruleset source
+  (see "Reading the deployed ruleset" below) and the current revisions of
+  `getVoiceMomentViewV2`, `getReelViewV2`, `onMomentCommentDeleted`,
+  `onReelCommentDeleted`, plus an unflagged `getVoiceMomentViewV2` and
+  `getReelViewV2` response from a controlled account (for the key-set diff
+  in step 3).
+- **VIP grant census** (read only, counts only, no uids):
+  `node functions/scripts/census_vip_grants.js --project yovoice-ec54a`.
+  Every grant Kamil expects to count must read `canonical`; see "VIP grants"
+  below. A non-canonical grant is repaired by the operator, never by
+  widening the predicate.
+
+### 1. Indexes
+
+```bash
+firebase deploy --only firestore:indexes --project yovoice-ec54a --non-interactive
+gcloud firestore indexes composite list --project=yovoice-ec54a \
+  --format="table(name,collectionGroup,queryScope,fields,state)"
+gcloud firestore indexes fields list --project=yovoice-ec54a \
+  --filter="ttlConfig:*" --format="table(name,ttlConfig.state)"
+```
+
+No `--force`. Read back: **53** composites, both `commentLikes` composites
+**READY** (not `CREATING`), and every TTL override `ACTIVE`/`ttl:true` —
+`likerPageCursors.expiresAt` new, and the existing
+`notificationDeliveryEvents.expiresAt`, `voiceMomentReportReceipts.expiresAt`,
+`reelCleanupOutbox.deleteAfter`, `reelViews.expiresAt` and
+`gifQueryCache.expiresAt` unchanged (an index deploy has disturbed managed
+TTL before).
+
+### 2. Rules
+
+```bash
+firebase deploy --only firestore:rules --project yovoice-ec54a --non-interactive
+```
+
+Read the released source back and diff it against `firestore.rules` at the
+merged commit: byte-identical.
+
+### 3. Functions
+
+After 1 reads READY and 2 is read back. The spec's default is one
+name-scoped command, so the shared modules (`moments/integrity.js`,
+`reels/service.js`, `engagement/*`) land together:
+
+```bash
+SELECTOR=functions:onMomentCommentDeleted,functions:onReelCommentDeleted,functions:setMyLikesHiddenV1,functions:setMomentCommentLikeV1,functions:setReelCommentLikeV1,functions:getVoiceMomentViewV2,functions:getReelViewV2,functions:listVoiceMomentLikersV1,functions:listReelLikersV1,functions:listServerChannelMessageReactorsV1
+firebase deploy --only "$SELECTOR" --project yovoice-ec54a --non-interactive --dry-run
+firebase deploy --only "$SELECTOR" --project yovoice-ec54a --non-interactive
+```
+
+If the dry run refuses only with "Pass the --force option to deploy functions
+with a failure policy" (the two comment-delete triggers retry), add `--force`:
+safe with a name-scoped `--only`, which plans no deletion. **CPU quota:** ten
+revisions starting at once has failed before ("Quota exceeded for total
+allowable CPU per project per region", 2026-09-26). If it does, re-run only
+the names the CLI printed as failed; or deploy in batches of at most three
+**in the selector's order** — the purge triggers first, so no comment like
+can be written before its delete purge exists; then `setMyLikesHiddenV1`, the
+toggles and the views; the lists last. A partial window is harmless: no
+client calls the new callables yet, and the lists are off.
+
+**Read back:**
+
+1. All 10 ACTIVE at 100 % traffic in `europe-west1`
+   (`gcloud functions list --v2 --regions=europe-west1 --project=yovoice-ec54a`),
+   6 created, 4 with a new revision.
+2. Controlled accounts: like and unlike a Voice Moment comment and a Yeel
+   comment (response exactly `{momentId|reelId, commentId, liked, changed,
+   likeCount}`); both views with `includeCommentLikes: true` (one extra
+   `commentLikes` key) and without it (a key-set diff against the step 0
+   capture: **identical**); `setMyLikesHiddenV1 {hidden: true}` then
+   `{hidden: false}` (`{hidden, changed}`); each of the three lists answers
+   `failed-precondition` with `details.reason == "likersNotEnabled"`.
+3. **Index smoke — a hard gate before any client release (step 5).** The
+   emulator creates indexes on demand, so only production can prove them:
+
+   ```bash
+   cd functions && node scripts/smoke_likers_indexes.js --project yovoice-ec54a \
+     --moment <momentId> --reel <reelId> \
+     --moment-comment <momentId>/<commentId> --reel-comment <reelId>/<commentId> \
+     --viewer <controlled-account-uid>
+   ```
+
+   Read only, no activation needed; it runs the lists' own query builders
+   over `likes` and `commentLikes` (two pages, the second through
+   `startAfter`), the purge query and the views' two state queries, and
+   prints counts and PASS/FAIL only (never a uid). The ids need not have
+   likes: a query without a serving index fails `FAILED_PRECONDITION`
+   whatever the data. Pass = `"ok": true`. If a `likes` query fails with an
+   index link, add `likes (createdAt DESC, __name__ DESC)`, COLLECTION
+   scope, to `firestore.indexes.json`, redeploy step 1 and re-run.
+4. Logs: no `severity>=ERROR` from the ten services in the first hour; no
+   `comment like purge abandoned`.
+
+### 4. Website privacy policy (`yovoice-website`, Vercel)
+
+The "Who liked" paragraph and the Hide my likes bullet (spec §6, owner
+answer 1: no `listedSince` sentence) are live **before** the client release.
+
+### 5. Clients
+
+The build carrying Hide my likes, comment hearts and the likers sheet, on iOS,
+Android **and** web. Release notes and the tester e-mail name "See who liked"
+for VIPs and Hide my likes in Settings → Privacy (no links or domains).
+
+### 6. Alert (before activation)
+
+A log-based metric on `jsonPayload.message="likers budget exhausted" AND
+jsonPayload.scope="likers.listDaily"` over `cloud_run_revision`, alerting on
+any occurrence: one account paged through 500 lists in a day. The log line
+carries the scope and no uid; find the account through the request log of
+the same trace if action is needed.
+
+### 7. Activation (Kamil's go)
+
+Preconditions, all of them: the policy is live (4); the Hide-my-likes build is
+available on iOS, Android and web (5); at least **7 days** have passed since
+the last of those, so people could opt out first; the census (0) is
+confirmed; the index smoke (3.3) passed; the alert (6) exists. Then, with
+Admin credentials:
+
+```bash
+cd functions
+# dry run: prints the current state and the requested one, writes nothing
+node scripts/set_likers_activation.js --project yovoice-ec54a --enabled true --server-messages true
+node scripts/set_likers_activation.js --project yovoice-ec54a --enabled true --server-messages true --apply
+```
+
+The script writes exactly `{schemaVersion: 1, enabled, serverMessagesEnabled,
+updatedAt}` with `set()` (no merge, so no stale key such as `listedSince`
+survives — that would read as off) and fails unless the callables' own
+validator reads back what was requested. `--server-messages true` is the
+owner answer (2026-09-28); the Server list carries the recorded
+reaction-map oracle.
+
+Smoke: a VIP tester lists each target (Voice Moment, Voice comment, Yeel,
+Yeel comment, Server message); a free account gets
+`likersAccessRequired`; an account that turns Hide my likes on disappears
+from another VIP's list and from Top reactions; a cursor page 2 works.
+
+### Rollback
+
+- **Lists:** `node scripts/set_likers_activation.js --project yovoice-ec54a
+  --enabled false --server-messages false --apply` — immediate, no deploy.
+  Only the Server list: `--enabled true --server-messages false`.
+- **One VIP:** revoke the grant (below).
+- **Functions:** redeploy the four updated names from the previous commit
+  (`b492ca0c`); the six new ones can stay (lists are off; the toggles and
+  the setter only touch their own documents). Deleting a function is an
+  owner decision.
+- **Rules:** re-releasing the previous ruleset re-opens the Build ≤ 19 likes
+  bridge; that reverses an owner decision, so ask first.
+- **Indexes/TTL:** leave them; they serve nothing when unused.
+
+### VIP grants
+
+- **Canonical shape** (the only one that unlocks "See who liked";
+  `canonicalLikersVipGrant` in `functions/utils/likers_access.js`): required
+  `source` (`testerProgram`, `legacyRoleMigration` or `admin`), `revoked:
+  false`, `expiresAt` (`null` or a future Timestamp); optional `active: true`,
+  `grantedAt` (Timestamp), `grantedBy` (1-200 chars); no other key. Tester
+  grants `{source: "testerProgram", expiresAt: null, revoked: false,
+  grantedBy}` and legacy-role grants `{source: "legacyRoleMigration",
+  grantedAt, expiresAt: null, revoked: false}` are canonical as written.
+- **Census:** `node functions/scripts/census_vip_grants.js --project
+  yovoice-ec54a` (read only, counts per key set / source / canonical, no
+  uids).
+- **Revoke:** set `revoked: true` on `vipGrants/{uid}` with Admin
+  credentials. The likers gate reads the grant per request, so it takes
+  effect on the next list call; the badge mirrors follow through their
+  existing triggers.
+
 ## Build 37 release round — web, TestFlight and Play internal (2026-09-27)
 
 Source: `main` at `2064419fd83463322a7b1087b150f0d5091bc0f8` (`pubspec.yaml`
