@@ -509,6 +509,9 @@ extension PageProfileCopy on PagesCopy {
   );
   String get previewOverline =>
       copy.contextualText('pages.previewOverline', 'Preview', 'Podgląd');
+  String get previewOnWall =>
+      copy.text('On the Content wall', 'Na ścianie Treści');
+  String get previewProfile => copy.text('Page profile', 'Profil strony');
   String get whatHappens => copy.text('What happens', 'Co się stanie');
   String get whatFollow => copy.text(
     'Anyone can follow the Page and see its posts. Only you publish posts.',

@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
@@ -18,6 +20,7 @@ import 'package:yovoice/features/pages/presentation/page_navigation.dart';
 import 'package:yovoice/features/pages/presentation/page_profile_copy.dart';
 import 'package:yovoice/features/pages/presentation/pages_copy.dart';
 import 'package:yovoice/features/pages/presentation/screens/page_settings_screen.dart';
+import 'package:yovoice/features/pages/presentation/widgets/page_card_rows.dart';
 import 'package:yovoice/features/pages/presentation/widgets/page_face.dart';
 import 'package:yovoice/features/pages/presentation/widgets/pages_focus_ink.dart';
 import 'package:yovoice/features/pages/presentation/widgets/page_profile_parts.dart';
@@ -78,7 +81,10 @@ Future<void> openCreatePageFlow(
 /// Phone: an app bar "Nowa strona · Krok n z 3", a three-segment progress
 /// and the bottom action. Wide (≥ 720): the desktop frame of the approved
 /// render, a back link, step tabs, a 720 column and the actions on the
-/// right. The form state is shared by both. Pops with the new Page's id.
+/// right. From 1000 the header spans a centred 1040 frame on every step and
+/// step 2 splits into the form and a sticky preview column (variant C,
+/// approved 2026-09-28). The form state is shared by all of them. Pops with
+/// the new Page's id.
 class CreatePageScreen extends StatefulWidget {
   const CreatePageScreen({
     this.backLabel,
@@ -104,6 +110,13 @@ class CreatePageScreen extends StatefulWidget {
 
   static const double wideBreakpoint = 720;
   static const double wideColumn = 720;
+
+  /// From here every step's header spans [splitFrame] and step 2 splits
+  /// into the form and a sticky preview column.
+  static const double splitBreakpoint = 1000;
+
+  /// The centred desktop frame from [splitBreakpoint] (UI.md `feed`).
+  static const double splitFrame = 1040;
 
   @override
   State<CreatePageScreen> createState() => _CreatePageScreenState();
@@ -564,99 +577,322 @@ class _CreatePageScreenState extends State<CreatePageScreen> {
       );
     }
 
+    final chrome = <Widget>[
+      Align(
+        alignment: AlignmentDirectional.centerStart,
+        child: TextButton.icon(
+          key: const ValueKey('create-back'),
+          onPressed: _back,
+          style: TextButton.styleFrom(
+            foregroundColor: palette.textSecondary,
+            minimumSize: const Size(0, 48),
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+          ),
+          icon: const Icon(Icons.chevron_left_rounded),
+          label: Text(
+            _step > 1 ? copy.goBack : widget.backLabel ?? copy.goBack,
+          ),
+        ),
+      ),
+      const SizedBox(height: 20),
+      Semantics(
+        label: copy.stepOf(_step),
+        child: Wrap(
+          key: const ValueKey('create-step-tabs'),
+          children: [
+            stepTab(1, copy.stepKind),
+            stepTab(2, copy.stepDetails),
+            stepTab(3, copy.stepPreview),
+          ],
+        ),
+      ),
+      Container(height: 1, color: palette.hairline),
+    ];
+    final actions = Wrap(
+      alignment: WrapAlignment.end,
+      spacing: 12,
+      runSpacing: 12,
+      children: [
+        SizedBox(
+          width: 140,
+          child: PageTonalButton(
+            key: const ValueKey('create-secondary'),
+            label: _step == 1 || _terminal ? copy.cancel : copy.goBack,
+            height: 48,
+            expand: true,
+            onPressed: _terminal
+                ? () => Navigator.of(context).maybePop()
+                : _back,
+          ),
+        ),
+        if (!_terminal)
+          SizedBox(
+            width: 200,
+            child: YoButton(
+              key: const ValueKey('create-primary'),
+              label: _primaryLabel,
+              height: 48,
+              isLoading: _publishing,
+              onPressed: _publishing ? null : _next,
+            ),
+          ),
+      ],
+    );
+
     return Scaffold(
       backgroundColor: palette.background,
       body: SafeArea(
-        child: SingleChildScrollView(
-          key: ValueKey('create-step-$_step'),
-          padding: const EdgeInsets.fromLTRB(24, 28, 24, 40),
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(
-                maxWidth: CreatePageScreen.wideColumn,
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Align(
-                    alignment: AlignmentDirectional.centerStart,
-                    child: TextButton.icon(
-                      key: const ValueKey('create-back'),
-                      onPressed: _back,
-                      style: TextButton.styleFrom(
-                        foregroundColor: palette.textSecondary,
-                        minimumSize: const Size(0, 48),
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                      ),
-                      icon: const Icon(Icons.chevron_left_rounded),
-                      label: Text(
-                        _step > 1
-                            ? copy.goBack
-                            : widget.backLabel ?? copy.goBack,
-                      ),
-                    ),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            if (constraints.maxWidth >= CreatePageScreen.splitBreakpoint) {
+              return _framedLayout(
+                context,
+                constraints.maxWidth,
+                chrome: chrome,
+                actions: actions,
+              );
+            }
+            return SingleChildScrollView(
+              key: ValueKey('create-step-$_step'),
+              padding: const EdgeInsets.fromLTRB(24, 28, 24, 40),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(
+                    maxWidth: CreatePageScreen.wideColumn,
                   ),
-                  const SizedBox(height: 20),
-                  Semantics(
-                    label: copy.stepOf(_step),
-                    child: Wrap(
-                      children: [
-                        stepTab(1, copy.stepKind),
-                        stepTab(2, copy.stepDetails),
-                        stepTab(3, copy.stepPreview),
-                      ],
-                    ),
-                  ),
-                  Container(height: 1, color: palette.hairline),
-                  const SizedBox(height: 36),
-                  ..._stepBody(context, wide: true),
-                  const SizedBox(height: 36),
-                  Wrap(
-                    alignment: WrapAlignment.end,
-                    spacing: 12,
-                    runSpacing: 12,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      SizedBox(
-                        width: 140,
-                        child: PageTonalButton(
-                          key: const ValueKey('create-secondary'),
-                          label: _step == 1 || _terminal
-                              ? copy.cancel
-                              : copy.goBack,
-                          height: 48,
-                          expand: true,
-                          onPressed: _terminal
-                              ? () => Navigator.of(context).maybePop()
-                              : _back,
-                        ),
-                      ),
-                      if (!_terminal)
-                        SizedBox(
-                          width: 200,
-                          child: YoButton(
-                            key: const ValueKey('create-primary'),
-                            label: _primaryLabel,
-                            height: 48,
-                            isLoading: _publishing,
-                            onPressed: _publishing ? null : _next,
-                          ),
-                        ),
+                      ...chrome,
+                      const SizedBox(height: 36),
+                      ..._stepBody(context, wide: true),
+                      const SizedBox(height: 36),
+                      actions,
                     ],
                   ),
-                ],
+                ),
               ),
-            ),
-          ),
+            );
+          },
         ),
       ),
     );
   }
 
-  List<Widget> _stepBody(BuildContext context, {required bool wide}) =>
+  /// From [CreatePageScreen.splitBreakpoint] every step shares one centred
+  /// [CreatePageScreen.splitFrame] (UI.md `feed`), so the back link, the step
+  /// tabs and the title stand still while the steps change. Steps 1 and 3
+  /// keep their approved [CreatePageScreen.wideColumn] column at the frame's
+  /// start with the actions at its foot; step 2 splits (variant C).
+  ///
+  /// One scroll view scrolls the whole page, so the wheel works anywhere.
+  /// Keyboard order is explicit: the header, then the step's form with
+  /// Wróć / Dalej, then (step 2) the preview column's change-name link.
+  Widget _framedLayout(
+    BuildContext context,
+    double width, {
+    required List<Widget> chrome,
+    required Widget actions,
+  }) {
+    final gutter = math.max(24.0, (width - CreatePageScreen.splitFrame) / 2);
+    final header = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ...chrome,
+        const SizedBox(height: 36),
+        _startColumn(_stepTitle(context, wide: true)),
+      ],
+    );
+    final body = _step == 2
+        ? _splitStep2(context, actions: actions)
+        : SliverToBoxAdapter(
+            child: _inOrder(
+              1,
+              _startColumn(
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    ..._stepContent(context, wide: true),
+                    const SizedBox(height: 36),
+                    actions,
+                  ],
+                ),
+              ),
+            ),
+          );
+    return FocusTraversalGroup(
+      policy: OrderedTraversalPolicy(),
+      child: CustomScrollView(
+        key: ValueKey('create-step-$_step'),
+        slivers: [
+          SliverPadding(
+            padding: EdgeInsets.fromLTRB(gutter, 28, gutter, 0),
+            sliver: SliverToBoxAdapter(child: _inOrder(0, header)),
+          ),
+          SliverPadding(
+            padding: EdgeInsets.fromLTRB(gutter, 0, gutter, 40),
+            sliver: body,
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// [child] at most [CreatePageScreen.wideColumn] wide, at the frame's start.
+  static Widget _startColumn(Widget child) => Align(
+    alignment: AlignmentDirectional.topStart,
+    child: ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: CreatePageScreen.wideColumn),
+      child: child,
+    ),
+  );
+
+  /// [child] as one unit of the framed layout's keyboard order.
+  static Widget _inOrder(double order, Widget child) => FocusTraversalOrder(
+    order: NumericFocusOrder(order),
+    child: FocusTraversalGroup(child: child),
+  );
+
+  /// Step 2 in the frame (variant C, approved 2026-09-28): the form, with
+  /// Wróć / Dalej at its foot, on the left; on the right two captioned
+  /// previews, the Page as it appears on the Content wall (the suggestion
+  /// row) and its profile header (step 3's), with the change-name link. The
+  /// right column pins [_stickyTop] under the window's top edge while the
+  /// form scrolls, and scrolls with the page if it is taller than the window.
+  Widget _splitStep2(BuildContext context, {required Widget actions}) {
+    final copy = _copy;
+    final palette = context.appPalette;
+    final form = Padding(
+      key: const ValueKey('create-form-column'),
+      padding: const EdgeInsets.only(top: _stickyTop),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          ..._step2Fields(context),
+          const SizedBox(height: 36),
+          actions,
+        ],
+      ),
+    );
+    final card = PageCard(
+      pageId: _userId,
+      displayName: _name,
+      kind: _kind,
+      category: _category ?? '',
+      followerCount: 0,
+      onYoVoiceSinceMs: null,
+      viewerFollows: false,
+      lastPostAtMs: null,
+    );
+    final preview = Padding(
+      key: const ValueKey('create-preview-column'),
+      padding: const EdgeInsets.only(top: _stickyTop),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // A picture only: inert, out of the focus order and hidden from
+          // screen readers with its caption (the form says everything it
+          // shows), like the header below.
+          ExcludeSemantics(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _overline(context, copy.previewOnWall),
+                ExcludeFocus(
+                  child: IgnorePointer(
+                    child: YoCard(
+                      key: const ValueKey('create-preview-wall'),
+                      semanticButton: false,
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      child: PageListRow(
+                        card: card,
+                        follow: PageFollowBinding(
+                          follows: (_) => false,
+                          busy: (_) => false,
+                          onToggle: (_) {},
+                        ),
+                        onOpen: () {},
+                        showMeta: false,
+                        divider: false,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
+          _overline(context, copy.previewProfile),
+          _InertHeader(
+            pageId: _userId,
+            name: _name,
+            kind: _kind,
+            description: _description.text.trim(),
+          ),
+          const SizedBox(height: 8),
+          Align(
+            alignment: AlignmentDirectional.centerStart,
+            child: TextButton.icon(
+              key: const ValueKey('create-change-profile'),
+              onPressed: _profile == null ? null : _openProfileEditor,
+              style: TextButton.styleFrom(
+                foregroundColor: palette.interactiveForeground,
+                minimumSize: const Size(0, 44),
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+              ),
+              icon: const Icon(Icons.edit_outlined, size: 18),
+              label: Text(copy.changeNameAndPhoto),
+            ),
+          ),
+        ],
+      ),
+    );
+    return SliverCrossAxisGroup(
+      slivers: [
+        SliverCrossAxisExpanded(
+          flex: 1,
+          sliver: SliverToBoxAdapter(child: _inOrder(1, form)),
+        ),
+        const SliverConstrainedCrossAxis(
+          maxExtent: 64,
+          sliver: SliverToBoxAdapter(),
+        ),
+        SliverConstrainedCrossAxis(
+          maxExtent: 360,
+          sliver: _StickySliver(child: _inOrder(2, preview)),
+        ),
+      ],
+    );
+  }
+
+  /// The pinned column's distance from the window's top edge.
+  static const double _stickyTop = 24;
+
+  List<Widget> _stepBody(BuildContext context, {required bool wide}) => [
+    _stepTitle(context, wide: wide),
+    ..._stepContent(context, wide: wide),
+  ];
+
+  Widget _stepTitle(BuildContext context, {required bool wide}) {
+    final copy = _copy;
+    return switch (_step) {
+      1 => _title(
+        context,
+        copy.step1Title,
+        wide ? copy.step1LeadWide : copy.step1Lead,
+        wide,
+      ),
+      2 => _title(context, copy.step2Title, copy.step2Lead, wide),
+      _ => _title(context, copy.step3Title, copy.step3Lead, wide),
+    };
+  }
+
+  /// The step under its title.
+  List<Widget> _stepContent(BuildContext context, {required bool wide}) =>
       switch (_step) {
         1 => _step1(context, wide: wide),
-        2 => _step2(context, wide: wide),
-        _ => _step3(context, wide: wide),
+        2 => _step2(context),
+        _ => _step3(context),
       };
 
   Widget _title(BuildContext context, String title, String lead, bool wide) {
@@ -713,12 +949,6 @@ class _CreatePageScreenState extends State<CreatePageScreen> {
       onTap: () => setState(() => _kind = PageKind.community),
     );
     return [
-      _title(
-        context,
-        copy.step1Title,
-        wide ? copy.step1LeadWide : copy.step1Lead,
-        wide,
-      ),
       SizedBox(height: wide ? 28 : 24),
       if (wide)
         IntrinsicHeight(
@@ -813,19 +1043,28 @@ class _CreatePageScreenState extends State<CreatePageScreen> {
     FocusNode? focusNode,
   }) {
     final palette = context.appPalette;
+    // A one-line value (the server refuses line breaks in it) still wraps on
+    // screen and the field grows with it (its character limit bounds it): at
+    // a large text size a narrow column would otherwise scroll the value
+    // sideways and cut its start ("n–Pt 7:00…"). Enter stays the keyboard's
+    // action and never inserts a line break, as in a one-line field.
+    final multiLine = maxLines > 1;
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
       child: TextField(
         key: key,
         controller: controller,
         focusNode: focusNode,
-        maxLines: maxLines,
-        minLines: maxLines > 1 ? 3 : 1,
+        maxLines: multiLine ? maxLines : null,
+        minLines: multiLine ? 3 : 1,
         maxLength: maxLength,
-        inputFormatters: limit == null
-            ? null
-            : [LengthLimitingTextInputFormatter(limit)],
-        keyboardType: maxLines > 1 ? TextInputType.multiline : keyboard,
+        inputFormatters: [
+          if (!multiLine) FilteringTextInputFormatter.singleLineFormatter,
+          if (limit != null) LengthLimitingTextInputFormatter(limit),
+        ],
+        keyboardType: multiLine
+            ? TextInputType.multiline
+            : keyboard ?? TextInputType.text,
         style: AppTypography.bodyLarge.copyWith(
           color: palette.textPrimary,
           fontSize: 16,
@@ -893,27 +1132,38 @@ class _CreatePageScreenState extends State<CreatePageScreen> {
     );
   }
 
-  List<Widget> _step2(BuildContext context, {required bool wide}) {
+  Widget _livePreview() {
+    final copy = _copy;
+    final meta = _category == null
+        ? copy.kindLabel(_kind)
+        : '${copy.kindLabel(_kind)} · ${copy.categoryLabel(_category!)}';
+    return _LivePreview(
+      pageId: _userId,
+      name: _name,
+      kind: _kind,
+      meta: meta,
+      onEditProfile: _profile == null ? null : _openProfileEditor,
+    );
+  }
+
+  /// Step 2 in one column (phone and below the frame): the live preview
+  /// card above the fields.
+  List<Widget> _step2(BuildContext context) => [
+    const SizedBox(height: 20),
+    _livePreview(),
+    const SizedBox(height: 24),
+    ..._step2Fields(context),
+  ];
+
+  /// Step 2's fields, from Kategoria to the consent row.
+  List<Widget> _step2Fields(BuildContext context) {
     final copy = _copy;
     final palette = context.appPalette;
     final show = _showErrors;
     final categoryLabel = _category == null
         ? null
         : copy.categoryLabel(_category!);
-    final meta = categoryLabel == null
-        ? copy.kindLabel(_kind)
-        : '${copy.kindLabel(_kind)} · $categoryLabel';
     final children = <Widget>[
-      _title(context, copy.step2Title, copy.step2Lead, wide),
-      const SizedBox(height: 20),
-      _LivePreview(
-        pageId: _userId,
-        name: _name,
-        kind: _kind,
-        meta: meta,
-        onEditProfile: _profile == null ? null : _openProfileEditor,
-      ),
-      const SizedBox(height: 24),
       _pickerField(
         context,
         key: const ValueKey('create-category'),
@@ -1061,12 +1311,11 @@ class _CreatePageScreenState extends State<CreatePageScreen> {
 
   // ---- Step 3 --------------------------------------------------------------
 
-  List<Widget> _step3(BuildContext context, {required bool wide}) {
+  List<Widget> _step3(BuildContext context) {
     final copy = _copy;
     final palette = context.appPalette;
     final failure = _failure;
     return [
-      _title(context, copy.step3Title, copy.step3Lead, wide),
       const SizedBox(height: 18),
       _overline(context, copy.previewOverline),
       Center(
@@ -1560,7 +1809,8 @@ class _WhatRow extends StatelessWidget {
 
 /// Step 3's preview: the approved profile B header laid out at the phone
 /// width (390) and scaled to the card, so it is exactly what visitors get.
-/// Inert and hidden from screen readers (the steps say what happens).
+/// Inert, out of the focus order and hidden from screen readers (the steps
+/// say what happens); its buttons are pictures, not controls.
 class _InertHeader extends StatelessWidget {
   const _InertHeader({
     required this.pageId,
@@ -1700,21 +1950,93 @@ class _InertHeader extends StatelessWidget {
         ),
       ),
     );
-    return IgnorePointer(
-      child: ExcludeSemantics(
-        child: ClipRRect(
-          key: const ValueKey('create-preview-header'),
-          borderRadius: AppRadius.block,
-          child: DecoratedBox(
-            position: DecorationPosition.foreground,
-            decoration: BoxDecoration(
-              borderRadius: AppRadius.block,
-              border: Border.all(color: palette.border),
+    return ExcludeFocus(
+      child: IgnorePointer(
+        child: ExcludeSemantics(
+          child: ClipRRect(
+            key: const ValueKey('create-preview-header'),
+            borderRadius: AppRadius.block,
+            child: DecoratedBox(
+              position: DecorationPosition.foreground,
+              decoration: BoxDecoration(
+                borderRadius: AppRadius.block,
+                border: Border.all(color: palette.border),
+              ),
+              child: FittedBox(fit: BoxFit.fitWidth, child: header),
             ),
-            child: FittedBox(fit: BoxFit.fitWidth, child: header),
           ),
         ),
       ),
+    );
+  }
+}
+
+/// A box that sticks to the top of the viewport while the rest of its
+/// [SliverCrossAxisGroup] scrolls, and that the group pushes up at its end
+/// so it never hangs below the form (CSS `position: sticky` with `top: 0`;
+/// the box brings its own top padding). It is painted and hit-tested where
+/// it sticks, so what it holds stays usable. When the box is taller than the
+/// viewport it scrolls like any other content, so nothing in it is ever out
+/// of reach.
+class _StickySliver extends SingleChildRenderObjectWidget {
+  const _StickySliver({required Widget super.child});
+
+  @override
+  RenderObject createRenderObject(BuildContext context) =>
+      _RenderStickySliver();
+}
+
+class _RenderStickySliver extends RenderSliverSingleBoxAdapter {
+  bool _pinned = true;
+
+  @override
+  double childMainAxisPosition(RenderBox child) =>
+      _pinned ? 0 : -constraints.scrollOffset;
+
+  @override
+  void performLayout() {
+    final box = child;
+    if (box == null) {
+      geometry = SliverGeometry.zero;
+      return;
+    }
+    box.layout(constraints.asBoxConstraints(), parentUsesSize: true);
+    final extent = box.size.height;
+    _pinned = extent <= constraints.viewportMainAxisExtent;
+    if (!_pinned) {
+      final paintExtent = calculatePaintOffset(
+        constraints,
+        from: 0,
+        to: extent,
+      );
+      geometry = SliverGeometry(
+        scrollExtent: extent,
+        paintExtent: paintExtent,
+        maxPaintExtent: extent,
+        hitTestExtent: paintExtent,
+        cacheExtent: calculateCacheOffset(constraints, from: 0, to: extent),
+        hasVisualOverflow:
+            extent > constraints.remainingPaintExtent ||
+            constraints.scrollOffset > 0,
+      );
+      setChildParentData(box, constraints, geometry!);
+      return;
+    }
+    (box.parentData! as SliverPhysicalParentData).paintOffset = Offset.zero;
+    geometry = SliverGeometry(
+      scrollExtent: extent,
+      paintOrigin: constraints.overlap,
+      paintExtent: math.min(
+        extent,
+        constraints.remainingPaintExtent - constraints.overlap,
+      ),
+      layoutExtent: (extent - constraints.scrollOffset).clamp(
+        0,
+        constraints.remainingPaintExtent,
+      ),
+      maxPaintExtent: extent,
+      cacheExtent: calculateCacheOffset(constraints, from: 0, to: extent),
+      hasVisualOverflow: true,
     );
   }
 }
