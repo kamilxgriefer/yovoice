@@ -389,11 +389,11 @@ until an operator enables the server-only switch `appConfig/likersV1`.
   (`translations_vip_likers.dart`, `test/vip_likers_localization_test.dart`);
   the upsell's count line uses each language's plural forms.
 
-## Premium Pages (ADR-231..233, backend packages B1 + B2 + B3 + B4 + B5, source only, NOT deployed)
+## Premium Pages (ADR-231..233) — backend (B1-B5), source only, NOT deployed
 
 A VIP account can turn itself into a Page of type Business or Community
-(one Page per account, only the owner posts). Backend packages B1-B5 are in
-source; the app arrives in C0-C4.
+(one Page per account, only the owner posts). Backend packages B1-B5 and the app
+(C0-C4, below) are in source.
 
 - **Who.** A canonical owner-granted VIP grant only; paid Premium is off in
   code until images are screened, and the staff preview does not count.
@@ -510,6 +510,54 @@ source; the app arrives in C0-C4.
 - **Deleting your account (B5).** Your Page, your posts and their files,
   and the comments you wrote are deleted. A post with an open report is
   kept out of sight as evidence for at most 90 days, then removed.
+
+### Premium Pages in the app ("Treści") — hidden until `appConfig/pagesV1`
+
+`lib/features/pages/`. A YO Voice VIP can turn their account into a public
+Page (Business or Community) and publish to followers. Servers stay the only
+shared space; a Page is a one-to-many publishing profile. Everything is
+behind the fail-closed `appConfig/pagesV1` switch (`PagesAvailability`):
+until the backend enables it, no Treści tab, entry, notification route or
+deep link is reachable. The spec and the owner-approved renders live in
+`yovoice-evidence/2026-09-28/premium-pages/`.
+
+- **Treści destination.** A sixth dock tab (the whole dock at 90 %) and a
+  desktop rail item between Chats and Moments. The wall is a card feed of
+  followed Pages with a "Follow more Pages" rail, Find Pages, a desktop
+  panel of followed Pages, and a "Create your Page" entry for VIPs without
+  one.
+- **Page profile.** Cover, Page face, name with the VIP rosette, Follow /
+  Message actions, Wall · About · Photos tabs; the owner gets New post, Edit
+  Page, and Page settings (pause/resume, contact fields, follower count).
+- **Create.** From the Premium screen's "Your Page" block (and the Treści
+  entries). An account without VIP gets the honest "Pages" upsell instead of
+  the form (`PremiumUpsellContext.pages`): it never offers a purchase while
+  billing is not for sale.
+- **Composer.** Text, up to 10 photos, or one voice post of up to 60 s, with
+  a Comments switch. Photos are decoded, orientation-baked and re-encoded as
+  a JPEG with **no metadata** (GPS, EXIF, ICC and comments are gone) in a
+  background isolate before upload (`image_sanitizer.dart`); a photo that
+  still carries metadata is refused locally. Upload goes reserve → upload
+  (per-item progress) → publish, with one request id per attempt so a retry
+  never double-posts. Recording stops by itself at 1:00. There is no
+  optimistic post: the post appears once the server has accepted it.
+  Budget: 10 posts per day; the last three are counted down.
+- **Post detail.** The full card and its comment thread, newest first, 20 per
+  page. Anyone can like, see likers (VIP, the ADR-230 flow), share, and report
+  the post or a comment. Comments are hidden behind a line that says why when
+  the owner turned them off or the Page is read-only. The owner can switch
+  comments on or off, delete the post, and delete any comment. There are no
+  comment hearts.
+- **Voice playback.** A voice post is downloaded whole (at most 4 MB) through
+  a short-lived grant before it plays, so an expiring link never cuts it off;
+  an expired grant is re-requested once. One clip plays at a time across the
+  app, and it pauses when Treści is hidden.
+- **Notifications.** "{actor} commented on your Page post" opens the post;
+  Page moderation and lapse notices come from YO Voice (not a person) and
+  open your Page. The comment push follows the existing "Comments" switch.
+- **Languages.** Every string is translated in all 43 app languages
+  (`translations_pages.dart`, `test/pages_localization_test.dart`), and every
+  count uses each language's plural forms.
 
 ## Settings
 

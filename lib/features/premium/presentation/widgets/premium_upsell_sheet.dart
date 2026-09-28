@@ -8,6 +8,8 @@ import 'package:yovoice/features/likers/presentation/show_likers.dart'
 import 'package:yovoice/features/premium/presentation/screens/premium_screen.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
+import 'package:yovoice/features/pages/presentation/page_post_copy.dart';
+import 'package:yovoice/features/pages/presentation/widgets/pages_upsell_sheet.dart';
 
 /// The contextual Premium moments — what a free member sees when they
 /// reach for a Premium capability. One component, two voices, so the
@@ -23,12 +25,24 @@ enum PremiumUpsellContext {
   /// billing-aware: it offers "Explore Premium" only where a purchase can
   /// complete and otherwise says honestly that Premium can't be bought yet.
   seeWhoLiked,
+
+  /// Premium Pages (ADR-233, R11): running a Page needs YO Voice VIP, which
+  /// is given to testers for now. Opens the honest not-for-sale sheet.
+  pages,
 }
 
 Future<void> showPremiumUpsellSheet(
   BuildContext context, {
   required PremiumUpsellContext upsellContext,
 }) {
+  if (upsellContext == PremiumUpsellContext.pages) {
+    return showPagesUpsellSheet(
+      context,
+      onSeePremium: () => Navigator.of(context).push(
+        MaterialPageRoute<void>(builder: (_) => const PremiumScreen()),
+      ),
+    );
+  }
   if (upsellContext == PremiumUpsellContext.seeWhoLiked) {
     // No particular Moment, Yeel or message here, so no public count line.
     return showLikersUpsell(context, null, totalCount: 0);
@@ -104,6 +118,13 @@ class _PremiumUpsellSheet extends StatelessWidget {
         Icons.favorite_rounded,
         LikersCopy(copy).upsellTitle,
         LikersCopy(copy).upsellBody,
+      ),
+      // showPremiumUpsellSheet routes this context to the Pages sheet; the
+      // copy is kept identical here so the two can never differ.
+      PremiumUpsellContext.pages => (
+        Icons.article_outlined,
+        PagePostCopy(copy).upsellTitle,
+        PagePostCopy(copy).upsellBody,
       ),
     };
 

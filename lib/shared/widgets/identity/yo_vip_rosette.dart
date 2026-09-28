@@ -2,9 +2,12 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
+import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
 import 'package:yovoice/shared/widgets/identity/vip_badge.dart';
+import 'package:yovoice/shared/widgets/identity/vip_meaning_sheet.dart';
 
 /// The owner-chosen VIP mark (2026-09-28, tick variant B): a flat 10-lobe
 /// purple rosette with a white check, drawn right after a display name.
@@ -99,6 +102,10 @@ class _RosettePainter extends CustomPainter {
 
 /// A display name with the [YoVipRosette] hugging it when the account is VIP.
 ///
+/// This is the premium-pages spec's `NameWithBadge` (§4.6, variant B): every
+/// surface that shows a name with the VIP mark uses it, driven by the
+/// server-written `publicBadges.isVip`.
+///
 /// VIP comes from [PublicIdentityRepository] (batched, cached,
 /// server-authoritative `isVip`), resolved and re-resolved on the
 /// repository's revision exactly like `UserIdentityBadges`; until the answer
@@ -109,6 +116,11 @@ class _RosettePainter extends CustomPainter {
 /// disappears. With more lines the mark rides the last word as an inline
 /// span glued by a word joiner; when the text overflows, the name is trimmed
 /// with "…" before the mark so the mark survives truncation.
+///
+/// Headers (a profile's or a Page's name, never a list row) set
+/// [explainOnTap]: the mark then becomes a 44×44 button labelled "VIP" that
+/// opens [showVipMeaningSheet]. The painted mark does not move; the widget
+/// grows only as far as the target needs (to at least 44 px tall).
 class NameWithVipMark extends StatefulWidget {
   const NameWithVipMark({
     required this.uid,
@@ -119,8 +131,14 @@ class NameWithVipMark extends StatefulWidget {
     this.repository,
     this.markSemantics = true,
     this.semanticsLabel,
+    this.explainOnTap = false,
+    this.onExplain,
+    this.textAlign = TextAlign.start,
     super.key,
   });
+
+  /// The side of the header tap target (premium-pages §4.6, R14).
+  static const double explainTargetSize = 44;
 
   final String uid;
   final String name;
@@ -137,6 +155,17 @@ class NameWithVipMark extends StatefulWidget {
   /// Replaces the name's own semantics label (e.g. "Ola, reacted 👍"); the
   /// mark still adds "VIP" unless [markSemantics] is false.
   final String? semanticsLabel;
+
+  /// Header only: the mark is a 44×44 "VIP" button that explains what VIP
+  /// means. List rows keep the plain mark.
+  final bool explainOnTap;
+
+  /// Replaces the default action of [explainOnTap] ([showVipMeaningSheet]).
+  final VoidCallback? onExplain;
+
+  /// Alignment of a wrapping name (a centred rail tile). A one-line name is
+  /// sized to its glyphs, so its parent positions it.
+  final TextAlign textAlign;
 
   @override
   State<NameWithVipMark> createState() => _NameWithVipMarkState();
@@ -201,6 +230,7 @@ class _NameWithVipMarkState extends State<NameWithVipMark> {
         maxLines: maxLines,
         overflow: maxLines == null ? null : TextOverflow.ellipsis,
         semanticsLabel: widget.semanticsLabel,
+        textAlign: widget.textAlign,
         style: style,
       );
     }
@@ -210,14 +240,37 @@ class _NameWithVipMarkState extends State<NameWithVipMark> {
     ).scale(style.fontSize ?? 14);
     final diameter = YoVipRosette.diameterFor(fontSize);
     final gap = YoVipRosette.gapFor(fontSize);
+    final explain = widget.explainOnTap;
+    final onExplain = widget.onExplain ?? () => showVipMeaningSheet(context);
     final mark = Padding(
       padding: EdgeInsetsDirectional.only(start: gap),
       child: YoVipRosette(
         diameter: diameter,
-        excludeSemantics: !widget.markSemantics,
+        // The header button carries "VIP" itself.
+        excludeSemantics: explain || !widget.markSemantics,
       ),
     );
     if (maxLines == 1) {
+      const target = NameWithVipMark.explainTargetSize;
+      final boxWidth = math.max(target, gap + diameter);
+      final ltr = Directionality.of(context) == TextDirection.ltr;
+      final Widget trailing = explain
+          ? _VipMarkButton(
+              key: const ValueKey('vip-mark-explain'),
+              onTap: onExplain,
+              size: Size(boxWidth, target),
+              markRect: Rect.fromLTWH(
+                ltr ? gap : boxWidth - gap - diameter,
+                (target - diameter) / 2,
+                diameter,
+                diameter,
+              ),
+              child: Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: mark,
+              ),
+            )
+          : mark;
       return Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -233,17 +286,41 @@ class _NameWithVipMarkState extends State<NameWithVipMark> {
               style: style,
             ),
           ),
-          mark,
+          trailing,
         ],
       );
     }
+    // A WidgetSpan child is laid out in unscaled units and then scaled by
+    // the paragraph's text-scale factor at its font size, so the inline mark
+    // is built at 1/factor of the size it must end up with.
+    final spanFontSize =
+        DefaultTextStyle.of(context).style.merge(style).fontSize ?? 14;
+    final spanScaled = MediaQuery.textScalerOf(context).scale(spanFontSize);
+    final spanFactor = spanFontSize <= 0 || spanScaled <= 0
+        ? 1.0
+        : spanScaled / spanFontSize;
+    final inlineMark = Padding(
+      padding: EdgeInsetsDirectional.only(start: gap / spanFactor),
+      // The paragraph's own label carries "VIP" (below): an inline span's
+      // node would sit inside the excluded paragraph and never be read.
+      child: YoVipRosette(
+        diameter: diameter / spanFactor,
+        excludeSemantics: true,
+      ),
+    );
     return _MultiLineVipName(
       name: widget.name,
       semanticsLabel: widget.semanticsLabel,
+      // The header button carries "VIP" itself; a caller that folds it into
+      // its own label says so through [markSemantics].
+      announceVip: !explain && widget.markSemantics,
       style: style,
       maxLines: maxLines,
-      mark: mark,
+      mark: inlineMark,
       markSize: Size(gap + diameter, diameter),
+      markGap: gap,
+      onExplain: explain ? onExplain : null,
+      textAlign: widget.textAlign,
     );
   }
 }
@@ -255,15 +332,27 @@ class _MultiLineVipName extends StatelessWidget {
     required this.maxLines,
     required this.mark,
     required this.markSize,
+    required this.markGap,
     this.semanticsLabel,
+    this.announceVip = true,
+    this.onExplain,
+    this.textAlign = TextAlign.start,
   });
 
   final String name;
   final String? semanticsLabel;
+
+  /// Appends "VIP" to the paragraph's label.
+  final bool announceVip;
+  final TextAlign textAlign;
   final TextStyle style;
   final int? maxLines;
   final Widget mark;
   final Size markSize;
+  final double markGap;
+
+  /// Non-null in header mode: a 44×44 button is laid over the painted mark.
+  final VoidCallback? onExplain;
 
   InlineSpan _span(String text) => TextSpan(
     children: [
@@ -272,6 +361,83 @@ class _MultiLineVipName extends StatelessWidget {
       WidgetSpan(alignment: PlaceholderAlignment.middle, child: mark),
     ],
   );
+
+  /// Lays the 44×44 button over the inline mark without moving any glyph:
+  /// the text takes the full [width] (so its line boxes match the measuring
+  /// painter's), and top/bottom padding is added only where the target would
+  /// otherwise reach past the paragraph.
+  Widget _withExplainTarget({
+    required Widget text,
+    required String shown,
+    required double width,
+    required TextStyle measured,
+    required TextScaler scaler,
+    required TextDirection direction,
+    required VoidCallback onTap,
+  }) {
+    const target = NameWithVipMark.explainTargetSize;
+    final painter = TextPainter(
+      text: TextSpan(style: measured, children: [_span(shown)]),
+      textDirection: direction,
+      textAlign: textAlign,
+      textScaler: scaler,
+      maxLines: maxLines,
+    );
+    painter.setPlaceholderDimensions(<PlaceholderDimensions>[
+      PlaceholderDimensions(
+        size: markSize,
+        alignment: PlaceholderAlignment.middle,
+      ),
+    ]);
+    painter.layout(minWidth: width, maxWidth: width);
+    final boxes = painter.inlinePlaceholderBoxes ?? const <TextBox>[];
+    final height = painter.height;
+    painter.dispose();
+    if (boxes.isEmpty) return text;
+    final box = boxes.first.toRect();
+    final diameter = markSize.height;
+    // The rosette sits after the start gap, inside the placeholder box.
+    final markLeft = direction == TextDirection.ltr
+        ? box.left + markGap
+        : box.right - markGap - diameter;
+    final markCenter = Offset(markLeft + diameter / 2, box.center.dy);
+    final padTop = math.max(0.0, target / 2 - markCenter.dy);
+    final padBottom = math.max(0.0, markCenter.dy + target / 2 - height);
+    final left = (markCenter.dx - target / 2)
+        .clamp(0.0, math.max(0.0, width - target))
+        .toDouble();
+    final top = markCenter.dy - target / 2 + padTop;
+    return SizedBox(
+      width: width,
+      child: Stack(
+        children: [
+          Padding(
+            padding: EdgeInsets.only(top: padTop, bottom: padBottom),
+            child: SizedBox(width: width, child: text),
+          ),
+          Positioned(
+            left: left,
+            top: top,
+            width: target,
+            height: target,
+            child: _VipMarkButton(
+              key: const ValueKey('vip-mark-explain'),
+              onTap: onTap,
+              size: const Size.square(target),
+              markRect: Rect.fromCenter(
+                center: Offset(
+                  markCenter.dx - left,
+                  markCenter.dy + padTop - top,
+                ),
+                width: diameter,
+                height: diameter,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -289,6 +455,7 @@ class _MultiLineVipName extends StatelessWidget {
             final painter = TextPainter(
               text: TextSpan(style: measured, children: [_span(text)]),
               textDirection: direction,
+              textAlign: textAlign,
               textScaler: scaler,
               maxLines: lines,
             );
@@ -301,11 +468,22 @@ class _MultiLineVipName extends StatelessWidget {
             painter.layout(maxWidth: constraints.maxWidth);
             var result = painter.didExceedMaxLines ? 0 : 1;
             final boxes = painter.inlinePlaceholderBoxes ?? const <TextBox>[];
-            if (result == 1 &&
-                boxes.isNotEmpty &&
-                boxes.first.left < 1 &&
-                boxes.first.top > 1) {
-              result = 2;
+            if (result == 1 && boxes.isNotEmpty) {
+              // Orphaned = the mark is the only thing on a line after the
+              // first. Line metrics make this hold in both directions (an
+              // RTL line starts at the right edge).
+              final box = boxes.first.toRect();
+              final metrics = painter.computeLineMetrics();
+              for (var i = 1; i < metrics.length; i++) {
+                final line = metrics[i];
+                final top = line.baseline - line.ascent;
+                final bottom = line.baseline + line.descent;
+                if (box.center.dy >= top &&
+                    box.center.dy <= bottom &&
+                    line.width <= box.width + 1) {
+                  result = 2;
+                }
+              }
             }
             painter.dispose();
             return result;
@@ -339,20 +517,108 @@ class _MultiLineVipName extends StatelessWidget {
             if (check(candidate) == 1) shown = candidate;
           }
         }
-        final text = Text.rich(
+        Widget text = Text.rich(
           _span(shown),
           maxLines: maxLines,
           overflow: maxLines == null ? null : TextOverflow.clip,
+          textAlign: textAlign,
           style: style,
         );
-        final label = semanticsLabel;
-        if (label == null) return text;
-        // The label replaces the text; the mark keeps its own "VIP" node.
-        return Semantics(
-          label: label,
+        // Assistive tech always hears the full, untrimmed name (never the
+        // display cut with its "…" and word joiner) and, for a VIP, "VIP":
+        // the painted paragraph, inline mark included, is excluded.
+        final base = semanticsLabel ?? name;
+        text = Semantics(
+          label: announceVip ? '$base, ${VipBadge.label}' : base,
           child: ExcludeSemantics(child: text),
         );
+        final onTap = onExplain;
+        if (onTap == null || !constraints.maxWidth.isFinite) return text;
+        return _withExplainTarget(
+          text: text,
+          shown: shown,
+          width: constraints.maxWidth,
+          measured: measured,
+          scaler: scaler,
+          direction: direction,
+          onTap: onTap,
+        );
       },
+    );
+  }
+}
+
+/// The header rosette's 44×44 target: a "VIP" button (with a hint saying what
+/// it does) that shows a 2 px focus ring around the painted mark for keyboard
+/// users and a circular ink response for touch and pointer.
+class _VipMarkButton extends StatefulWidget {
+  const _VipMarkButton({
+    required this.onTap,
+    required this.size,
+    required this.markRect,
+    this.child,
+    super.key,
+  });
+
+  final VoidCallback onTap;
+  final Size size;
+
+  /// Where the painted rosette is, in this box's coordinates.
+  final Rect markRect;
+
+  /// The painted mark when the button hosts it (single-line names); null
+  /// when the button is laid over an inline mark (multi-line names).
+  final Widget? child;
+
+  @override
+  State<_VipMarkButton> createState() => _VipMarkButtonState();
+}
+
+class _VipMarkButtonState extends State<_VipMarkButton> {
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
+    final ring = widget.markRect.inflate(3);
+    return Semantics(
+      container: true,
+      button: true,
+      label: VipBadge.label,
+      hint: copy.text('Shows what VIP means', 'Pokazuje, co oznacza VIP'),
+      child: SizedBox.fromSize(
+        size: widget.size,
+        child: Material(
+          type: MaterialType.transparency,
+          child: InkResponse(
+            onTap: widget.onTap,
+            onFocusChange: (focused) => setState(() => _focused = focused),
+            radius: NameWithVipMark.explainTargetSize / 2,
+            highlightShape: BoxShape.circle,
+            focusColor: Colors.transparent,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                ?widget.child,
+                if (_focused)
+                  Positioned.fromRect(
+                    rect: ring,
+                    child: IgnorePointer(
+                      child: DecoratedBox(
+                        key: const ValueKey('vip-mark-focus-ring'),
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: Border.all(color: palette.focus, width: 2),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

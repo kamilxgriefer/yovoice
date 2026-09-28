@@ -9,10 +9,15 @@
 /// or caller still passing the possessive source string resolves rather than
 /// falling back to English. Neither renames the desktop tour's existing
 /// create-action instructions.
+///
+/// `navigation.content` is the Treści destination (Premium Pages, ADR-232):
+/// one short noun per locale, checked against the six-tab dock's compact
+/// label box at 320/340/360/390 px (spec premium-pages §4.1.2 locale sweep).
 const mobileNavigationTranslationKeys = <String>[
   'navigation.rooms',
   'navigation.servers',
   'navigation.yourMoments',
+  'navigation.content',
   'Could not load rooms',
   'Create a Voice Room here. Open Your Moments to record a Voice Moment.',
   'Create a Voice Room here. Open Moments to record a Voice Moment.',
@@ -26,6 +31,7 @@ const mobileNavigationTranslations = <String, Map<String, String>>{
     'navigation.rooms': 'Räume',
     'navigation.servers': 'Server',
     'navigation.yourMoments': 'Momente',
+    'navigation.content': 'Inhalte',
     'Could not load rooms': 'Räume konnten nicht geladen werden',
     'Create a Voice Room here. Open Your Moments to record a Voice Moment.':
         'Erstelle hier einen Sprachraum. Öffne „Momente“, um einen Voice Moment aufzunehmen.',
@@ -39,6 +45,7 @@ const mobileNavigationTranslations = <String, Map<String, String>>{
     'navigation.rooms': 'Salas',
     'navigation.servers': 'Servidores',
     'navigation.yourMoments': 'Momentos',
+    'navigation.content': 'Contenido',
     'Could not load rooms': 'No se pudieron cargar las salas',
     'Create a Voice Room here. Open Your Moments to record a Voice Moment.':
         'Crea una sala de voz aquí. Abre Momentos para grabar un Voice Moment.',
@@ -52,6 +59,7 @@ const mobileNavigationTranslations = <String, Map<String, String>>{
     'navigation.rooms': 'Salas',
     'navigation.servers': 'Servidores',
     'navigation.yourMoments': 'Momentos',
+    'navigation.content': 'Conteúdos',
     'Could not load rooms': 'Não foi possível carregar as salas',
     'Create a Voice Room here. Open Your Moments to record a Voice Moment.':
         'Cria uma sala de voz aqui. Abre Momentos para gravares um Voice Moment.',
@@ -65,6 +73,7 @@ const mobileNavigationTranslations = <String, Map<String, String>>{
     'navigation.rooms': 'Salas',
     'navigation.servers': 'Servidores',
     'navigation.yourMoments': 'Momentos',
+    'navigation.content': 'Conteúdo',
     'Could not load rooms': 'Não foi possível carregar as salas',
     'Create a Voice Room here. Open Your Moments to record a Voice Moment.':
         'Crie uma sala de voz aqui. Abra Momentos para gravar um Voice Moment.',
@@ -78,6 +87,7 @@ const mobileNavigationTranslations = <String, Map<String, String>>{
     'navigation.rooms': 'Salons',
     'navigation.servers': 'Serveurs',
     'navigation.yourMoments': 'Moments',
+    'navigation.content': 'Contenus',
     'Could not load rooms': 'Impossible de charger les salons',
     'Create a Voice Room here. Open Your Moments to record a Voice Moment.':
         'Créez un salon vocal ici. Ouvrez Moments pour enregistrer un Voice Moment.',
@@ -91,6 +101,7 @@ const mobileNavigationTranslations = <String, Map<String, String>>{
     'navigation.rooms': 'Stanze',
     'navigation.servers': 'Server',
     'navigation.yourMoments': 'Momenti',
+    'navigation.content': 'Contenuti',
     'Could not load rooms': 'Impossibile caricare le stanze',
     'Create a Voice Room here. Open Your Moments to record a Voice Moment.':
         'Crea una stanza vocale qui. Apri Momenti per registrare un Voice Moment.',
@@ -104,6 +115,7 @@ const mobileNavigationTranslations = <String, Map<String, String>>{
     'navigation.rooms': 'Кімнати',
     'navigation.servers': 'Сервери',
     'navigation.yourMoments': 'Моменти',
+    'navigation.content': 'Контент',
     'Could not load rooms': 'Не вдалося завантажити кімнати',
     'Create a Voice Room here. Open Your Moments to record a Voice Moment.':
         'Створи тут голосову кімнату. Відкрий «Моменти», щоб записати Voice Moment.',
@@ -117,6 +129,7 @@ const mobileNavigationTranslations = <String, Map<String, String>>{
     'navigation.rooms': 'Комнаты',
     'navigation.servers': 'Серверы',
     'navigation.yourMoments': 'Моменты',
+    'navigation.content': 'Контент',
     'Could not load rooms': 'Не удалось загрузить комнаты',
     'Create a Voice Room here. Open Your Moments to record a Voice Moment.':
         'Создайте здесь голосовую комнату. Откройте «Моменты», чтобы записать Voice Moment.',
@@ -130,6 +143,7 @@ const mobileNavigationTranslations = <String, Map<String, String>>{
     'navigation.rooms': 'Místnosti',
     'navigation.servers': 'Servery',
     'navigation.yourMoments': 'Momenty',
+    'navigation.content': 'Obsah',
     'Could not load rooms': 'Místnosti se nepodařilo načíst',
     'Create a Voice Room here. Open Your Moments to record a Voice Moment.':
         'Zde vytvoříte hlasovou místnost. Otevřete „Momenty“ a nahrajte Voice Moment.',
@@ -143,6 +157,7 @@ const mobileNavigationTranslations = <String, Map<String, String>>{
     'navigation.rooms': 'Miestnosti',
     'navigation.servers': 'Servery',
     'navigation.yourMoments': 'Momenty',
+    'navigation.content': 'Obsah',
     'Could not load rooms': 'Miestnosti sa nepodarilo načítať',
     'Create a Voice Room here. Open Your Moments to record a Voice Moment.':
         'Tu vytvoríte hlasovú miestnosť. Otvorte „Momenty“ a nahrajte Voice Moment.',
@@ -156,6 +171,7 @@ const mobileNavigationTranslations = <String, Map<String, String>>{
     'navigation.rooms': 'Стаи',
     'navigation.servers': 'Сървъри',
     'navigation.yourMoments': 'Моменти',
+    'navigation.content': 'Съдържание',
     'Could not load rooms': 'Стаите не можаха да се заредят',
     'Create a Voice Room here. Open Your Moments to record a Voice Moment.':
         'Създай гласова стая тук. Отвори „Моменти“, за да запишеш Voice Moment.',
@@ -169,6 +185,7 @@ const mobileNavigationTranslations = <String, Map<String, String>>{
     'navigation.rooms': 'Ruimtes',
     'navigation.servers': 'Servers',
     'navigation.yourMoments': 'Momenten',
+    'navigation.content': 'Inhoud',
     'Could not load rooms': 'Ruimtes konden niet worden geladen',
     'Create a Voice Room here. Open Your Moments to record a Voice Moment.':
         'Maak hier een spraakruimte. Open Momenten om een Voice Moment op te nemen.',
@@ -182,6 +199,7 @@ const mobileNavigationTranslations = <String, Map<String, String>>{
     'navigation.rooms': 'Camere',
     'navigation.servers': 'Servere',
     'navigation.yourMoments': 'Momente',
+    'navigation.content': 'Conținut',
     'Could not load rooms': 'Camerele nu au putut fi încărcate',
     'Create a Voice Room here. Open Your Moments to record a Voice Moment.':
         'Creează o cameră vocală aici. Deschide Momente pentru a înregistra un Voice Moment.',
@@ -195,6 +213,7 @@ const mobileNavigationTranslations = <String, Map<String, String>>{
     'navigation.rooms': 'Odalar',
     'navigation.servers': 'Sunucular',
     'navigation.yourMoments': 'Anlar',
+    'navigation.content': 'İçerik',
     'Could not load rooms': 'Odalar yüklenemedi',
     'Create a Voice Room here. Open Your Moments to record a Voice Moment.':
         'Buradan bir ses odası oluştur. Voice Moment kaydetmek için Anlar sekmesini aç.',
@@ -208,6 +227,7 @@ const mobileNavigationTranslations = <String, Map<String, String>>{
     'navigation.rooms': 'Δωμάτια',
     'navigation.servers': 'Διακομιστές',
     'navigation.yourMoments': 'Στιγμές',
+    'navigation.content': 'Περιεχόμενο',
     'Could not load rooms': 'Δεν ήταν δυνατή η φόρτωση των δωματίων',
     'Create a Voice Room here. Open Your Moments to record a Voice Moment.':
         'Δημιούργησε εδώ ένα δωμάτιο φωνής. Άνοιξε την καρτέλα «Στιγμές» για να ηχογραφήσεις ένα Voice Moment.',
@@ -221,6 +241,7 @@ const mobileNavigationTranslations = <String, Map<String, String>>{
     'navigation.rooms': 'Szobák',
     'navigation.servers': 'Szerverek',
     'navigation.yourMoments': 'Pillanatok',
+    'navigation.content': 'Tartalom',
     'Could not load rooms': 'Nem sikerült betölteni a szobákat',
     'Create a Voice Room here. Open Your Moments to record a Voice Moment.':
         'Itt hozhatsz létre hangszobát. Voice Moment rögzítéséhez nyisd meg a Pillanatok lapot.',
@@ -234,6 +255,7 @@ const mobileNavigationTranslations = <String, Map<String, String>>{
     'navigation.rooms': 'Sobe',
     'navigation.servers': 'Poslužitelji',
     'navigation.yourMoments': 'Trenuci',
+    'navigation.content': 'Sadržaj',
     'Could not load rooms': 'Nije moguće učitati sobe',
     'Create a Voice Room here. Open Your Moments to record a Voice Moment.':
         'Ovdje stvori glasovnu sobu. Otvori „Trenuci” za snimanje Voice Momenta.',
@@ -247,6 +269,7 @@ const mobileNavigationTranslations = <String, Map<String, String>>{
     'navigation.rooms': 'Собе',
     'navigation.servers': 'Сервери',
     'navigation.yourMoments': 'Тренуци',
+    'navigation.content': 'Садржај',
     'Could not load rooms': 'Није могуће учитати собе',
     'Create a Voice Room here. Open Your Moments to record a Voice Moment.':
         'Овде направи гласовну собу. Отвори „Тренуци” да снимиш Voice Moment.',
@@ -260,6 +283,7 @@ const mobileNavigationTranslations = <String, Map<String, String>>{
     'navigation.rooms': 'Rum',
     'navigation.servers': 'Servrar',
     'navigation.yourMoments': 'Ögonblick',
+    'navigation.content': 'Innehåll',
     'Could not load rooms': 'Det gick inte att läsa in rummen',
     'Create a Voice Room here. Open Your Moments to record a Voice Moment.':
         'Skapa ett röstrum här. Öppna Ögonblick för att spela in ett Voice Moment.',
@@ -273,6 +297,7 @@ const mobileNavigationTranslations = <String, Map<String, String>>{
     'navigation.rooms': 'Rum',
     'navigation.servers': 'Servere',
     'navigation.yourMoments': 'Øjeblikke',
+    'navigation.content': 'Indhold',
     'Could not load rooms': 'Rummene kunne ikke indlæses',
     'Create a Voice Room here. Open Your Moments to record a Voice Moment.':
         'Opret et talerum her. Åbn Øjeblikke for at optage et Voice Moment.',
@@ -286,6 +311,7 @@ const mobileNavigationTranslations = <String, Map<String, String>>{
     'navigation.rooms': 'Rom',
     'navigation.servers': 'Servere',
     'navigation.yourMoments': 'Øyeblikk',
+    'navigation.content': 'Innhold',
     'Could not load rooms': 'Kunne ikke laste inn rommene',
     'Create a Voice Room here. Open Your Moments to record a Voice Moment.':
         'Opprett et talerom her. Åpne Øyeblikk for å spille inn et Voice Moment.',
@@ -299,6 +325,7 @@ const mobileNavigationTranslations = <String, Map<String, String>>{
     'navigation.rooms': 'Huoneet',
     'navigation.servers': 'Palvelimet',
     'navigation.yourMoments': 'Hetket',
+    'navigation.content': 'Sisältö',
     'Could not load rooms': 'Huoneita ei voitu ladata',
     'Create a Voice Room here. Open Your Moments to record a Voice Moment.':
         'Luo puhehuone tästä. Avaa Hetket, kun haluat tallentaa Voice Momentin.',
@@ -312,6 +339,7 @@ const mobileNavigationTranslations = <String, Map<String, String>>{
     'navigation.rooms': 'Kambariai',
     'navigation.servers': 'Serveriai',
     'navigation.yourMoments': 'Akimirkos',
+    'navigation.content': 'Turinys',
     'Could not load rooms': 'Nepavyko įkelti kambarių',
     'Create a Voice Room here. Open Your Moments to record a Voice Moment.':
         'Čia sukurk balso kambarį. Atverk „Akimirkos“ ir įrašyk Voice Moment.',
@@ -325,6 +353,7 @@ const mobileNavigationTranslations = <String, Map<String, String>>{
     'navigation.rooms': 'Istabas',
     'navigation.servers': 'Serveri',
     'navigation.yourMoments': 'Mirkļi',
+    'navigation.content': 'Saturs',
     'Could not load rooms': 'Neizdevās ielādēt istabas',
     'Create a Voice Room here. Open Your Moments to record a Voice Moment.':
         'Šeit izveido balss istabu. Atver sadaļu „Mirkļi”, lai ierakstītu Voice Moment.',
@@ -338,6 +367,7 @@ const mobileNavigationTranslations = <String, Map<String, String>>{
     'navigation.rooms': 'Toad',
     'navigation.servers': 'Serverid',
     'navigation.yourMoments': 'Hetked',
+    'navigation.content': 'Sisu',
     'Could not load rooms': 'Tubade laadimine ebaõnnestus',
     'Create a Voice Room here. Open Your Moments to record a Voice Moment.':
         'Loo siin hääletuba. Ava Hetked, et salvestada Voice Moment.',
@@ -351,6 +381,7 @@ const mobileNavigationTranslations = <String, Map<String, String>>{
     'navigation.rooms': 'Ruang',
     'navigation.servers': 'Server',
     'navigation.yourMoments': 'Momen',
+    'navigation.content': 'Konten',
     'Could not load rooms': 'Ruang tidak dapat dimuat',
     'Create a Voice Room here. Open Your Moments to record a Voice Moment.':
         'Buat ruang suara di sini. Buka Momen untuk merekam Voice Moment.',
@@ -364,6 +395,7 @@ const mobileNavigationTranslations = <String, Map<String, String>>{
     'navigation.rooms': 'Phòng',
     'navigation.servers': 'Máy chủ',
     'navigation.yourMoments': 'Khoảnh khắc',
+    'navigation.content': 'Nội dung',
     'Could not load rooms': 'Không thể tải các phòng',
     'Create a Voice Room here. Open Your Moments to record a Voice Moment.':
         'Tạo phòng thoại tại đây. Mở Khoảnh khắc để ghi âm Voice Moment.',
@@ -377,6 +409,7 @@ const mobileNavigationTranslations = <String, Map<String, String>>{
     'navigation.rooms': '房间',
     'navigation.servers': '服务器',
     'navigation.yourMoments': '时刻',
+    'navigation.content': '内容',
     'Could not load rooms': '无法加载房间',
     'Create a Voice Room here. Open Your Moments to record a Voice Moment.':
         '在这里创建语音房间。打开“时刻”以录制 Voice Moment。',
@@ -390,6 +423,7 @@ const mobileNavigationTranslations = <String, Map<String, String>>{
     'navigation.rooms': '房間',
     'navigation.servers': '伺服器',
     'navigation.yourMoments': '時刻',
+    'navigation.content': '內容',
     'Could not load rooms': '無法載入房間',
     'Create a Voice Room here. Open Your Moments to record a Voice Moment.':
         '在這裡建立語音房間。開啟「時刻」以錄製 Voice Moment。',
@@ -403,6 +437,7 @@ const mobileNavigationTranslations = <String, Map<String, String>>{
     'navigation.rooms': 'ルーム',
     'navigation.servers': 'サーバー',
     'navigation.yourMoments': 'モーメント',
+    'navigation.content': 'コンテンツ',
     'Could not load rooms': 'ルームを読み込めませんでした',
     'Create a Voice Room here. Open Your Moments to record a Voice Moment.':
         'ここでボイスルームを作成できます。「モーメント」を開くと Voice Moment を録音できます。',
@@ -416,6 +451,7 @@ const mobileNavigationTranslations = <String, Map<String, String>>{
     'navigation.rooms': '방',
     'navigation.servers': '서버',
     'navigation.yourMoments': '모먼트',
+    'navigation.content': '콘텐츠',
     'Could not load rooms': '방을 불러올 수 없습니다',
     'Create a Voice Room here. Open Your Moments to record a Voice Moment.':
         '여기에서 음성 방을 만드세요. 모먼트를 열어 Voice Moment를 녹음하세요.',
@@ -429,6 +465,7 @@ const mobileNavigationTranslations = <String, Map<String, String>>{
     'navigation.rooms': 'الغرف',
     'navigation.servers': 'الخوادم',
     'navigation.yourMoments': 'اللحظات',
+    'navigation.content': 'المحتوى',
     'Could not load rooms': 'تعذّر تحميل الغرف',
     'Create a Voice Room here. Open Your Moments to record a Voice Moment.':
         'أنشئ غرفة صوتية هنا. افتح اللحظات لتسجيل Voice Moment.',
@@ -442,6 +479,7 @@ const mobileNavigationTranslations = <String, Map<String, String>>{
     'navigation.rooms': 'रूम',
     'navigation.servers': 'सर्वर',
     'navigation.yourMoments': 'पल',
+    'navigation.content': 'सामग्री',
     'Could not load rooms': 'रूम लोड नहीं हो सके',
     'Create a Voice Room here. Open Your Moments to record a Voice Moment.':
         'यहाँ वॉइस रूम बनाएँ। Voice Moment रिकॉर्ड करने के लिए पल खोलें।',
@@ -455,6 +493,7 @@ const mobileNavigationTranslations = <String, Map<String, String>>{
     'navigation.rooms': 'রুম',
     'navigation.servers': 'সার্ভার',
     'navigation.yourMoments': 'মুহূর্ত',
+    'navigation.content': 'কনটেন্ট',
     'Could not load rooms': 'রুমগুলো লোড করা যায়নি',
     'Create a Voice Room here. Open Your Moments to record a Voice Moment.':
         'এখানে ভয়েস রুম তৈরি করুন। Voice Moment রেকর্ড করতে মুহূর্ত খুলুন।',
@@ -468,6 +507,7 @@ const mobileNavigationTranslations = <String, Map<String, String>>{
     'navigation.rooms': 'روم',
     'navigation.servers': 'سرورز',
     'navigation.yourMoments': 'لمحات',
+    'navigation.content': 'مواد',
     'Could not load rooms': 'روم لوڈ نہیں ہو سکے',
     'Create a Voice Room here. Open Your Moments to record a Voice Moment.':
         'یہاں وائس روم بنائیں۔ Voice Moment ریکارڈ کرنے کے لیے لمحات کھولیں۔',
@@ -481,6 +521,7 @@ const mobileNavigationTranslations = <String, Map<String, String>>{
     'navigation.rooms': 'ห้อง',
     'navigation.servers': 'เซิร์ฟเวอร์',
     'navigation.yourMoments': 'ช่วงเวลา',
+    'navigation.content': 'เนื้อหา',
     'Could not load rooms': 'โหลดห้องไม่ได้',
     'Create a Voice Room here. Open Your Moments to record a Voice Moment.':
         'สร้างห้องเสียงได้ที่นี่ เปิดช่วงเวลาเพื่อบันทึก Voice Moment',
@@ -494,6 +535,7 @@ const mobileNavigationTranslations = <String, Map<String, String>>{
     'navigation.rooms': 'Bilik',
     'navigation.servers': 'Pelayan',
     'navigation.yourMoments': 'Detik',
+    'navigation.content': 'Kandungan',
     'Could not load rooms': 'Bilik tidak dapat dimuatkan',
     'Create a Voice Room here. Open Your Moments to record a Voice Moment.':
         'Cipta bilik suara di sini. Buka Detik untuk merakam Voice Moment.',
@@ -507,6 +549,7 @@ const mobileNavigationTranslations = <String, Map<String, String>>{
     'navigation.rooms': 'Mga kuwarto',
     'navigation.servers': 'Mga server',
     'navigation.yourMoments': 'Mga sandali',
+    'navigation.content': 'Nilalaman',
     'Could not load rooms': 'Hindi ma-load ang mga kuwarto',
     'Create a Voice Room here. Open Your Moments to record a Voice Moment.':
         'Gumawa ng voice room dito. Buksan ang Mga sandali para mag-record ng Voice Moment.',
@@ -520,6 +563,7 @@ const mobileNavigationTranslations = <String, Map<String, String>>{
     'navigation.rooms': 'חדרים',
     'navigation.servers': 'שרתים',
     'navigation.yourMoments': 'רגעים',
+    'navigation.content': 'תוכן',
     'Could not load rooms': 'לא ניתן לטעון את החדרים',
     'Create a Voice Room here. Open Your Moments to record a Voice Moment.':
         'כאן אפשר ליצור חדר קולי. כדי להקליט Voice Moment, פתחו את „רגעים”.',
@@ -533,6 +577,7 @@ const mobileNavigationTranslations = <String, Map<String, String>>{
     'navigation.rooms': 'اتاق‌ها',
     'navigation.servers': 'سرورها',
     'navigation.yourMoments': 'لحظه‌ها',
+    'navigation.content': 'محتوا',
     'Could not load rooms': 'اتاق‌ها بارگیری نشدند',
     'Create a Voice Room here. Open Your Moments to record a Voice Moment.':
         'اینجا یک اتاق صوتی بسازید. برای ضبط Voice Moment، لحظه‌ها را باز کنید.',
@@ -546,6 +591,7 @@ const mobileNavigationTranslations = <String, Map<String, String>>{
     'navigation.rooms': 'Vyumba',
     'navigation.servers': 'Seva',
     'navigation.yourMoments': 'Matukio',
+    'navigation.content': 'Maudhui',
     'Could not load rooms': 'Vyumba havikuweza kupakiwa',
     'Create a Voice Room here. Open Your Moments to record a Voice Moment.':
         'Unda chumba cha sauti hapa. Fungua Matukio ili kurekodi Voice Moment.',

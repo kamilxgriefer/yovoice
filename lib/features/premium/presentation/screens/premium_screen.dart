@@ -1,10 +1,20 @@
+import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/features/pages/data/services/page_access_service.dart';
+import 'package:yovoice/features/pages/presentation/page_navigation.dart';
+import 'package:yovoice/features/pages/presentation/page_profile_copy.dart';
+import 'package:yovoice/features/pages/presentation/pages_copy.dart';
+import 'package:yovoice/features/pages/presentation/screens/create_page_screen.dart';
+import 'package:yovoice/features/pages/presentation/widgets/page_profile_parts.dart';
+import 'package:yovoice/features/pages/presentation/widgets/premium_page_block.dart';
 import 'package:yovoice/features/premium/data/models/subscription_entitlements.dart';
 import 'package:yovoice/features/premium/data/premium_plans.dart';
 import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
@@ -40,12 +50,24 @@ class PremiumScreen extends StatefulWidget {
     this.entitlementService,
     this.profileService,
     this.billingService,
+    this.pagesEnabled,
+    this.pagesAccessStream,
+    this.onCreatePage,
+    this.onOpenPage,
     super.key,
   });
 
   final EntitlementService? entitlementService;
   final ProfileService? profileService;
   final PremiumBillingGateway? billingService;
+
+  /// Premium Pages seams (the "Twoja strona" block, spec premium-pages
+  /// §4.4); the app uses the shared availability and access services and
+  /// the create A / Page profile flows.
+  final ValueListenable<bool>? pagesEnabled;
+  final Stream<PageAccessState> Function()? pagesAccessStream;
+  final void Function(BuildContext context)? onCreatePage;
+  final void Function(BuildContext context)? onOpenPage;
 
   @override
   State<PremiumScreen> createState() => _PremiumScreenState();
@@ -59,6 +81,43 @@ class _PremiumScreenState extends State<PremiumScreen> {
 
   bool _wasPremiumOnOpen = false;
   bool _checkedInitial = false;
+
+  void _createPage() {
+    final flow = widget.onCreatePage;
+    if (flow != null) {
+      flow(context);
+      return;
+    }
+    unawaited(
+      openCreatePageFlow(
+        context,
+        backLabel: AppLocalizations.of(context).text('Premium', 'Premium'),
+      ),
+    );
+  }
+
+  void _openOwnPage() {
+    final flow = widget.onOpenPage;
+    if (flow != null) {
+      flow(context);
+      return;
+    }
+    String uid;
+    try {
+      uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    } catch (_) {
+      uid = '';
+    }
+    if (uid.isEmpty) return;
+    unawaited(openPageProfile(context, pageId: uid));
+  }
+
+  Widget _pageBlock(PremiumPagesState pages) => PremiumPageBlock(
+    ownsPage: pages.ownsPage,
+    grantOnly: pages.access.hasVipGrant,
+    onCreate: _createPage,
+    onOpen: _openOwnPage,
+  );
 
   void _openPlans() {
     Navigator.of(context).push(
@@ -81,32 +140,39 @@ class _PremiumScreenState extends State<PremiumScreen> {
         foregroundColor: palette.textPrimary,
         elevation: 0,
       ),
-      body: StreamBuilder<SubscriptionEntitlements>(
-        stream: _entitlements.watchCurrentEntitlements(),
-        builder: (context, snapshot) {
-          final entitlements = snapshot.data ?? SubscriptionEntitlements.free;
+      body: PremiumPagesGate(
+        enabled: widget.pagesEnabled,
+        accessStream: widget.pagesAccessStream,
+        builder: (context, pages) => StreamBuilder<SubscriptionEntitlements>(
+          stream: _entitlements.watchCurrentEntitlements(),
+          builder: (context, snapshot) {
+            final entitlements = snapshot.data ?? SubscriptionEntitlements.free;
 
-          // Remember whether the user ARRIVED premium, so the success
-          // celebration only plays for a transition that happened while
-          // this screen was open.
-          if (!_checkedInitial && snapshot.hasData) {
-            _wasPremiumOnOpen = entitlements.isPremium;
-            _checkedInitial = true;
-          }
+            // Remember whether the user ARRIVED premium, so the success
+            // celebration only plays for a transition that happened while
+            // this screen was open.
+            if (!_checkedInitial && snapshot.hasData) {
+              _wasPremiumOnOpen = entitlements.isPremium;
+              _checkedInitial = true;
+            }
 
-          if (entitlements.isPremium) {
-            return _PremiumActiveView(
-              entitlements: entitlements,
-              justActivated: _checkedInitial && !_wasPremiumOnOpen,
-              onManageSubscription: _openPlans,
+            if (entitlements.isPremium) {
+              return _PremiumActiveView(
+                entitlements: entitlements,
+                justActivated: _checkedInitial && !_wasPremiumOnOpen,
+                onManageSubscription: _openPlans,
+                pageBlock: pages.showBlock ? _pageBlock(pages) : null,
+              );
+            }
+
+            return _PremiumPresentationView(
+              profileStream: _profiles.watchCurrentProfile(),
+              onCheckPlans: _openPlans,
+              pageBlock: pages.showBlock ? _pageBlock(pages) : null,
+              showPageBenefit: pages.showBenefit,
             );
-          }
-
-          return _PremiumPresentationView(
-            profileStream: _profiles.watchCurrentProfile(),
-            onCheckPlans: _openPlans,
-          );
-        },
+          },
+        ),
       ),
     );
   }
@@ -118,10 +184,18 @@ class _PremiumPresentationView extends StatelessWidget {
   const _PremiumPresentationView({
     required this.profileStream,
     required this.onCheckPlans,
+    this.pageBlock,
+    this.showPageBenefit = false,
   });
 
   final Stream<UserProfile> profileStream;
   final VoidCallback onCheckPlans;
+
+  /// The "Twoja strona" block for a VIP (Premium Pages, R2), on top.
+  final Widget? pageBlock;
+
+  /// The fourth benefit card, "Własna strona" (R13), while Pages exist.
+  final bool showPageBenefit;
 
   /// The card tint by benefit, keyed on its title like the glyph.
   static Color _benefitTint(BuildContext context, String title) =>
@@ -142,6 +216,7 @@ class _PremiumPresentationView extends StatelessWidget {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(22, 4, 22, 40),
           children: [
+            if (pageBlock != null) ...[pageBlock!, const SizedBox(height: 28)],
             const Center(child: PremiumBadgePill()),
             const SizedBox(height: 18),
             Text(
@@ -187,6 +262,14 @@ class _PremiumPresentationView extends StatelessWidget {
                       iconColor: _benefitTint(context, benefit.$1),
                       title: localizedPremiumBenefit(copy, benefit).$1,
                       subtitle: localizedPremiumBenefit(copy, benefit).$2,
+                    ),
+                  if (showPageBenefit)
+                    _BenefitCard(
+                      key: const ValueKey('premium-page-benefit'),
+                      icon: Icons.article_outlined,
+                      iconColor: const Color(0xFFC4B5FD),
+                      title: PagesCopy(copy).ownPageBenefitTitle,
+                      subtitle: PagesCopy(copy).ownPageBenefitBody,
                     ),
                 ];
                 final stacked =
@@ -437,6 +520,7 @@ class _BenefitCard extends StatelessWidget {
     required this.iconColor,
     required this.title,
     required this.subtitle,
+    super.key,
   });
 
   final IconData icon;
@@ -509,11 +593,17 @@ class _PremiumActiveView extends StatelessWidget {
     required this.entitlements,
     required this.justActivated,
     required this.onManageSubscription,
+    this.pageBlock,
   });
 
   final SubscriptionEntitlements entitlements;
   final bool justActivated;
   final VoidCallback onManageSubscription;
+
+  /// The "Twoja strona" block (Premium Pages, approved create A render):
+  /// between the plan and "Zarządzaj subskrypcją", which then steps down to
+  /// the neutral tonal button so the block's action stays the one lift.
+  final Widget? pageBlock;
 
   @override
   Widget build(BuildContext context) {
@@ -610,22 +700,38 @@ class _PremiumActiveView extends StatelessWidget {
                   style: TextStyle(color: palette.textSecondary, fontSize: 13),
                 ),
               ),
-              const SizedBox(height: 24),
-              FilledButton(
-                onPressed: onManageSubscription,
-                style: FilledButton.styleFrom(
-                  backgroundColor: colors.primary,
-                  foregroundColor: colors.onPrimary,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 28,
-                    vertical: 14,
+              if (pageBlock != null) ...[
+                const SizedBox(height: 24),
+                pageBlock!,
+                const SizedBox(height: 16),
+                PageTonalButton(
+                  key: const ValueKey('premium-manage-subscription'),
+                  label: copy.text(
+                    'Manage subscription',
+                    'Zarządzaj subskrypcją',
+                  ),
+                  height: 52,
+                  expand: true,
+                  onPressed: onManageSubscription,
+                ),
+              ] else ...[
+                const SizedBox(height: 24),
+                FilledButton(
+                  onPressed: onManageSubscription,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: colors.primary,
+                    foregroundColor: colors.onPrimary,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 28,
+                      vertical: 14,
+                    ),
+                  ),
+                  child: Text(
+                    copy.text('Manage subscription', 'Zarządzaj subskrypcją'),
+                    style: const TextStyle(fontWeight: FontWeight.w800),
                   ),
                 ),
-                child: Text(
-                  copy.text('Manage subscription', 'Zarządzaj subskrypcją'),
-                  style: const TextStyle(fontWeight: FontWeight.w800),
-                ),
-              ),
+              ],
             ],
           ),
         ),

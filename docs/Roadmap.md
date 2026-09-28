@@ -2766,6 +2766,29 @@ their separate production-deployment gates.
 
 ## In Progress
 
+### Premium Pages ("Treści") client — branch `pages/client`, source only, not landed, NOTHING DEPLOYED
+
+The Flutter side of spec `yovoice-evidence/2026-09-28/premium-pages/spec.md`
+(provisional ADR-231 to ADR-233, renumbered when it lands). Everything stays
+hidden until `appConfig/pagesV1` enables it; the backend is built in
+parallel.
+
+- **C0–C3 (built):** the six-tab dock at 90 % and the desktop rail item, the
+  VIP rosette slice, the Treści wall (A "karty"), the Page profile (B
+  "okładka"), Find Pages, deep links, create (A) and Page settings.
+- **C4 (built, 2026-09-28):** composer A ("arkusz": text, up to 10 photos with
+  metadata stripped on the device, 60 s voice), post detail A ("karta +
+  wątek": comments, owner moderation, report, comments on/off), full-download
+  voice playback through the one-voice arbiter, the §4.5 semantics, the Page
+  post likers target, the `pagePostComment` / `pageModeration` / `pageLapse`
+  notification arms, the `PremiumUpsellContext.pages` upsell (R11), and all
+  Pages copy in 43 languages with CLDR plurals.
+- **Open before landing:** the owner's look at the frames without a render
+  (desktop two-column post detail at ≥ 1000 px, the composer's voice idle and
+  recording states); device, simulator and real-browser verification; the
+  backend callables deployed and the emulator contract run; then the launch
+  order in spec §7.
+
 ### Store builds from GitHub Actions — source written 2026-09-25, not configured, never run
 
 `.github/workflows/store-release.yml` builds, signs and uploads Android to the

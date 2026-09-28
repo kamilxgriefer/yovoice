@@ -34,6 +34,21 @@ import 'package:yovoice/shared/widgets/profile/profile_photo_viewer.dart';
 
 final Set<NavigatorState> _profilePreviewNavigators = <NavigatorState>{};
 
+/// Opens [userId] somewhere other than the personal preview and returns true,
+/// or returns false to let the preview open. Premium Pages registers one
+/// while Pages are on (spec premium-pages §4.3: an account whose
+/// `publicBadges.page` is set opens as its Page profile); with nothing
+/// registered every profile opens exactly as before.
+typedef AccountProfileRedirect =
+    Future<bool> Function(
+      BuildContext context, {
+      required String userId,
+      String? displayName,
+    });
+
+/// The one registered [AccountProfileRedirect], or null.
+AccountProfileRedirect? accountProfileRedirect;
+
 /// The one way to open "who is this person?" from anywhere in the app —
 /// a tap on any avatar or name (participant lists, chats, friends,
 /// moments, search) opens this compact preview instead of yanking the
@@ -52,7 +67,17 @@ Future<void> showProfilePreview(
   MessageService? messageService,
   ProfileMediaService? profileMediaService,
   ProfileMediaImageProvider? profileMediaImageProvider,
+  bool resolvePages = true,
 }) async {
+  // A Page account opens as its Page profile (premium-pages §4.3). The
+  // Page profile's own fallback comes back here with [resolvePages] false,
+  // so a refused Page never loops and never strands a friend or a victim.
+  final redirect = resolvePages ? accountProfileRedirect : null;
+  if (redirect != null &&
+      await redirect(context, userId: userId, displayName: displayName)) {
+    return;
+  }
+  if (!context.mounted) return;
   if (messageService != null && auth == null) {
     throw ArgumentError(
       'An injected MessageService requires the matching FirebaseAuth.',

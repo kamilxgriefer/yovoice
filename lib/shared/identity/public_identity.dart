@@ -81,34 +81,81 @@ enum OfficialRole {
   }
 }
 
+/// The kind of Premium Page an account runs, as `publicBadges/{uid}.page`
+/// publishes it (spec premium-pages §1.11): `"business"` (Firma) or
+/// `"community"` (Społeczność).
+///
+/// Display only. The server sets the field while the Page is running (active
+/// or read-only, not paused, not suspended) and clears it otherwise; a client
+/// uses it to choose which profile to open and never to authorize anything.
+enum PageKind {
+  business('business'),
+  community('community');
+
+  const PageKind(this.wire);
+
+  /// The value as the publicBadges mirror carries it.
+  final String wire;
+
+  /// Parses a wire value, failing SAFELY: absence, `null` and anything
+  /// unknown (a kind a future server might add) mean "not a Page" rather
+  /// than a guess, so the ordinary profile opens.
+  static PageKind? fromWire(Object? raw) {
+    if (raw is! String) return null;
+    final value = raw.trim();
+    for (final kind in PageKind.values) {
+      if (kind.wire == value) return kind;
+    }
+    return null;
+  }
+}
+
 /// What everyone is allowed to know about an account's identity: the
-/// official role and whether VIP applies. Nothing else crosses the
-/// mirror — no email, no ban state, no VIP source.
+/// official role, whether VIP applies, and whether the account currently
+/// runs a Premium Page. Nothing else crosses the mirror — no email, no ban
+/// state, no VIP source, no Page status detail.
 @immutable
 class PublicIdentity {
-  const PublicIdentity({required this.role, required this.isVip});
+  const PublicIdentity({
+    required this.role,
+    required this.isVip,
+    this.pageKind,
+  });
 
   /// The safe answer whenever resolution fails or hasn't landed yet: an
-  /// ordinary user with no VIP. Every account displays at least this.
+  /// ordinary user with no VIP and no Page. Every account displays at least
+  /// this.
   static const PublicIdentity fallback = PublicIdentity(
     role: OfficialRole.user,
     isVip: false,
   );
 
+  /// Unknown keys are ignored, so a newer server never breaks this client.
   factory PublicIdentity.fromWire(Map<String, dynamic> data) => PublicIdentity(
     role: OfficialRole.fromWire(data['staffRole'] as String?),
     isVip: data['isVip'] == true,
+    pageKind: PageKind.fromWire(data['page']),
   );
 
   final OfficialRole role;
   final bool isVip;
 
-  @override
-  bool operator ==(Object other) =>
-      other is PublicIdentity && other.role == role && other.isVip == isVip;
+  /// The running Page's kind, or null when the account is not a Page (the
+  /// key is absent, null or unknown).
+  final PageKind? pageKind;
+
+  /// True while the account presents as a Premium Page.
+  bool get isPage => pageKind != null;
 
   @override
-  int get hashCode => Object.hash(role, isVip);
+  bool operator ==(Object other) =>
+      other is PublicIdentity &&
+      other.role == role &&
+      other.isVip == isVip &&
+      other.pageKind == pageKind;
+
+  @override
+  int get hashCode => Object.hash(role, isVip, pageKind);
 }
 
 /// The cosmetic an achievement title produces (Achievement Rank milestone).
