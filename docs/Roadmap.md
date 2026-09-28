@@ -14,10 +14,16 @@ someone decide what to pick up next.
 
 ---
 
-## In progress / next build — after 3.3.0 (38)
+## YO Voice 3.4.0 (39) — the create ring (ADR-229) and See who liked (ADR-230) — 2026-09-28
 
-**Status: source on `yeels/create-ring`, not yet on `main`; no version bump
-yet.** Client-only.
+**Status: on `main` as `3.4.0+39`.** The ring landed as `8212785e`; See who
+liked landed as `f8a37e39`..`c1f5c0c9`, and its backend (indexes, rules,
+functions) is DEPLOYED since 2026-09-28 11:13 UTC with the lists switched off
+(`appConfig/likersV1`). The privacy-policy paragraph is live on yovoice.app
+since 11:15 UTC. The release record (web, TestFlight, Play) and the
+activation go in [DEPLOYMENT.md](DEPLOYMENT.md). Owner decision: the lists
+are switched on as soon as this build is available on iOS, Android and web
+(no extra 7-day wait for the tester phase).
 
 - **The Yeels / Głos create ring and its invitation echo** (ADR-229,
   [Decisions](Decisions.md#adr-229-the-create-ring-and-a-bounded-invitation-echo-on-yeels)):
@@ -31,10 +37,10 @@ yet.** Client-only.
   Verified by `test/yeels_create_ring_test.dart` and test-renderer frames;
   **not verified on a device, simulator or real browser.**
 
-**See who liked, comment likes and Hide my likes (ADR-230).** Status: client
-source on `vip/likers-client`, backend on its own branch against the same
-spec (`yovoice-evidence/2026-09-28/vip-likers/spec.md`), neither on `main`;
-nothing deployed; the lists stay off until `appConfig/likersV1` is enabled.
+**See who liked, comment likes and Hide my likes (ADR-230).** Spec:
+`yovoice-evidence/2026-09-28/vip-likers/spec.md`. Gate: paid Premium, an
+owner-granted VIP (the 14 tester grants read canonical after admitting their
+`note`) or staff preview.
 
 - **Client (done in source):** the likers list (owner variant B: phone
   draggable sheet, a fixed 520-wide panel from 600 px, Server reaction tabs,
@@ -55,9 +61,9 @@ nothing deployed; the lists stay off until `appConfig/likersV1` is enabled.
   `flutter analyze`; harness renders of the real widgets in Dark and Pearl at
   390/800/1280 and 200 % text. **Not verified on a device, simulator or real
   browser, and not against the real backend.**
-- **Before activation:** backend deploy (callables, rules, indexes), the
-  privacy-policy paragraph, the build carrying Hide my likes on iOS, Android
-  and web, then the switch (spec §8). The VIP rosette moves to a dedicated
+- **Before activation:** done: backend deploy and the privacy-policy
+  paragraph. Left: this build on iOS, Android and web, then the switch
+  (spec §8). The VIP rosette moves to a dedicated
   `vipMark` field and goes app-wide in a later task.
 
 ## YO Voice 3.3.0 (38) — YO Moments: the Głos list (G4) and one-row Yeels (Y3) (ADR-228) — 2026-09-28
