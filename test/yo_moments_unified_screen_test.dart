@@ -308,7 +308,29 @@ void main() {
                   widget.color == palette.surface),
         ),
       );
-      expect(opaque, findsNothing);
+      // One surface is allowed, and only one: board 08's footer bar under
+      // the frame (`reel-stage-footer-bar`) is the card's OWN surface. With
+      // the one-row chrome an 800 × 600 stage is tall enough to stack it
+      // under the frame. Anything else painting the canvas colours on the
+      // stage is still the "frame inside a frame" this test forbids.
+      final footerBars = find
+          .byKey(const ValueKey<String>('reel-stage-footer-bar'))
+          .evaluate()
+          .toSet();
+      final otherSurfaces = opaque.evaluate().where((element) {
+        var footerSurface = false;
+        element.visitAncestorElements((ancestor) {
+          if (footerBars.contains(ancestor)) {
+            footerSurface = true;
+            return false;
+          }
+          // The footer bar's own fill is its Container's ColoredBox: only a
+          // box whose nearest keyed ancestor IS the bar counts as the bar.
+          return ancestor.widget.key == null;
+        });
+        return !footerSurface;
+      });
+      expect(otherSurfaces, isEmpty);
       expect(tester.takeException(), isNull);
     }
   });
@@ -352,6 +374,25 @@ void main() {
             ),
           );
       expect(blackGradients, isEmpty);
+
+      // Y3's one legibility aid is a FADE behind the one-row chrome, never a
+      // block: at most 42 % black at the top, fully transparent at its
+      // lower edge, and no deeper than the chrome plus 70 px. It is the
+      // Yeel's own media layer, not part of the chrome.
+      final scrim = find
+          .byKey(const ValueKey<String>('reels-chrome-scrim'))
+          .first;
+      expect(find.descendant(of: chrome, matching: scrim), findsNothing);
+      final scrimDecoration =
+          tester.widget<DecoratedBox>(scrim).decoration as BoxDecoration;
+      expect(scrimDecoration.color, isNull, reason: 'not a solid block');
+      final fade = scrimDecoration.gradient! as LinearGradient;
+      expect(fade.colors.first.a, lessThanOrEqualTo(.42 + .005));
+      expect(fade.colors.last.a, 0);
+      expect(
+        tester.getRect(scrim).bottom,
+        lessThanOrEqualTo(tester.getRect(chrome).bottom + 70 + .5),
+      );
       expect(tester.takeException(), isNull);
     },
   );

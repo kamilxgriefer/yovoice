@@ -1,4 +1,8 @@
+import 'dart:math' as math;
+
+import 'package:flutter/foundation.dart' show precisionErrorTolerance;
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_finish.dart';
@@ -26,6 +30,11 @@ const List<Shadow> _immersiveChromeTextShadows = <Shadow>[
   Shadow(color: Color(0xD9000000), offset: Offset(1, 1)),
   ...overlayTextShadows,
 ];
+
+/// The same glyph treatment, for a word a host sets in the chrome's row in
+/// place of the format switch (the Yeels "Twoje Yeels" title), so it reads
+/// exactly like the format labels it stands in for.
+const List<Shadow> immersiveChromeTextShadows = _immersiveChromeTextShadows;
 
 /// The row-1 pieces an immersive feed's HOST owns.
 ///
@@ -92,9 +101,10 @@ class ImmersiveChromeOption {
 class ImmersiveFeedChrome extends StatelessWidget {
   const ImmersiveFeedChrome({
     required this.gutter,
-    required this.filters,
-    required this.selectedFilterIndex,
-    required this.onFilterSelected,
+    this.filters = const <ImmersiveChromeOption>[],
+    this.selectedFilterIndex = 0,
+    this.onFilterSelected,
+    this.filterBar,
     this.filterGroupLabel,
     this.formatSwitch,
     this.leading,
@@ -117,10 +127,15 @@ class ImmersiveFeedChrome extends StatelessWidget {
   /// Horizontal gutter, shared with the stage below.
   final double gutter;
 
-  /// Level 2.
+  /// Level 2: the chip row. Empty (the default) with no [filterBar] means
+  /// the surface has no level 2 at all, and the chrome is one row tall.
   final List<ImmersiveChromeOption> filters;
   final int selectedFilterIndex;
-  final ValueChanged<int> onFilterSelected;
+  final ValueChanged<int>? onFilterSelected;
+
+  /// Level 2 drawn by the host instead of the chip row (the Voice feed's
+  /// text tabs). When set, [filters] is ignored.
+  final Widget? filterBar;
 
   /// Names level 2 to assistive technology, so the two levels are
   /// distinguishable without sight.
@@ -138,19 +153,23 @@ class ImmersiveFeedChrome extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Keep the whole header transparent. The populated phone layout places it
-    // over the Yeel itself; painting a full-width scrim here produces the
-    // reported black rectangle and visually detaches the controls from the
-    // media. Each foreground atom already owns its contrast treatment.
+    // The chrome itself paints no backdrop. Each foreground atom owns its
+    // contrast treatment, and a host that needs more lays it UNDER its own
+    // controls: the Yeels phone overlay fades the top of the media inside the
+    // Yeel's media layer (Y3), so no control of the Yeel is ever dimmed. A
+    // full-width fill painted here is what produced the reported black
+    // rectangle over the footage.
     return Padding(
       // No safe-area inset is added here: every host that mounts this chrome
       // already sits inside a SafeArea, so reserving the notch again would
       // push the first row down by the status bar a second time.
       //
-      // The two 48 px rows ARE the header (title row 4 + 48 ≤ 56). The
-      // total height is deliberately unchanged by the Slim pass: the Yeels
-      // stage measures this chrome and derives its shallow-frame geometry
-      // (horizontal action row vs rail) from the media height left under it.
+      // Row 1 is one 48 px row (it stacks into two only when the format
+      // switch cannot keep its width beside the plates); level 2, when a
+      // host has one, adds a second. Hosts measure the result rather than
+      // assuming a height: the Yeels stage derives its shallow-frame
+      // geometry (horizontal action row vs rail) from the media height the
+      // measured chrome leaves under it.
       padding: EdgeInsetsDirectional.fromSTEB(
         gutter,
         AppRhythm.hairline,
@@ -166,22 +185,26 @@ class ImmersiveFeedChrome extends StatelessWidget {
             leading: leading,
             trailing: trailing,
           ),
-          // The one gap that makes two levels read as two levels.
-          const SizedBox(height: AppRhythm.tight),
-          Row(
-            children: <Widget>[
-              Expanded(
-                child: ImmersiveFilterRow(
-                  options: filters,
-                  selectedIndex: selectedFilterIndex,
-                  onSelected: onFilterSelected,
-                  groupLabel: filterGroupLabel,
-                  onCanvas: onCanvas,
+          if (filterBar != null || filters.isNotEmpty) ...<Widget>[
+            // The one gap that makes two levels read as two levels.
+            const SizedBox(height: AppRhythm.tight),
+            Row(
+              children: <Widget>[
+                Expanded(
+                  child:
+                      filterBar ??
+                      ImmersiveFilterRow(
+                        options: filters,
+                        selectedIndex: selectedFilterIndex,
+                        onSelected: onFilterSelected ?? (_) {},
+                        groupLabel: filterGroupLabel,
+                        onCanvas: onCanvas,
+                      ),
                 ),
-              ),
-              ?filterTrailing,
-            ],
-          ),
+                ?filterTrailing,
+              ],
+            ),
+          ],
         ],
       ),
     );
@@ -190,10 +213,16 @@ class ImmersiveFeedChrome extends StatelessWidget {
 
 /// Row 1: the plates keep their places and the switch sits between them.
 ///
-/// At ordinary sizes all three slots share one compact row. Large text gives
-/// the edge actions their own row and the format labels the full width below.
-/// This costs one short line of overlay height, but it preserves the reader's
-/// requested text size and keeps both choices complete on a 320 px phone.
+/// At ordinary sizes all three slots share one compact row. When the switch
+/// cannot keep its natural width between the plates — large text, or a narrow
+/// phone whose row also carries Back and more than one action — the edge
+/// actions get their own row and the format labels the full width below.
+/// That costs one short line of overlay height, but it preserves the reader's
+/// requested text size and keeps both choices complete, never "Ye…".
+///
+/// The switch is always BOUNDED. A horizontal scroll view here once handed it
+/// unbounded width, so at 200 % text on a 320 px phone exactly one of the two
+/// formats was ever visible; a two-item format switch must show both items.
 class _FormatRow extends StatelessWidget {
   const _FormatRow({
     required this.formatSwitch,
@@ -207,52 +236,267 @@ class _FormatRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final switchWidget = formatSwitch;
-    final accessibilityLayout =
-        MediaQuery.textScalerOf(context).scale(1) >= 1.6;
-    if (switchWidget != null &&
-        accessibilityLayout &&
-        (leading != null || trailing != null)) {
-      return Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: <Widget>[
-          Row(children: <Widget>[?leading, const Spacer(), ?trailing]),
-          const SizedBox(height: AppRhythm.hairline),
-          Align(
-            alignment: AlignmentDirectional.centerStart,
-            child: switchWidget,
-          ),
-        ],
+    return _AdaptiveFormatRow(
+      leading: leading,
+      center: formatSwitch,
+      trailing: trailing,
+      // Accessibility sizes always stack: there the segments drop their side
+      // padding and may wrap, so their width is not a single-line measure.
+      forceStacked: MediaQuery.textScalerOf(context).scale(1) >= 1.6,
+      textDirection: Directionality.of(context),
+    );
+  }
+}
+
+enum _FormatSlot { leading, center, trailing }
+
+class _AdaptiveFormatRow
+    extends SlottedMultiChildRenderObjectWidget<_FormatSlot, RenderBox> {
+  const _AdaptiveFormatRow({
+    required this.leading,
+    required this.center,
+    required this.trailing,
+    required this.forceStacked,
+    required this.textDirection,
+  });
+
+  final Widget? leading;
+  final Widget? center;
+  final Widget? trailing;
+  final bool forceStacked;
+  final TextDirection textDirection;
+
+  @override
+  Iterable<_FormatSlot> get slots => _FormatSlot.values;
+
+  @override
+  Widget? childForSlot(_FormatSlot slot) => switch (slot) {
+    _FormatSlot.leading => leading,
+    _FormatSlot.center => center,
+    _FormatSlot.trailing => trailing,
+  };
+
+  @override
+  _RenderAdaptiveFormatRow createRenderObject(BuildContext context) =>
+      _RenderAdaptiveFormatRow(
+        forceStacked: forceStacked,
+        textDirection: textDirection,
+      );
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    _RenderAdaptiveFormatRow renderObject,
+  ) {
+    renderObject
+      ..forceStacked = forceStacked
+      ..textDirection = textDirection;
+  }
+}
+
+/// Lays row 1 out as the old `Row` / `Column` pair did — leading, an 8 px
+/// gap, the switch start-aligned in the room that is left, trailing at the
+/// end, all vertically centred; or, stacked, the plates on one line and the
+/// switch start-aligned 4 px under them — and picks between the two by
+/// MEASURING the switch against the room it would get (keeping 8 px clear of
+/// the trailing actions, so a word never touches a plate), instead of by the
+/// text scale alone.
+class _RenderAdaptiveFormatRow extends RenderBox
+    with SlottedContainerRenderObjectMixin<_FormatSlot, RenderBox> {
+  _RenderAdaptiveFormatRow({
+    required bool forceStacked,
+    required TextDirection textDirection,
+  }) : _forceStacked = forceStacked,
+       _textDirection = textDirection;
+
+  static const double _leadingGap = AppRhythm.tight;
+  static const double _trailingGap = AppRhythm.tight;
+  static const double _runGap = AppRhythm.hairline;
+
+  bool get forceStacked => _forceStacked;
+  bool _forceStacked;
+  set forceStacked(bool value) {
+    if (value == _forceStacked) return;
+    _forceStacked = value;
+    markNeedsLayout();
+  }
+
+  TextDirection get textDirection => _textDirection;
+  TextDirection _textDirection;
+  set textDirection(TextDirection value) {
+    if (value == _textDirection) return;
+    _textDirection = value;
+    markNeedsLayout();
+  }
+
+  RenderBox? get _leading => childForSlot(_FormatSlot.leading);
+  RenderBox? get _center => childForSlot(_FormatSlot.center);
+  RenderBox? get _trailing => childForSlot(_FormatSlot.trailing);
+
+  /// Reading order, so semantics and focus see leading → switch → trailing.
+  Iterable<RenderBox> get _ordered =>
+      <RenderBox?>[_leading, _center, _trailing].whereType<RenderBox>();
+
+  @override
+  void visitChildren(RenderObjectVisitor visitor) => _ordered.forEach(visitor);
+
+  bool get _hasEdges => _leading != null || _trailing != null;
+
+  double get _gap => _leading == null ? 0 : _leadingGap;
+
+  double get _endGap => _trailing == null ? 0 : _trailingGap;
+
+  Size _run(
+    BoxConstraints constraints, {
+    required bool dry,
+    bool position = false,
+  }) {
+    final width = constraints.maxWidth;
+    final loose = BoxConstraints(maxWidth: width);
+    Size measure(RenderBox? child, BoxConstraints childConstraints) {
+      if (child == null) return Size.zero;
+      if (dry) return child.getDryLayout(childConstraints);
+      child.layout(childConstraints, parentUsesSize: true);
+      return child.size;
+    }
+
+    final lead = measure(_leading, loose);
+    final trail = measure(_trailing, loose);
+    final room = math.max(
+      0.0,
+      width - lead.width - _gap - trail.width - _endGap,
+    );
+    var stacked = false;
+    var center = Size.zero;
+    final centerChild = _center;
+    if (centerChild != null) {
+      if (_hasEdges) {
+        if (_forceStacked) {
+          stacked = true;
+        } else {
+          // The switch at the full row width is its natural width; if that
+          // does not fit between the plates, it gets a line of its own.
+          final natural = measure(centerChild, loose);
+          stacked = natural.width > room + precisionErrorTolerance;
+        }
+      }
+      center = measure(
+        centerChild,
+        BoxConstraints(maxWidth: stacked ? width : room),
       );
     }
-    return Row(
-      children: <Widget>[
-        if (leading != null) ...<Widget>[
-          leading!,
-          const SizedBox(width: AppRhythm.tight),
-        ],
-        if (switchWidget == null)
-          const Spacer()
-        else
-          Expanded(
-            // Bounded on purpose. A horizontal scroll view here handed the
-            // switch unbounded width, so at 200 % text on a 320 px phone it
-            // grew past the viewport and exactly ONE of the two formats was
-            // ever visible: first the selected one sat off-screen, and once
-            // the selection was scrolled into view the other one did. A
-            // two-item format switch must show both items, so it takes the
-            // room it has and the segments share it equally. At accessibility
-            // sizes each segment trims only its horizontal breathing room;
-            // the reader's requested label scale remains untouched.
-            child: Align(
-              alignment: AlignmentDirectional.centerStart,
-              child: switchWidget,
-            ),
-          ),
-        ?trailing,
-      ],
-    );
+
+    final resolvedWidth = width.isFinite
+        ? width
+        : lead.width + _gap + center.width + trail.width;
+    final rowHeight = stacked
+        ? math.max(lead.height, trail.height)
+        : math.max(lead.height, math.max(center.height, trail.height));
+    final height = stacked ? rowHeight + _runGap + center.height : rowHeight;
+    final size = constraints.constrain(Size(resolvedWidth, height));
+
+    if (position && !dry) {
+      void place(RenderBox? child, double start, double top) {
+        if (child == null) return;
+        final x = _textDirection == TextDirection.ltr
+            ? start
+            : size.width - start - child.size.width;
+        (child.parentData! as BoxParentData).offset = Offset(x, top);
+      }
+
+      place(_leading, 0, (rowHeight - lead.height) / 2);
+      place(
+        _trailing,
+        size.width - trail.width,
+        (rowHeight - trail.height) / 2,
+      );
+      if (stacked) {
+        place(centerChild, 0, rowHeight + _runGap);
+      } else {
+        place(centerChild, lead.width + _gap, (rowHeight - center.height) / 2);
+      }
+    }
+    return size;
+  }
+
+  @override
+  void performLayout() {
+    size = _run(constraints, dry: false, position: true);
+  }
+
+  @override
+  Size computeDryLayout(covariant BoxConstraints constraints) =>
+      _run(constraints, dry: true);
+
+  @override
+  double computeMinIntrinsicWidth(double height) {
+    final lead = _leading?.getMinIntrinsicWidth(height) ?? 0;
+    final trail = _trailing?.getMinIntrinsicWidth(height) ?? 0;
+    final center = _center?.getMinIntrinsicWidth(height) ?? 0;
+    return math.max(lead + _gap + trail, center);
+  }
+
+  @override
+  double computeMaxIntrinsicWidth(double height) {
+    final lead = _leading?.getMaxIntrinsicWidth(height) ?? 0;
+    final trail = _trailing?.getMaxIntrinsicWidth(height) ?? 0;
+    final center = _center?.getMaxIntrinsicWidth(height) ?? 0;
+    return lead + _gap + center + _endGap + trail;
+  }
+
+  double _intrinsicHeight(double width, {required bool max}) {
+    double of(RenderBox? child) => child == null
+        ? 0
+        : max
+        ? child.getMaxIntrinsicHeight(width)
+        : child.getMinIntrinsicHeight(width);
+    final edges = math.max(of(_leading), of(_trailing));
+    final center = of(_center);
+    final centerChild = _center;
+    if (centerChild == null || !_hasEdges) return math.max(edges, center);
+    final room =
+        width -
+        (_leading?.getMaxIntrinsicWidth(double.infinity) ?? 0) -
+        _gap -
+        (_trailing?.getMaxIntrinsicWidth(double.infinity) ?? 0) -
+        _endGap;
+    final stacked =
+        _forceStacked ||
+        centerChild.getMaxIntrinsicWidth(double.infinity) > room;
+    return stacked ? edges + _runGap + center : math.max(edges, center);
+  }
+
+  @override
+  double computeMinIntrinsicHeight(double width) =>
+      _intrinsicHeight(width, max: false);
+
+  @override
+  double computeMaxIntrinsicHeight(double width) =>
+      _intrinsicHeight(width, max: true);
+
+  @override
+  void paint(PaintingContext context, Offset offset) {
+    for (final child in _ordered) {
+      context.paintChild(
+        child,
+        offset + (child.parentData! as BoxParentData).offset,
+      );
+    }
+  }
+
+  @override
+  bool hitTestChildren(BoxHitTestResult result, {required Offset position}) {
+    for (final child in _ordered.toList(growable: false).reversed) {
+      final offset = (child.parentData! as BoxParentData).offset;
+      final hit = result.addWithPaintOffset(
+        offset: offset,
+        position: position,
+        hitTest: (result, transformed) =>
+            child.hitTest(result, position: transformed),
+      );
+      if (hit) return true;
+    }
+    return false;
   }
 }
 
@@ -281,12 +525,23 @@ class ImmersiveSegmentedSwitch extends StatelessWidget {
     this.groupLabel,
     this.onCanvas = false,
     this.segmentMinWidth = 72,
+    this.onReselected,
+    this.reselectHint,
     super.key,
   }) : assert(segments.length > 0, 'A segmented switch needs a segment.');
 
   final List<ImmersiveChromeOption> segments;
   final int selectedIndex;
   final ValueChanged<int> onSelected;
+
+  /// What activating the ALREADY selected segment does. Null (the default)
+  /// keeps it inert; the Yeels host passes its refresh here, the familiar
+  /// "tap the current tab again" gesture.
+  final ValueChanged<int>? onReselected;
+
+  /// Spoken on the selected segment when [onReselected] is set, so the
+  /// second activation is discoverable without sight.
+  final String? reselectHint;
 
   /// Names the whole control to assistive technology, so the two levels are
   /// distinguishable without sight.
@@ -315,6 +570,7 @@ class ImmersiveSegmentedSwitch extends StatelessWidget {
     final label = groupLabel;
     final accessibilityLayout =
         MediaQuery.textScalerOf(context).scale(1) >= 1.6;
+    final reselected = onReselected;
     Widget segment(int index) => _SwitchSegment(
       key: segments[index].key,
       option: segments[index],
@@ -322,6 +578,8 @@ class ImmersiveSegmentedSwitch extends StatelessWidget {
       onCanvas: onCanvas,
       minWidth: segmentMinWidth,
       onTap: () => onSelected(index),
+      onReselect: reselected == null ? null : () => reselected(index),
+      reselectHint: reselected == null ? null : reselectHint,
     );
     // Equal widths keep the ordinary row visually balanced. At large text,
     // intrinsic-width tabs use the available line efficiently; Wrap is the
@@ -416,6 +674,8 @@ class _SwitchSegment extends StatefulWidget {
     required this.onTap,
     this.onCanvas = false,
     this.minWidth = 72,
+    this.onReselect,
+    this.reselectHint,
     super.key,
   });
 
@@ -425,6 +685,10 @@ class _SwitchSegment extends StatefulWidget {
   final bool onCanvas;
   final double minWidth;
 
+  /// Runs instead of nothing when the selected segment is activated again.
+  final VoidCallback? onReselect;
+  final String? reselectHint;
+
   @override
   State<_SwitchSegment> createState() => _SwitchSegmentState();
 }
@@ -432,6 +696,10 @@ class _SwitchSegment extends StatefulWidget {
 class _SwitchSegmentState extends State<_SwitchSegment>
     with _KeepsSelectionVisible<_SwitchSegment> {
   bool _focused = false;
+
+  /// Keeps the segment's own subtree — its focus node and its indicator
+  /// animation — when the reselect tooltip wraps it or lets it go.
+  final GlobalKey _body = GlobalKey(debugLabel: 'immersive switch segment');
 
   @override
   bool get isSelectedForScroll => widget.selected;
@@ -466,136 +734,154 @@ class _SwitchSegmentState extends State<_SwitchSegment>
     final lineSolid = palette?.textPrimary ?? AppColors.white;
     final accessibilityLayout =
         MediaQuery.textScalerOf(context).scale(1) >= 1.6;
+    final reselectHint = widget.onReselect == null ? null : widget.reselectHint;
     return Semantics(
       button: true,
       selected: selected,
       label: widget.option.semanticLabel ?? widget.option.label,
+      hint: selected ? reselectHint : null,
       // The node replaces its subtree, so the activation the ink well offers
       // a pointer has to be restated here -- and so must the focus and
       // enabled states the discarded InkWell node would have carried. The
       // ring was drawn but never spoken.
-      onTap: widget.onTap,
+      onTap: selected ? (widget.onReselect ?? widget.onTap) : widget.onTap,
       enabled: true,
       focusable: true,
       focused: _focused,
       excludeSemantics: true,
-      child: Material(
-        type: MaterialType.transparency,
-        child: InkWell(
-          // Selecting the current segment again changes nothing, but the
-          // control stays live so keyboard focus can rest on it.
-          onTap: selected ? () {} : widget.onTap,
-          borderRadius: const BorderRadius.all(Radius.circular(8)),
-          onFocusChange: (focused) {
-            if (_focused != focused) setState(() => _focused = focused);
-          },
-          child: Stack(
-            children: <Widget>[
-              ConstrainedBox(
-                constraints: BoxConstraints(
-                  minHeight: ImmersiveSegmentedSwitch._trackHeight,
-                  minWidth: widget.minWidth,
-                ),
-                child: Padding(
-                  padding: EdgeInsets.symmetric(
-                    // The labels keep the reader's full text scale. On a
-                    // narrow phone, including the Back and Create plates,
-                    // reclaim only decorative side padding once large text
-                    // is active so both words remain complete and tappable.
-                    horizontal: accessibilityLayout ? 0 : AppRhythm.item,
-                    vertical: 4,
+      child: _withReselectTooltip(
+        Material(
+          type: MaterialType.transparency,
+          child: InkWell(
+            // Selecting the current segment again changes nothing unless the
+            // host asked for a reselect action, but the control stays live so
+            // keyboard focus can rest on it.
+            onTap: selected ? (widget.onReselect ?? () {}) : widget.onTap,
+            borderRadius: const BorderRadius.all(Radius.circular(8)),
+            onFocusChange: (focused) {
+              if (_focused != focused) setState(() => _focused = focused);
+            },
+            child: Stack(
+              children: <Widget>[
+                ConstrainedBox(
+                  constraints: BoxConstraints(
+                    minHeight: ImmersiveSegmentedSwitch._trackHeight,
+                    minWidth: widget.minWidth,
                   ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      Text(
-                        widget.option.label,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: foreground,
-                          fontSize: 17,
-                          letterSpacing: accessibilityLayout ? -2 : null,
-                          height: 1.15,
-                          fontWeight: selected
-                              ? FontWeight.w800
-                              : FontWeight.w600,
-                          shadows: onCanvas
-                              ? null
-                              : _immersiveChromeTextShadows,
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(
+                      // The labels keep the reader's full text scale. On a
+                      // narrow phone, including the Back and Create plates,
+                      // reclaim only decorative side padding once large text
+                      // is active so both words remain complete and tappable.
+                      horizontal: accessibilityLayout ? 0 : AppRhythm.item,
+                      vertical: 4,
+                    ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        Text(
+                          widget.option.label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: foreground,
+                            fontSize: 17,
+                            letterSpacing: accessibilityLayout ? -2 : null,
+                            height: 1.15,
+                            fontWeight: selected
+                                ? FontWeight.w800
+                                : FontWeight.w600,
+                            shadows: onCanvas
+                                ? null
+                                : _immersiveChromeTextShadows,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 3),
-                      AnimatedContainer(
-                        key: ValueKey<String>(
-                          'immersive-format-indicator-${widget.option.label}',
+                        const SizedBox(height: 3),
+                        AnimatedContainer(
+                          key: ValueKey<String>(
+                            'immersive-format-indicator-${widget.option.label}',
+                          ),
+                          duration: AppMotion.resolve(
+                            context,
+                            AppMotion.standard,
+                          ),
+                          curve: AppMotion.standardCurve,
+                          width: selected ? 30 : 0,
+                          height: 3,
+                          decoration: BoxDecoration(
+                            color: !selected
+                                ? Colors.transparent
+                                : highContrast
+                                ? lineSolid
+                                : null,
+                            gradient: selected && !highContrast
+                                ? AppGradients.primary
+                                : null,
+                            borderRadius: AppRadius.pill,
+                            boxShadow: selected
+                                ? <BoxShadow>[
+                                    if (!onCanvas)
+                                      const BoxShadow(
+                                        color: Color(0xE6000000),
+                                        blurRadius: 0,
+                                        spreadRadius: 2,
+                                      ),
+                                    if (!highContrast)
+                                      BoxShadow(color: lineGlow, blurRadius: 8),
+                                  ]
+                                : null,
+                          ),
                         ),
-                        duration: AppMotion.resolve(
-                          context,
-                          AppMotion.standard,
-                        ),
-                        curve: AppMotion.standardCurve,
-                        width: selected ? 30 : 0,
-                        height: 3,
-                        decoration: BoxDecoration(
-                          color: !selected
-                              ? Colors.transparent
-                              : highContrast
-                              ? lineSolid
-                              : null,
-                          gradient: selected && !highContrast
-                              ? AppGradients.primary
-                              : null,
-                          borderRadius: AppRadius.pill,
-                          boxShadow: selected
-                              ? <BoxShadow>[
-                                  if (!onCanvas)
-                                    const BoxShadow(
-                                      color: Color(0xE6000000),
-                                      blurRadius: 0,
-                                      spreadRadius: 2,
-                                    ),
-                                  if (!highContrast)
-                                    BoxShadow(color: lineGlow, blurRadius: 8),
-                                ]
-                              : null,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              Positioned.fill(
-                child: IgnorePointer(
-                  child: AnimatedContainer(
-                    duration: AppMotion.resolve(context, AppMotion.quick),
-                    margin: const EdgeInsets.all(2),
-                    decoration: BoxDecoration(
-                      borderRadius: const BorderRadius.all(Radius.circular(8)),
-                      border: Border.all(
-                        color: _focused ? focusRing : Colors.transparent,
-                        width: 2,
-                      ),
-                      boxShadow: _focused && !onCanvas
-                          ? const <BoxShadow>[
-                              BoxShadow(
-                                color: Color(0xE6000000),
-                                blurRadius: 0,
-                                spreadRadius: 1,
-                              ),
-                            ]
-                          : null,
+                      ],
                     ),
                   ),
                 ),
-              ),
-            ],
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: AnimatedContainer(
+                      duration: AppMotion.resolve(context, AppMotion.quick),
+                      margin: const EdgeInsets.all(2),
+                      decoration: BoxDecoration(
+                        borderRadius: const BorderRadius.all(
+                          Radius.circular(8),
+                        ),
+                        border: Border.all(
+                          color: _focused ? focusRing : Colors.transparent,
+                          width: 2,
+                        ),
+                        boxShadow: _focused && !onCanvas
+                            ? const <BoxShadow>[
+                                BoxShadow(
+                                  color: Color(0xE6000000),
+                                  blurRadius: 0,
+                                  spreadRadius: 1,
+                                ),
+                              ]
+                            : null,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
+        selected ? reselectHint : null,
       ),
     );
+  }
+
+  /// A pointer reader learns what the selected tab does now, too; the spoken
+  /// hint already carries it, so the tooltip stays out of semantics. The
+  /// GlobalKey reparents the ink well rather than rebuilding it when the
+  /// tooltip comes and goes with the selection.
+  Widget _withReselectTooltip(Widget body, String? message) {
+    final keyed = KeyedSubtree(key: _body, child: body);
+    if (message == null) return keyed;
+    return Tooltip(message: message, excludeFromSemantics: true, child: keyed);
   }
 }
 

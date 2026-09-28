@@ -28,6 +28,8 @@ import 'package:yovoice/features/reels/presentation/widgets/reel_progress_row.da
 import 'package:yovoice/features/reels/presentation/widgets/reel_overlay_measure.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_private_overlay_guard.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
+import 'package:yovoice/shared/widgets/overlays/immersive_overlay_atoms.dart'
+    show overlayPlateColor;
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/shared/widgets/states/yo_error_state.dart';
@@ -739,14 +741,20 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
   Widget _buildMedia(
     BuildContext context, {
     required EdgeInsets overlaySafeInsets,
+    _LegibilityScrim foreground = const _LegibilityScrim(),
   }) => KeyedSubtree(
     key: _mediaKey,
-    child: _buildMediaSource(context, overlaySafeInsets: overlaySafeInsets),
+    child: _buildMediaSource(
+      context,
+      overlaySafeInsets: overlaySafeInsets,
+      foreground: foreground,
+    ),
   );
 
   Widget _buildMediaSource(
     BuildContext context, {
     required EdgeInsets overlaySafeInsets,
+    required _LegibilityScrim foreground,
   }) {
     final copy = AppLocalizations.of(context);
     return FutureBuilder<Uri>(
@@ -784,6 +792,7 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
               onToggle: _togglePlayback,
               fillViewport: widget.fillViewport,
               overlaySafeInsets: overlaySafeInsets,
+              foreground: foreground,
             ),
           );
         }
@@ -801,6 +810,7 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
               onFailure: () => _refreshMedia(automatic: true),
               fillViewport: widget.fillViewport,
               overlaySafeInsets: overlaySafeInsets,
+              foreground: foreground,
             ),
           );
         }
@@ -820,7 +830,7 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
             overlaySafeInsets: overlaySafeInsets,
             composition: widget.reel.composition,
             media: media,
-            mediaForeground: const _LegibilityScrim(),
+            mediaForeground: foreground,
             onOpenLink: (overlay) =>
                 launchUrl(overlay.uri, mode: LaunchMode.externalApplication),
           ),
@@ -886,6 +896,22 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
                 context,
                 top: asCard ? 56 : widget.mediaTopInset + 12,
               );
+              // The host's chrome sits over the top of this frame: fade the
+              // top of the MEDIA behind it (Y3), inside the media layer, so
+              // the fade lies under the sound plate, the rail, the authored
+              // stickers and every focus ring — never over them.
+              final highContrast = MediaQuery.highContrastOf(context);
+              final fadeExtent = topInset <= 0
+                  ? 0.0
+                  : highContrast
+                  ? topInset
+                  : topInset + _LegibilityScrim.chromeFadeOverhang;
+              final foreground = _LegibilityScrim(
+                chromeFade: constraints.maxHeight > 0
+                    ? (fadeExtent / constraints.maxHeight).clamp(0.0, 1.0)
+                    : 0,
+                chromeFadeSolid: highContrast,
+              );
               return DecoratedBox(
                 decoration: BoxDecoration(
                   // Only visible while the media loads or fails.
@@ -905,6 +931,7 @@ class _ReelCardState extends State<ReelCard> with WidgetsBindingObserver {
                       _buildMedia(
                         context,
                         overlaySafeInsets: overlaySafeInsets,
+                        foreground: foreground,
                       ),
                       // The empty area of this layer takes no hits — its scrim
                       // is behind an IgnorePointer — so the playback surface
@@ -2155,6 +2182,7 @@ class _HostedReelVideoPlayer extends StatefulWidget {
     this.videoBuilder,
     this.fillViewport = false,
     required this.overlaySafeInsets,
+    this.foreground = const _LegibilityScrim(),
   });
 
   final Uri uri;
@@ -2164,6 +2192,7 @@ class _HostedReelVideoPlayer extends StatefulWidget {
   final ReelVideoBuilder? videoBuilder;
   final bool fillViewport;
   final EdgeInsets overlaySafeInsets;
+  final _LegibilityScrim foreground;
   final Future<void> Function() onToggle;
 
   @override
@@ -2224,7 +2253,7 @@ class _HostedReelVideoPlayerState extends State<_HostedReelVideoPlayer> {
         media: builder == null
             ? const ColoredBox(color: Colors.black)
             : builder(context, widget.uri, widget.reel),
-        mediaForeground: const _LegibilityScrim(),
+        mediaForeground: widget.foreground,
         onOpenLink: (overlay) =>
             launchUrl(overlay.uri, mode: LaunchMode.externalApplication),
       ),
@@ -2243,6 +2272,7 @@ class _DefaultReelVideoPlayer extends StatefulWidget {
     required this.onFailure,
     this.fillViewport = false,
     required this.overlaySafeInsets,
+    this.foreground = const _LegibilityScrim(),
   });
 
   final Uri uri;
@@ -2254,6 +2284,7 @@ class _DefaultReelVideoPlayer extends StatefulWidget {
   final VoidCallback onFailure;
   final bool fillViewport;
   final EdgeInsets overlaySafeInsets;
+  final _LegibilityScrim foreground;
 
   @override
   State<_DefaultReelVideoPlayer> createState() =>
@@ -2511,7 +2542,7 @@ class _DefaultReelVideoPlayerState extends State<_DefaultReelVideoPlayer> {
                 child: VideoPlayer(controller),
               ),
             ),
-            mediaForeground: const _LegibilityScrim(),
+            mediaForeground: widget.foreground,
             onOpenLink: (overlay) =>
                 launchUrl(overlay.uri, mode: LaunchMode.externalApplication),
           ),
@@ -2603,25 +2634,76 @@ class _VideoPlayerPlayback implements ReelVideoPlayback {
 /// and the centre play glyph. The text no longer relies on it — the footer
 /// scrim in card space carries every line.
 class _LegibilityScrim extends StatelessWidget {
-  const _LegibilityScrim();
+  const _LegibilityScrim({this.chromeFade = 0, this.chromeFadeSolid = false});
+
+  /// The share of the frame's height, from its top, that the host chrome's
+  /// fade covers. Zero (the card stage, the shallow card, a host without
+  /// chrome over the media) draws the base wash alone.
+  final double chromeFade;
+
+  /// High contrast removes gradients (refine-look principle 4): the chrome
+  /// band is then the solid text-backing plate, exactly the chrome's height.
+  final bool chromeFadeSolid;
+
+  /// How far the fade reaches below the chrome it backs: the Y3 board's
+  /// 132 px fade under a 56 px header, re-anchored to the measured chrome.
+  static const double chromeFadeOverhang = 70;
+
+  /// 42 % black (the board's top stop), then 42 % × (1 − smoothstep) at
+  /// quarter steps — .354, .21, .066, nothing. It stays near its top value
+  /// behind the words and eases out, where a straight ramp left a visible
+  /// knee on bright footage.
+  static const List<Color> chromeFadeColors = <Color>[
+    Color(0x6B000000),
+    Color(0x5A000000),
+    Color(0x36000000),
+    Color(0x11000000),
+    Color(0x00000000),
+  ];
 
   @override
   Widget build(BuildContext context) {
-    return const IgnorePointer(
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: <Color>[
-              Color(0x1F000000),
-              Color(0x00000000),
-              Color(0x00000000),
-              Color(0x59000000),
-            ],
-            stops: <double>[0, .35, .60, 1],
-          ),
+    const base = DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: <Color>[
+            Color(0x1F000000),
+            Color(0x00000000),
+            Color(0x00000000),
+            Color(0x59000000),
+          ],
+          stops: <double>[0, .35, .60, 1],
         ),
+      ),
+    );
+    if (chromeFade <= 0) return const IgnorePointer(child: base);
+    return IgnorePointer(
+      child: Stack(
+        fit: StackFit.expand,
+        children: <Widget>[
+          base,
+          Align(
+            alignment: Alignment.topCenter,
+            child: FractionallySizedBox(
+              widthFactor: 1,
+              heightFactor: chromeFade,
+              child: DecoratedBox(
+                key: const ValueKey<String>('reels-chrome-scrim'),
+                decoration: chromeFadeSolid
+                    ? const BoxDecoration(color: overlayPlateColor)
+                    : const BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: chromeFadeColors,
+                        ),
+                      ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

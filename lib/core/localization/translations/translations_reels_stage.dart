@@ -22,6 +22,8 @@ const reelsStageTranslationKeys = <String>[
   'reels.feedUnavailable',
   'Next Yeel',
   'Next Yeel: {caption}, {author}',
+  // Y3: the Back chevron of the "Twoje Yeels" page of the one-row chrome.
+  'Back to Discover',
 ];
 
 const reelsStageTranslations = <String, Map<String, String>>{
@@ -34,6 +36,7 @@ const reelsStageTranslations = <String, Map<String, String>>{
         'Yeels konnten nicht geladen werden. Versuche es erneut.',
     'Next Yeel': 'Nächster Yeel',
     'Next Yeel: {caption}, {author}': 'Nächster Yeel: {caption}, {author}',
+    'Back to Discover': 'Zurück zu Entdecken',
   },
   'es': {
     'reels.soundOff': 'Sonido desactivado',
@@ -44,6 +47,7 @@ const reelsStageTranslations = <String, Map<String, String>>{
         'No se pudieron cargar los Yeels. Inténtalo de nuevo.',
     'Next Yeel': 'Yeel siguiente',
     'Next Yeel: {caption}, {author}': 'Yeel siguiente: {caption}, {author}',
+    'Back to Discover': 'Volver a Descubrir',
   },
   'pt': {
     'reels.soundOff': 'Som desligado',
@@ -54,6 +58,7 @@ const reelsStageTranslations = <String, Map<String, String>>{
         'Não foi possível carregar os Yeels. Tenta novamente.',
     'Next Yeel': 'Próximo Yeel',
     'Next Yeel: {caption}, {author}': 'Próximo Yeel: {caption}, {author}',
+    'Back to Discover': 'Voltar a Descobrir',
   },
   'pt_BR': {
     'reels.soundOff': 'Som desligado',
@@ -64,6 +69,7 @@ const reelsStageTranslations = <String, Map<String, String>>{
         'Não foi possível carregar os Yeels. Tente novamente.',
     'Next Yeel': 'Próximo Yeel',
     'Next Yeel: {caption}, {author}': 'Próximo Yeel: {caption}, {author}',
+    'Back to Discover': 'Voltar para Descobrir',
   },
   'fr': {
     'reels.soundOff': 'Son coupé',
@@ -73,6 +79,7 @@ const reelsStageTranslations = <String, Map<String, String>>{
     'reels.feedUnavailable': 'Impossible de charger les Yeels. Réessayez.',
     'Next Yeel': 'Yeel suivant',
     'Next Yeel: {caption}, {author}': 'Yeel suivant : {caption}, {author}',
+    'Back to Discover': 'Retour à Découvrir',
   },
   'it': {
     'reels.soundOff': 'Audio disattivato',
@@ -82,6 +89,7 @@ const reelsStageTranslations = <String, Map<String, String>>{
     'reels.feedUnavailable': 'Impossibile caricare i Yeels. Riprova.',
     'Next Yeel': 'Yeel successivo',
     'Next Yeel: {caption}, {author}': 'Yeel successivo: {caption}, {author}',
+    'Back to Discover': 'Torna a Scopri',
   },
   'uk': {
     'reels.soundOff': 'Звук вимкнено',
@@ -91,6 +99,7 @@ const reelsStageTranslations = <String, Map<String, String>>{
     'reels.feedUnavailable': 'Не вдалося завантажити Yeels. Спробуйте ще раз.',
     'Next Yeel': 'Наступний Yeel',
     'Next Yeel: {caption}, {author}': 'Наступний Yeel: {caption}, {author}',
+    'Back to Discover': 'Назад до «Цікаве»',
   },
   'ru': {
     'reels.soundOff': 'Звук выключен',
@@ -100,6 +109,7 @@ const reelsStageTranslations = <String, Map<String, String>>{
     'reels.feedUnavailable': 'Не удалось загрузить Yeels. Попробуйте ещё раз.',
     'Next Yeel': 'Следующий Yeel',
     'Next Yeel: {caption}, {author}': 'Следующий Yeel: {caption}, {author}',
+    'Back to Discover': 'Назад в «Интересное»',
   },
   'cs': {
     'reels.soundOff': 'Zvuk vypnutý',
@@ -109,6 +119,7 @@ const reelsStageTranslations = <String, Map<String, String>>{
     'reels.feedUnavailable': 'Yeels se nepodařilo načíst. Zkuste to znovu.',
     'Next Yeel': 'Další Yeel',
     'Next Yeel: {caption}, {author}': 'Další Yeel: {caption}, {author}',
+    'Back to Discover': 'Zpět na Objevovat',
   },
   'sk': {
     'reels.soundOff': 'Zvuk vypnutý',
@@ -118,6 +129,7 @@ const reelsStageTranslations = <String, Map<String, String>>{
     'reels.feedUnavailable': 'Yeels sa nepodarilo načítať. Skúste to znova.',
     'Next Yeel': 'Ďalší Yeel',
     'Next Yeel: {caption}, {author}': 'Ďalší Yeel: {caption}, {author}',
+    'Back to Discover': 'Späť na Objavovať',
   },
   'bg': {
     'reels.soundOff': 'Звукът е изключен',
@@ -127,6 +139,7 @@ const reelsStageTranslations = <String, Map<String, String>>{
     'reels.feedUnavailable': 'Yeels не можаха да се заредят. Опитайте отново.',
     'Next Yeel': 'Следващ Yeel',
     'Next Yeel: {caption}, {author}': 'Следващ Yeel: {caption}, {author}',
+    'Back to Discover': 'Назад към „Открийте“',
   },
   'nl': {
     'reels.soundOff': 'Geluid uit',
@@ -137,6 +150,7 @@ const reelsStageTranslations = <String, Map<String, String>>{
         'Yeels konden niet worden geladen. Probeer het opnieuw.',
     'Next Yeel': 'Volgende Yeel',
     'Next Yeel: {caption}, {author}': 'Volgende Yeel: {caption}, {author}',
+    'Back to Discover': 'Terug naar Ontdekken',
   },
   'ro': {
     'reels.soundOff': 'Sunet dezactivat',
@@ -147,6 +161,7 @@ const reelsStageTranslations = <String, Map<String, String>>{
         'Yeels nu au putut fi încărcate. Încearcă din nou.',
     'Next Yeel': 'Yeelul următor',
     'Next Yeel: {caption}, {author}': 'Yeelul următor: {caption}, {author}',
+    'Back to Discover': 'Înapoi la Descoperă',
   },
   'tr': {
     'reels.soundOff': 'Ses kapalı',
@@ -156,6 +171,7 @@ const reelsStageTranslations = <String, Map<String, String>>{
     'reels.feedUnavailable': 'Yeels yüklenemedi. Tekrar deneyin.',
     'Next Yeel': 'Sonraki Yeel',
     'Next Yeel: {caption}, {author}': 'Sonraki Yeel: {caption}, {author}',
+    'Back to Discover': 'Keşfet’e dön',
   },
   'el': {
     'reels.soundOff': 'Ήχος ανενεργός',
@@ -166,6 +182,7 @@ const reelsStageTranslations = <String, Map<String, String>>{
         'Δεν ήταν δυνατή η φόρτωση των Yeels. Δοκιμάστε ξανά.',
     'Next Yeel': 'Επόμενο Yeel',
     'Next Yeel: {caption}, {author}': 'Επόμενο Yeel: {caption}, {author}',
+    'Back to Discover': 'Πίσω στην Ανακάλυψη',
   },
   'hu': {
     'reels.soundOff': 'Hang kikapcsolva',
@@ -175,6 +192,7 @@ const reelsStageTranslations = <String, Map<String, String>>{
     'reels.feedUnavailable': 'Nem sikerült betölteni a Yeelst. Próbáld újra.',
     'Next Yeel': 'Következő Yeel',
     'Next Yeel: {caption}, {author}': 'Következő Yeel: {caption}, {author}',
+    'Back to Discover': 'Vissza a Felfedezéshez',
   },
   'hr': {
     'reels.soundOff': 'Zvuk isključen',
@@ -184,6 +202,7 @@ const reelsStageTranslations = <String, Map<String, String>>{
     'reels.feedUnavailable': 'Yeels se nije mogao učitati. Pokušajte ponovno.',
     'Next Yeel': 'Sljedeći Yeel',
     'Next Yeel: {caption}, {author}': 'Sljedeći Yeel: {caption}, {author}',
+    'Back to Discover': 'Natrag na Otkrij',
   },
   'sr': {
     'reels.soundOff': 'Звук искључен',
@@ -193,6 +212,7 @@ const reelsStageTranslations = <String, Map<String, String>>{
     'reels.feedUnavailable': 'Yeels nije moguće učitati. Pokušajte ponovo.',
     'Next Yeel': 'Следећи Yeel',
     'Next Yeel: {caption}, {author}': 'Следећи Yeel: {caption}, {author}',
+    'Back to Discover': 'Назад на Истражи',
   },
   'sv': {
     'reels.soundOff': 'Ljud av',
@@ -202,6 +222,7 @@ const reelsStageTranslations = <String, Map<String, String>>{
     'reels.feedUnavailable': 'Det gick inte att läsa in Yeels. Försök igen.',
     'Next Yeel': 'Nästa Yeel',
     'Next Yeel: {caption}, {author}': 'Nästa Yeel: {caption}, {author}',
+    'Back to Discover': 'Tillbaka till Upptäck',
   },
   'da': {
     'reels.soundOff': 'Lyd fra',
@@ -211,6 +232,7 @@ const reelsStageTranslations = <String, Map<String, String>>{
     'reels.feedUnavailable': 'Yeels kunne ikke indlæses. Prøv igen.',
     'Next Yeel': 'Næste Yeel',
     'Next Yeel: {caption}, {author}': 'Næste Yeel: {caption}, {author}',
+    'Back to Discover': 'Tilbage til Opdag',
   },
   'nb': {
     'reels.soundOff': 'Lyd av',
@@ -220,6 +242,7 @@ const reelsStageTranslations = <String, Map<String, String>>{
     'reels.feedUnavailable': 'Kunne ikke laste inn Yeels. Prøv igjen.',
     'Next Yeel': 'Neste Yeel',
     'Next Yeel: {caption}, {author}': 'Neste Yeel: {caption}, {author}',
+    'Back to Discover': 'Tilbake til Utforsk',
   },
   'fi': {
     'reels.soundOff': 'Ääni pois',
@@ -229,6 +252,7 @@ const reelsStageTranslations = <String, Map<String, String>>{
     'reels.feedUnavailable': 'Yeels-sisältöä ei voitu ladata. Yritä uudelleen.',
     'Next Yeel': 'Seuraava Yeel',
     'Next Yeel: {caption}, {author}': 'Seuraava Yeel: {caption}, {author}',
+    'Back to Discover': 'Takaisin Löydä-näkymään',
   },
   'lt': {
     'reels.soundOff': 'Garsas išjungtas',
@@ -238,6 +262,7 @@ const reelsStageTranslations = <String, Map<String, String>>{
     'reels.feedUnavailable': 'Nepavyko įkelti „Yeels“. Bandykite dar kartą.',
     'Next Yeel': 'Kitas Yeel',
     'Next Yeel: {caption}, {author}': 'Kitas Yeel: {caption}, {author}',
+    'Back to Discover': 'Atgal į „Atraskite“',
   },
   'lv': {
     'reels.soundOff': 'Skaņa izslēgta',
@@ -247,6 +272,7 @@ const reelsStageTranslations = <String, Map<String, String>>{
     'reels.feedUnavailable': 'Neizdevās ielādēt Yeels. Mēģiniet vēlreiz.',
     'Next Yeel': 'Nākamais Yeel',
     'Next Yeel: {caption}, {author}': 'Nākamais Yeel: {caption}, {author}',
+    'Back to Discover': 'Atpakaļ uz Atklāt',
   },
   'et': {
     'reels.soundOff': 'Heli välja lülitatud',
@@ -256,6 +282,7 @@ const reelsStageTranslations = <String, Map<String, String>>{
     'reels.feedUnavailable': 'Yeelsi laadimine ebaõnnestus. Proovi uuesti.',
     'Next Yeel': 'Järgmine Yeel',
     'Next Yeel: {caption}, {author}': 'Järgmine Yeel: {caption}, {author}',
+    'Back to Discover': 'Tagasi vaatesse Avasta',
   },
   'id': {
     'reels.soundOff': 'Suara mati',
@@ -265,6 +292,7 @@ const reelsStageTranslations = <String, Map<String, String>>{
     'reels.feedUnavailable': 'Yeels tidak dapat dimuat. Coba lagi.',
     'Next Yeel': 'Yeel berikutnya',
     'Next Yeel: {caption}, {author}': 'Yeel berikutnya: {caption}, {author}',
+    'Back to Discover': 'Kembali ke Jelajahi',
   },
   'vi': {
     'reels.soundOff': 'Đã tắt tiếng',
@@ -274,6 +302,7 @@ const reelsStageTranslations = <String, Map<String, String>>{
     'reels.feedUnavailable': 'Không thể tải Yeels. Hãy thử lại.',
     'Next Yeel': 'Yeel tiếp theo',
     'Next Yeel: {caption}, {author}': 'Yeel tiếp theo: {caption}, {author}',
+    'Back to Discover': 'Quay lại Khám phá',
   },
   'zh_CN': {
     'reels.soundOff': '声音已关闭',
@@ -283,6 +312,7 @@ const reelsStageTranslations = <String, Map<String, String>>{
     'reels.feedUnavailable': '无法加载 Yeels，请重试。',
     'Next Yeel': '下一个 Yeel',
     'Next Yeel: {caption}, {author}': '下一个 Yeel：{caption}，{author}',
+    'Back to Discover': '返回发现',
   },
   'zh_TW': {
     'reels.soundOff': '聲音已關閉',
@@ -292,6 +322,7 @@ const reelsStageTranslations = <String, Map<String, String>>{
     'reels.feedUnavailable': '無法載入 Yeels，請再試一次。',
     'Next Yeel': '下一個 Yeel',
     'Next Yeel: {caption}, {author}': '下一個 Yeel：{caption}，{author}',
+    'Back to Discover': '返回發現',
   },
   'ja': {
     'reels.soundOff': '音声オフ',
@@ -301,6 +332,7 @@ const reelsStageTranslations = <String, Map<String, String>>{
     'reels.feedUnavailable': 'Yeels を読み込めませんでした。もう一度お試しください。',
     'Next Yeel': '次の Yeel',
     'Next Yeel: {caption}, {author}': '次の Yeel：{caption}、{author}',
+    'Back to Discover': '「見つける」に戻る',
   },
   'ko': {
     'reels.soundOff': '소리 꺼짐',
@@ -310,6 +342,7 @@ const reelsStageTranslations = <String, Map<String, String>>{
     'reels.feedUnavailable': 'Yeels를 불러오지 못했습니다. 다시 시도해 주세요.',
     'Next Yeel': '다음 Yeel',
     'Next Yeel: {caption}, {author}': '다음 Yeel: {caption}, {author}',
+    'Back to Discover': '둘러보기로 돌아가기',
   },
   'ar': {
     'reels.soundOff': 'الصوت متوقف',
@@ -319,6 +352,7 @@ const reelsStageTranslations = <String, Map<String, String>>{
     'reels.feedUnavailable': 'تعذّر تحميل Yeels. حاول مرة أخرى.',
     'Next Yeel': 'الـYeel التالي',
     'Next Yeel: {caption}, {author}': 'الـYeel التالي: {caption}، {author}',
+    'Back to Discover': 'رجوع إلى استكشاف',
   },
   'hi': {
     'reels.soundOff': 'ध्वनि बंद',
@@ -328,6 +362,7 @@ const reelsStageTranslations = <String, Map<String, String>>{
     'reels.feedUnavailable': 'Yeels लोड नहीं हो सके। फिर से कोशिश करें।',
     'Next Yeel': 'अगली Yeel',
     'Next Yeel: {caption}, {author}': 'अगली Yeel: {caption}, {author}',
+    'Back to Discover': 'खोजें पर वापस जाएँ',
   },
   'bn': {
     'reels.soundOff': 'শব্দ বন্ধ',
@@ -337,6 +372,7 @@ const reelsStageTranslations = <String, Map<String, String>>{
     'reels.feedUnavailable': 'Yeels লোড করা যায়নি। আবার চেষ্টা করুন।',
     'Next Yeel': 'পরবর্তী Yeel',
     'Next Yeel: {caption}, {author}': 'পরবর্তী Yeel: {caption}, {author}',
+    'Back to Discover': 'আবিষ্কারে ফিরে যান',
   },
   'ur': {
     'reels.soundOff': 'آواز بند',
@@ -346,6 +382,7 @@ const reelsStageTranslations = <String, Map<String, String>>{
     'reels.feedUnavailable': 'Yeels لوڈ نہیں ہو سکے۔ دوبارہ کوشش کریں۔',
     'Next Yeel': 'اگلی Yeel',
     'Next Yeel: {caption}, {author}': 'اگلی Yeel: {caption}، {author}',
+    'Back to Discover': 'دریافت پر واپس جائیں',
   },
   'th': {
     'reels.soundOff': 'ปิดเสียง',
@@ -355,6 +392,7 @@ const reelsStageTranslations = <String, Map<String, String>>{
     'reels.feedUnavailable': 'ไม่สามารถโหลด Yeels ได้ ลองอีกครั้ง',
     'Next Yeel': 'Yeel ถัดไป',
     'Next Yeel: {caption}, {author}': 'Yeel ถัดไป: {caption}, {author}',
+    'Back to Discover': 'กลับไปที่ค้นพบ',
   },
   'ms': {
     'reels.soundOff': 'Bunyi dimatikan',
@@ -364,6 +402,7 @@ const reelsStageTranslations = <String, Map<String, String>>{
     'reels.feedUnavailable': 'Yeels tidak dapat dimuatkan. Cuba lagi.',
     'Next Yeel': 'Yeel seterusnya',
     'Next Yeel: {caption}, {author}': 'Yeel seterusnya: {caption}, {author}',
+    'Back to Discover': 'Kembali ke Temui',
   },
   'fil': {
     'reels.soundOff': 'Naka-off ang tunog',
@@ -373,6 +412,7 @@ const reelsStageTranslations = <String, Map<String, String>>{
     'reels.feedUnavailable': 'Hindi ma-load ang Yeels. Subukan ulit.',
     'Next Yeel': 'Susunod na Yeel',
     'Next Yeel: {caption}, {author}': 'Susunod na Yeel: {caption}, {author}',
+    'Back to Discover': 'Bumalik sa Tuklasin',
   },
   'he': {
     'reels.soundOff': 'הקול כבוי',
@@ -382,6 +422,7 @@ const reelsStageTranslations = <String, Map<String, String>>{
     'reels.feedUnavailable': 'לא ניתן היה לטעון את Yeels. נסה שוב.',
     'Next Yeel': 'ה-Yeel הבא',
     'Next Yeel: {caption}, {author}': 'ה-Yeel הבא: {caption}, {author}',
+    'Back to Discover': 'חזרה אל גלה',
   },
   'fa': {
     'reels.soundOff': 'صدا خاموش',
@@ -391,6 +432,7 @@ const reelsStageTranslations = <String, Map<String, String>>{
     'reels.feedUnavailable': 'بارگیری Yeels ممکن نشد. دوباره تلاش کنید.',
     'Next Yeel': 'Yeel بعدی',
     'Next Yeel: {caption}, {author}': 'Yeel بعدی: {caption}، {author}',
+    'Back to Discover': 'بازگشت به کشف کنید',
   },
   'sw': {
     'reels.soundOff': 'Sauti imezimwa',
@@ -400,5 +442,6 @@ const reelsStageTranslations = <String, Map<String, String>>{
     'reels.feedUnavailable': 'Yeels hazikuweza kupakiwa. Jaribu tena.',
     'Next Yeel': 'Yeel inayofuata',
     'Next Yeel: {caption}, {author}': 'Yeel inayofuata: {caption}, {author}',
+    'Back to Discover': 'Rudi kwenye Gundua',
   },
 };

@@ -323,6 +323,15 @@ class ReelService {
     return uid == null || uid.isEmpty ? null : uid;
   }
 
+  /// The signed-in account's name as Firebase Auth holds it — only the
+  /// initial of the viewer's own avatar in the Yeels chrome reads it, and the
+  /// photo itself is resolved by uid. Presentation, never identity: null
+  /// when there is none, and the avatar then shows its person glyph.
+  String? get currentUserDisplayName {
+    final name = _auth.currentUser?.displayName?.trim();
+    return name == null || name.isEmpty ? null : name;
+  }
+
   /// The client's cached view of the outbound-content privilege.
   ///
   /// `setReelLike` and `createReelComment` require a verified email; reading a

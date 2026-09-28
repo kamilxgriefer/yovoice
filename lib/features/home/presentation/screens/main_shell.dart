@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/navigation/app_route_observer.dart';
+import 'package:yovoice/core/navigation/embedded_back_scope.dart';
 import 'package:yovoice/core/navigation/mobile_destination_history.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 
@@ -1177,6 +1178,10 @@ class _MainShellState extends State<MainShell>
         _tabTransition.isAnimating) {
       return;
     }
+    // A view inside the current tab that owns one level of Back (the Yeels
+    // "Twoje Yeels" pool) answers first; the tab history moves only when no
+    // such view took it, so one Back never does both.
+    if (EmbeddedBackScope.dispatch(context)) return;
     final previous = _mobileHistory.back();
     if (previous != null) {
       FocusManager.instance.primaryFocus?.unfocus();

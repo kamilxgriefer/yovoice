@@ -24,6 +24,11 @@
 // * `…-focus` / `…-hover` — keyboard focus (traditional highlight mode) and
 //   a mouse pointer on the record bead, the `+` disc on the canvas and over
 //   media, a 48 px media glyph plate and the create-sheet tiles.
+// * `y3-yeels` — the one-row Yeels chrome (board Y3): Discover with the
+//   viewer's avatar, and "Twoje Yeels" after the avatar is tapped, at 320 /
+//   390 / 768 / 1440, 100 % and 200 %, high contrast, and keyboard focus on
+//   the avatar and on the Back chevron. Run only these with
+//   `--plain-name y3`.
 //
 // 390 / 768 / 1440, Dark and Pearl, 100 % and 200 % text, plus high-contrast
 // and Reduce Motion frames. Every fixture is controlled, reference-like
@@ -235,7 +240,7 @@ String _name(
   bool reduceMotion = false,
 }) {
   final theme = pearl ? 'pearl' : 'dark';
-  final text = textScale >= 2 ? '200' : '100';
+  final text = (textScale * 100).round().toString();
   final suffix = highContrast
       ? '-hc'
       : reduceMotion
@@ -465,49 +470,68 @@ Map<String, Object?> _reelWire(int index) {
   };
 }
 
-ReelService _reelService() => ReelService(
-  auth: MockFirebaseAuth(
-    signedIn: true,
-    mockUser: MockUser(uid: 'me', isEmailVerified: true),
-  ),
-  callableInvoker: (name, payload) async {
-    switch (name) {
-      case 'listReelsV2':
-        return <Object?, Object?>{
-          'schemaVersion': 2,
-          'items': <Object?>[_reelWire(1), _reelWire(2)],
-          'nextCursor': null,
-        };
-      case 'getReelMediaAccessV2':
-        return <Object?, Object?>{
-          'schemaVersion': 2,
-          'url': 'https://storage.googleapis.com/yovoice/reel.mp4',
-          'expiresAtMillis': DateTime.now()
-              .toUtc()
-              .add(const Duration(minutes: 5))
-              .millisecondsSinceEpoch,
-          'generation': '7',
-          'availabilityHours': 'permanent',
-          'contentExpiresAtMillis': null,
-        };
-      case 'getReelViewV2':
-        return <Object?, Object?>{
-          'schemaVersion': 2,
-          'reel': _reelWire(1),
-          'comments': <Object?>[],
-          'commentsTruncated': false,
-          'nextCommentCursor': null,
-        };
-      case 'listReelCommentsV2':
-        return <Object?, Object?>{
-          'schemaVersion': 2,
-          'items': <Object?>[],
-          'nextCursor': null,
-        };
-    }
-    throw StateError('Unexpected callable $name with $payload');
-  },
-);
+/// The viewer's own Yeel for the "Twoje Yeels" pool: same fixture, the
+/// signed-in account as its author.
+Map<String, Object?> _ownReelWire(int index) => <String, Object?>{
+  ..._reelWire(index),
+  'id': 'own_$index',
+  'authorId': 'me',
+  'authorName': 'Kamil',
+  'sortKey': '${1725000000000 + index}_own_$index',
+  'likeCount': 5,
+  'commentCount': 1,
+};
+
+ReelService _reelService({String? viewerName, bool ownEmpty = false}) =>
+    ReelService(
+      auth: MockFirebaseAuth(
+        signedIn: true,
+        mockUser: MockUser(
+          uid: 'me',
+          displayName: viewerName,
+          isEmailVerified: true,
+        ),
+      ),
+      callableInvoker: (name, payload) async {
+        switch (name) {
+          case 'listReelsV2':
+            return <Object?, Object?>{
+              'schemaVersion': 2,
+              'items': payload['scope'] == 'own'
+                  ? <Object?>[if (!ownEmpty) _ownReelWire(2)]
+                  : <Object?>[_reelWire(1), _reelWire(2)],
+              'nextCursor': null,
+            };
+          case 'getReelMediaAccessV2':
+            return <Object?, Object?>{
+              'schemaVersion': 2,
+              'url': 'https://storage.googleapis.com/yovoice/reel.mp4',
+              'expiresAtMillis': DateTime.now()
+                  .toUtc()
+                  .add(const Duration(minutes: 5))
+                  .millisecondsSinceEpoch,
+              'generation': '7',
+              'availabilityHours': 'permanent',
+              'contentExpiresAtMillis': null,
+            };
+          case 'getReelViewV2':
+            return <Object?, Object?>{
+              'schemaVersion': 2,
+              'reel': _reelWire(1),
+              'comments': <Object?>[],
+              'commentsTruncated': false,
+              'nextCommentCursor': null,
+            };
+          case 'listReelCommentsV2':
+            return <Object?, Object?>{
+              'schemaVersion': 2,
+              'items': <Object?>[],
+              'nextCursor': null,
+            };
+        }
+        throw StateError('Unexpected callable $name with $payload');
+      },
+    );
 
 MockFirebaseAuth _authMe() => MockFirebaseAuth(
   signedIn: true,
@@ -739,6 +763,135 @@ Future<void> _shootScrub(
       '${(tester.getSize(playedBox.first).width / bar.width).toStringAsFixed(2)}',
     );
   }
+  await tester.pumpWidget(const SizedBox());
+  await tester.pump(const Duration(milliseconds: 20));
+}
+
+// ---------------------------------------------------------------------------
+// Y3 — the one-row Yeels chrome
+// ---------------------------------------------------------------------------
+
+enum _Y3Focus { none, avatar, back, sound, tabHover }
+
+/// The real YO Moments screen on Yeels, over the light footage panel, in
+/// Discover or — after a real tap on the viewer's avatar — in "Twoje
+/// Yeels". [pushed] opens it as a route above a start page (the host's Back
+/// plate leads the row); [ownEmpty] gives the viewer no Yeels of their own.
+/// The 1440 frames prove the wide header and panel are unchanged.
+Future<void> _shootY3(
+  WidgetTester tester, {
+  required Size size,
+  required bool pearl,
+  required double textScale,
+  bool own = false,
+  bool ownEmpty = false,
+  bool pushed = false,
+  bool highContrast = false,
+  _Y3Focus focus = _Y3Focus.none,
+}) async {
+  _sizeView(tester, size);
+  final navigator = GlobalKey<NavigatorState>();
+  Widget moments() => MomentsScreen(
+    key: UniqueKey(),
+    isRootTab: !pushed,
+    initialFormat: YoMomentsFormat.reels,
+    reelService: _reelService(viewerName: 'Kamil', ownEmpty: ownEmpty),
+    reelVideoBuilder: _footage,
+    followService: _follows(),
+    onCreateReel: () async {},
+  );
+  await tester.pumpWidget(
+    _host(
+      pushed
+          ? Navigator(
+              key: navigator,
+              onGenerateRoute: (_) => MaterialPageRoute<void>(
+                builder: (_) => const Scaffold(body: SizedBox.expand()),
+              ),
+            )
+          : moments(),
+      pearl: pearl,
+      textScale: textScale,
+      size: size,
+      highContrast: highContrast,
+    ),
+  );
+  if (pushed) {
+    unawaited(
+      navigator.currentState!.push(
+        MaterialPageRoute<void>(builder: (_) => moments()),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 600));
+  }
+  await _settle(tester);
+  await _decodeAssetImages(tester);
+  final avatar = find.byKey(const ValueKey<String>('reels-own-scope'));
+  if (own) {
+    if (avatar.evaluate().isNotEmpty) {
+      await tester.tap(avatar);
+    } else {
+      // From the local-panel width the pool is a panel row, as today.
+      await tester.tap(find.byKey(const ValueKey<String>('reels-own-filter')));
+    }
+    await _settle(tester);
+    // A finger tap parks focus on the feed, not on a control; the frame
+    // shows the page as a reader sees it.
+  }
+  TestGesture? mouse;
+  switch (focus) {
+    case _Y3Focus.none:
+      break;
+    case _Y3Focus.avatar:
+      await _focusOwnerOf(
+        tester,
+        find.byKey(const ValueKey<String>('reels-own-scope-ring')),
+      );
+    case _Y3Focus.back:
+      await _focusOwnerOf(
+        tester,
+        find.descendant(
+          of: find.byKey(const ValueKey<String>('reels-own-back')),
+          matching: find.byType(OverlayPlate),
+        ),
+      );
+    case _Y3Focus.sound:
+      await _focusOwnerOf(
+        tester,
+        find
+            .descendant(
+              of: find.byKey(const ValueKey<String>('reel-sound-toggle')),
+              matching: find.byType(Icon),
+            )
+            .first,
+      );
+    case _Y3Focus.tabHover:
+      mouse = await _hover(
+        tester,
+        find.byKey(const ValueKey<String>('yo-moments-format-reels')),
+      );
+      // The tooltip waits for the pointer to rest.
+      await tester.pump(const Duration(seconds: 2));
+      await _settleRing(tester);
+  }
+  final name = _name(
+    'y3-yeels',
+    size.width,
+    pearl,
+    textScale,
+    <String>[
+      if (pushed) 'pushed',
+      if (size.width == 800) '800x${size.height.toInt()}',
+      own ? (ownEmpty ? 'own-empty' : 'own') : 'discover',
+      if (focus != _Y3Focus.none)
+        focus == _Y3Focus.tabHover ? 'tab-hover' : '${focus.name}-focus',
+    ].join('-'),
+    highContrast: highContrast,
+  );
+  await _shoot(tester, name);
+  _report(tester, name);
+  await mouse?.removePointer();
   await tester.pumpWidget(const SizedBox());
   await tester.pump(const Duration(milliseconds: 20));
 }
@@ -1063,6 +1216,203 @@ void main() {
         );
       });
     }
+  });
+
+  group('y3', () {
+    const y3Sizes = <Size>[
+      Size(320, 640),
+      Size(390, 844),
+      Size(768, 1024),
+      Size(1440, 900),
+    ];
+    for (final size in y3Sizes) {
+      for (final pearl in const <bool>[false, true]) {
+        for (final textScale in const <double>[1, 2]) {
+          for (final own in const <bool>[false, true]) {
+            testWidgets('y3 ${size.width.toInt()} '
+                '${pearl ? 'pearl' : 'dark'} ${textScale}x '
+                '${own ? 'own' : 'discover'}', (tester) async {
+              await _withShadows(
+                () => _shootY3(
+                  tester,
+                  size: size,
+                  pearl: pearl,
+                  textScale: textScale,
+                  own: own,
+                ),
+              );
+            });
+          }
+        }
+      }
+    }
+    for (final size in <Size>[y3Sizes[1], y3Sizes[2]]) {
+      for (final pearl in const <bool>[false, true]) {
+        for (final own in const <bool>[false, true]) {
+          testWidgets('y3 ${size.width.toInt()} '
+              '${pearl ? 'pearl' : 'dark'} high contrast '
+              '${own ? 'own' : 'discover'}', (tester) async {
+            await _withShadows(
+              () => _shootY3(
+                tester,
+                size: size,
+                pearl: pearl,
+                textScale: 1,
+                own: own,
+                highContrast: true,
+              ),
+            );
+          });
+        }
+        testWidgets('y3 ${size.width.toInt()} '
+            '${pearl ? 'pearl' : 'dark'} avatar focus', (tester) async {
+          await _withShadows(
+            () => _shootY3(
+              tester,
+              size: size,
+              pearl: pearl,
+              textScale: 1,
+              focus: _Y3Focus.avatar,
+            ),
+          );
+        });
+        testWidgets('y3 ${size.width.toInt()} '
+            '${pearl ? 'pearl' : 'dark'} own empty', (tester) async {
+          await _withShadows(
+            () => _shootY3(
+              tester,
+              size: size,
+              pearl: pearl,
+              textScale: 1,
+              own: true,
+              ownEmpty: true,
+            ),
+          );
+        });
+        testWidgets('y3 ${size.width.toInt()} '
+            '${pearl ? 'pearl' : 'dark'} back focus', (tester) async {
+          await _withShadows(
+            () => _shootY3(
+              tester,
+              size: size,
+              pearl: pearl,
+              textScale: 1,
+              own: true,
+              focus: _Y3Focus.back,
+            ),
+          );
+        });
+      }
+    }
+  });
+
+  group('y3 review', () {
+    for (final textScale in const <double>[1, 2]) {
+      for (final own in const <bool>[false, true]) {
+        testWidgets('y3 review pushed 320 ${textScale}x '
+            '${own ? 'own' : 'discover'}', (tester) async {
+          await _withShadows(
+            () => _shootY3(
+              tester,
+              size: const Size(320, 640),
+              pearl: false,
+              textScale: textScale,
+              own: own,
+              pushed: true,
+            ),
+          );
+        });
+      }
+    }
+    for (final pearl in const <bool>[false, true]) {
+      for (final own in const <bool>[false, true]) {
+        testWidgets('y3 review 800x600 ${pearl ? 'pearl' : 'dark'} '
+            '${own ? 'own' : 'discover'}', (tester) async {
+          await _withShadows(
+            () => _shootY3(
+              tester,
+              size: const Size(800, 600),
+              pearl: pearl,
+              textScale: 1,
+              own: own,
+            ),
+          );
+        });
+      }
+      testWidgets('y3 review 390 ${pearl ? 'pearl' : 'dark'} sound focus', (
+        tester,
+      ) async {
+        await _withShadows(
+          () => _shootY3(
+            tester,
+            size: const Size(390, 844),
+            pearl: pearl,
+            textScale: 1,
+            focus: _Y3Focus.sound,
+          ),
+        );
+      });
+    }
+    // Where the 600–1099 stage trades the shallow overlay card for board
+    // 08's stacked card: the one-row chrome gives the stage its second row
+    // back, so the switch now happens at a lower window height.
+    for (final height in const <double>[640, 680, 720]) {
+      testWidgets('y3 review 800x${height.toInt()} dark discover', (
+        tester,
+      ) async {
+        await _withShadows(
+          () => _shootY3(
+            tester,
+            size: Size(800, height),
+            pearl: false,
+            textScale: 1,
+          ),
+        );
+      });
+    }
+    // Between the ordinary and the accessibility layouts (1.3, 1.5 × text)
+    // the row decides by measurement alone: one line while the switch fits,
+    // stacked the moment it would be cut.
+    for (final width in const <double>[320, 360]) {
+      for (final textScale in const <double>[1.3, 1.5]) {
+        for (final own in const <bool>[false, true]) {
+          testWidgets('y3 review midscale ${width.toInt()} ${textScale}x '
+              '${own ? 'own' : 'discover'}', (tester) async {
+            await _withShadows(
+              () => _shootY3(
+                tester,
+                size: Size(width, 640),
+                pearl: false,
+                textScale: textScale,
+                own: own,
+              ),
+            );
+          });
+        }
+      }
+    }
+    testWidgets('y3 review 768 dark tab hover', (tester) async {
+      await _withShadows(
+        () => _shootY3(
+          tester,
+          size: const Size(768, 1024),
+          pearl: false,
+          textScale: 1,
+          focus: _Y3Focus.tabHover,
+        ),
+      );
+    });
+    testWidgets('y3 review 390 dark tab hover', (tester) async {
+      await _withShadows(
+        () => _shootY3(
+          tester,
+          size: const Size(390, 844),
+          pearl: false,
+          textScale: 1,
+          focus: _Y3Focus.tabHover,
+        ),
+      );
+    });
   });
 
   group('voice canvas', () {

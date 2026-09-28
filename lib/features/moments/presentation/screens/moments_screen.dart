@@ -174,6 +174,15 @@ class _MomentsScreenState extends State<MomentsScreen> with RouteAware {
   int _reelsRevision = 0;
   late final ValueNotifier<bool> _voiceVisible = ValueNotifier<bool>(false);
   late final ValueNotifier<bool> _reelsVisible = ValueNotifier<bool>(false);
+
+  /// Rings when the already selected "Yeels" tab is activated again: the
+  /// Yeels feed's one-row chrome keeps its refresh on that tab.
+  final _RefreshSignal _reelsRefreshRequests = _RefreshSignal();
+
+  /// The Yeels pool the viewer last chose. The feed is re-created after the
+  /// composer closes (so a new Yeel appears); it opens on this pool again
+  /// rather than dropping the viewer from "Twoje Yeels" back to Discover.
+  ReelFeedScope _reelsScope = ReelFeedScope.discover;
   ModalRoute<void>? _observedRoute;
   bool _routeIsCurrent = true;
 
@@ -230,6 +239,7 @@ class _MomentsScreenState extends State<MomentsScreen> with RouteAware {
     widget.isVisible?.removeListener(_syncVisibility);
     _voiceVisible.dispose();
     _reelsVisible.dispose();
+    _reelsRefreshRequests.dispose();
     super.dispose();
   }
 
@@ -241,6 +251,19 @@ class _MomentsScreenState extends State<MomentsScreen> with RouteAware {
         _destinationVisible && _format == YoMomentsFormat.voice;
     _reelsVisible.value =
         _destinationVisible && _format == YoMomentsFormat.reels;
+  }
+
+  /// The selected format's tab activated again: that format reads what it is
+  /// showing again. Yeels refreshes its current pool; the Voice feed has no
+  /// refresh hook here, so its tab is not wired to this callback.
+  void _reselectFormat(YoMomentsFormat format) {
+    if (format != _format) return;
+    switch (format) {
+      case YoMomentsFormat.reels:
+        _reelsRefreshRequests.ring();
+      case YoMomentsFormat.voice:
+        break;
+    }
   }
 
   void _selectFormat(YoMomentsFormat format) {
@@ -434,8 +457,23 @@ class _MomentsScreenState extends State<MomentsScreen> with RouteAware {
                               showBack: showBack,
                               selectedFormat: _format,
                               onFormatSelected: _selectFormat,
+                              onFormatReselected: _reselectFormat,
                               onCreate: () => unawaited(_showCreateChooser()),
                             ),
+                            // The same row for the page canvas: 600–1099,
+                            // and a phone with nothing to overlay yet.
+                            immersiveCanvasHeader: buildImmersiveMomentsHeader(
+                              context,
+                              showBack: showBack,
+                              selectedFormat: _format,
+                              onFormatSelected: _selectFormat,
+                              onFormatReselected: _reselectFormat,
+                              onCreate: () => unawaited(_showCreateChooser()),
+                              onCanvas: true,
+                            ),
+                            refreshRequests: _reelsRefreshRequests,
+                            initialScope: _reelsScope,
+                            onScopeChanged: (scope) => _reelsScope = scope,
                             service: widget.reelService,
                             videoBuilder: widget.reelVideoBuilder,
                             isVisible: _reelsVisible,
@@ -462,23 +500,33 @@ class _MomentsScreenState extends State<MomentsScreen> with RouteAware {
   }
 }
 
-/// Compact format navigation over footage, without consuming the video stage.
+/// Row 1 of the compact YO Moments chrome: the format switch, Back when the
+/// destination was pushed, and the create `+`.
 ///
 /// The two formats are large, trackless text tabs. The active format gains
-/// violet ink, weight and a short animated glow line; the pool filters below
-/// stay deliberately quieter, so the two levels cannot be parsed as one row.
+/// the strongest ink, weight and a short animated glow line. Głos puts its
+/// pool filters on a quieter second level under this row; Yeels has one row
+/// only (Y3) and adds the viewer's avatar — or, in "Twoje Yeels", its own
+/// heading, Back and refresh — beside these pieces.
 ///
-/// [onCanvas] is the Voice feed's variant: the same keys, labels, slots and
-/// callbacks, drawn in palette roles because Głos sits on the page canvas,
-/// not over footage (white words with a black glyph outline on a Pearl
-/// canvas were the wrong theme colours). Yeels stays immersive in both
-/// themes and keeps the media plates.
+/// [onCanvas] draws the same keys, labels, slots and callbacks in palette
+/// roles, for a row that sits on the page canvas rather than over footage
+/// (white words with a black glyph outline on a Pearl canvas were the wrong
+/// theme colours): the Voice feed always, and Yeels wherever its row is not
+/// over a Yeel — the 600–1099 stage and a phone's loading, empty or error
+/// state. Over a Yeel the row keeps the immersive media plates in both
+/// themes.
+///
+/// [onFormatReselected] makes the selected tab live: activating it again
+/// calls back with its format (Yeels refreshes its pool that way) and the
+/// tab announces "Refresh". Without it the selected tab stays inert.
 ImmersiveFeedHeaderSlots buildImmersiveMomentsHeader(
   BuildContext context, {
   required bool showBack,
   required YoMomentsFormat selectedFormat,
   required ValueChanged<YoMomentsFormat> onFormatSelected,
   required VoidCallback onCreate,
+  ValueChanged<YoMomentsFormat>? onFormatReselected,
   bool onCanvas = false,
 }) {
   final copy = AppLocalizations.of(context);
@@ -495,6 +543,12 @@ ImmersiveFeedHeaderSlots buildImmersiveMomentsHeader(
       ),
       selectedIndex: selectedFormat.index,
       onSelected: (index) => onFormatSelected(YoMomentsFormat.values[index]),
+      onReselected: onFormatReselected == null
+          ? null
+          : (index) => onFormatReselected(YoMomentsFormat.values[index]),
+      reselectHint: onFormatReselected == null
+          ? null
+          : copy.text('Refresh', 'Odśwież'),
       segments: <ImmersiveChromeOption>[
         ImmersiveChromeOption(
           key: const ValueKey<String>('yo-moments-format-voice'),
@@ -528,6 +582,11 @@ ImmersiveFeedHeaderSlots buildImmersiveMomentsHeader(
       onMedia: !onCanvas,
     ),
   );
+}
+
+/// A bare "it happened" signal for [ReelsFeedScreen.refreshRequests].
+class _RefreshSignal extends ChangeNotifier {
+  void ring() => notifyListeners();
 }
 
 enum _YoMomentsCreateChoice { voice, reel }

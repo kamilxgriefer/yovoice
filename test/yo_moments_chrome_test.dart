@@ -136,10 +136,11 @@ void main() {
       await settleOverview(tester);
 
       expect(find.byKey(const ValueKey('reels-chrome')), findsOneWidget);
-      expect(
-        find.byKey(const ValueKey('reels-discover-filter')),
-        findsOneWidget,
-      );
+      // Y3: one row. The pool chips are gone; the viewer's avatar is the
+      // way into "Twoje Yeels".
+      expect(find.byKey(const ValueKey('reels-own-scope')), findsOneWidget);
+      expect(find.byKey(const ValueKey('reels-discover-filter')), findsNothing);
+      expect(find.byKey(const ValueKey('reels-own-filter')), findsNothing);
       expect(find.byKey(const ValueKey('yo-moments-title')), findsNothing);
 
       await tester.tap(find.byKey(const ValueKey('yo-moments-format-voice')));

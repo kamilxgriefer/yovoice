@@ -1,6 +1,7 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:yovoice/core/navigation/embedded_back_scope.dart';
 import 'package:yovoice/core/navigation/mobile_destination_history.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/shared/widgets/navigation/yo_edge_back_gesture.dart';
@@ -382,6 +383,66 @@ void main() {
     expect(root.currentState!.history.canGoBack, isFalse);
   });
 
+  Future<GlobalKey<_RootHistoryFixtureState>> pumpSubViewFixture(
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final root = GlobalKey<_RootHistoryFixtureState>();
+    await tester.pumpWidget(MaterialApp(home: _RootHistoryFixture(key: root)));
+    await tester.tap(find.text('Go Rooms'));
+    await tester.pump();
+    await tester.tap(find.text('Open sub-view'));
+    await tester.pump();
+    expect(root.currentState!.history.current, 3);
+    expect(root.currentState!.history.canGoBack, isTrue);
+    return root;
+  }
+
+  testWidgets('system Back in a claimed sub-view closes it and leaves the tab '
+      'history where it is', (tester) async {
+    final root = await pumpSubViewFixture(tester);
+    await tester.binding.handlePopRoute();
+    await tester.pump();
+    expect(root.currentState!.subViewBacks, 1);
+    expect(root.currentState!.subViewOpen, isFalse);
+    expect(root.currentState!.history.current, 3, reason: 'history kept');
+    // Released: the next Back is the tab history's again.
+    await tester.binding.handlePopRoute();
+    await tester.pump();
+    expect(root.currentState!.subViewBacks, 1);
+    expect(root.currentState!.history.current, 0);
+  });
+
+  testWidgets('the edge swipe in a claimed sub-view closes it and leaves the '
+      'tab history where it is', (tester) async {
+    final root = await pumpSubViewFixture(tester);
+    final gesture = await tester.startGesture(const Offset(6, 600));
+    await gesture.moveBy(const Offset(30, 0));
+    await gesture.moveBy(const Offset(130, 0));
+    await tester.pump();
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(root.currentState!.subViewBacks, 1);
+    expect(root.currentState!.subViewOpen, isFalse);
+    expect(root.currentState!.history.current, 3);
+  });
+
+  testWidgets('a sub-view on a hidden tab claims nothing: the history moves', (
+    tester,
+  ) async {
+    final root = await pumpSubViewFixture(tester);
+    await tester.tap(find.text('Go Chats'));
+    await tester.pump();
+    expect(root.currentState!.history.current, 1);
+    await tester.binding.handlePopRoute();
+    await tester.pump();
+    expect(root.currentState!.history.current, 3, reason: 'history moved');
+    expect(root.currentState!.subViewBacks, 0);
+    expect(root.currentState!.subViewOpen, isTrue, reason: 'left as it was');
+  });
+
   for (final rtl in [false, true]) {
     testWidgets(
       'indicator stays inside landscape leading safe inset, RTL=$rtl',
@@ -523,7 +584,13 @@ void main() {
 }
 
 /// Composition fixture, not the Firebase-backed MainShell: exercise the real
-/// history and edge component under the same root PopScope contract.
+/// history and edge component under the same root PopScope contract, and
+/// the shell's hook that offers every Back to an [EmbeddedBackScope] first
+/// (`MainShell._returnThroughMobileHistory`).
+///
+/// The "Rooms" tab (3) carries a sub-view — the shape of the Yeels "Twoje
+/// Yeels" page — that claims Back only while it is open AND its tab is the
+/// one on screen, exactly as the feed claims it only while visible.
 class _RootHistoryFixture extends StatefulWidget {
   const _RootHistoryFixture({super.key});
 
@@ -533,8 +600,19 @@ class _RootHistoryFixture extends StatefulWidget {
 
 class _RootHistoryFixtureState extends State<_RootHistoryFixture> {
   final history = MobileDestinationHistory();
+  bool subViewOpen = false;
+  int subViewBacks = 0;
 
-  void back() => setState(() => history.back());
+  void back() {
+    if (!history.canGoBack) return;
+    if (EmbeddedBackScope.dispatch(context)) return;
+    setState(() => history.back());
+  }
+
+  void closeSubView() => setState(() {
+    subViewOpen = false;
+    subViewBacks += 1;
+  });
 
   @override
   Widget build(BuildContext context) => PopScope<Object?>(
@@ -555,6 +633,16 @@ class _RootHistoryFixtureState extends State<_RootHistoryFixture> {
                 child: Text('Go ${destination.$2}'),
               ),
             Text('Current root ${history.current}'),
+            // Retained like a shell tab: mounted on every tab, claiming only
+            // on its own.
+            EmbeddedBackScope(
+              claimed: subViewOpen && history.current == 3,
+              onBack: closeSubView,
+              child: TextButton(
+                onPressed: () => setState(() => subViewOpen = true),
+                child: Text(subViewOpen ? 'Sub-view open' : 'Open sub-view'),
+              ),
+            ),
           ],
         ),
       ),

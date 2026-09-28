@@ -4,9 +4,13 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:flutter/semantics.dart';
+import 'package:flutter/services.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/navigation/embedded_back_scope.dart';
+import 'package:yovoice/core/theme/app_finish.dart';
 import 'package:yovoice/core/theme/app_motion.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
@@ -30,10 +34,12 @@ import 'package:yovoice/features/reels/presentation/widgets/reel_progress_row.da
 import 'package:yovoice/features/reels/presentation/widgets/reel_overlay_measure.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reels_toolbar.dart';
 import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
+import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/overlays/immersive_feed_chrome.dart';
 import 'package:yovoice/shared/widgets/overlays/immersive_overlay_atoms.dart';
 import 'package:yovoice/shared/widgets/overlays/yo_modal_sheet_chrome.dart';
+import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/shared/widgets/states/yo_empty_state.dart';
 import 'package:yovoice/shared/widgets/states/yo_error_state.dart';
 import 'package:yovoice/shared/widgets/states/yo_loading_indicator.dart';
@@ -56,6 +62,10 @@ class ReelsFeedScreen extends StatefulWidget {
     this.embedded = false,
     this.immersive = false,
     this.immersiveHeader,
+    this.immersiveCanvasHeader,
+    this.refreshRequests,
+    this.initialScope = ReelFeedScope.discover,
+    this.onScopeChanged,
     super.key,
   });
 
@@ -98,6 +108,27 @@ class ReelsFeedScreen extends StatefulWidget {
   /// its own measured row.
   final ImmersiveFeedHeaderSlots? immersiveHeader;
 
+  /// The same row-1 pieces drawn for the page CANVAS (`onCanvas: true`), used
+  /// whenever the compact chrome does not sit over a Yeel: the 600–1099
+  /// stage, and a phone showing a loading, empty or error state. Null keeps
+  /// [immersiveHeader] everywhere.
+  final ImmersiveFeedHeaderSlots? immersiveCanvasHeader;
+
+  /// The pool the feed opens on. YO Moments hands back the last one it was
+  /// told about through [onScopeChanged], so a feed it re-creates (after the
+  /// composer closes) keeps "Twoje Yeels" instead of dropping to Discover.
+  final ReelFeedScope initialScope;
+
+  /// Told whenever the viewer changes the pool, at any width.
+  final ValueChanged<ReelFeedScope>? onScopeChanged;
+
+  /// Fires when the host asks for the current pool to be read again. YO
+  /// Moments fires it when the already selected "Yeels" format tab is
+  /// activated a second time: the compact chrome has one row, and that tab
+  /// is where its refresh lives. The same path as every other refresh
+  /// control, so it is a no-op while a load is already running.
+  final Listenable? refreshRequests;
+
   @override
   State<ReelsFeedScreen> createState() => _ReelsFeedScreenState();
 }
@@ -113,7 +144,12 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
   );
 
   late final ReelService _service = widget.service ?? ReelService();
-  final PageController _pageController = PageController();
+
+  /// `keepPage: false`: the pager is only ever re-created after the list was
+  /// emptied (a reset, or everything expired), and then the selection is the
+  /// first Yeel. A restored page would show page N while page 0 is the one
+  /// marked active — a visible Yeel that never plays.
+  final PageController _pageController = PageController(keepPage: false);
 
   /// One sound preference for the whole feed, so it is turned on once instead
   /// of on every Reel. It starts off because the first Reel starts itself, and
@@ -159,10 +195,30 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
   String? _viewerId;
   int _loadGeneration = 0;
   int _identityRevision = 0;
-  bool _ownOnly = false;
+  late bool _ownOnly = widget.initialScope == ReelFeedScope.own;
   bool _includeSeen = false;
   bool _hasWatchedReels = false;
   double _chromeHeight = 0;
+
+  /// True only while [_showFirstPage] moves the pager itself.
+  bool _programmaticPageJump = false;
+
+  /// The compact chrome's scope control in each scope — the viewer's avatar
+  /// in Discover, the Back chevron in "Twoje Yeels". Owned here so focus can
+  /// follow the reader across the switch and recover onto the chrome when
+  /// the Yeel it rested on is removed.
+  final FocusNode _ownScopeFocus = FocusNode(debugLabel: 'Yeels: your Yeels');
+  final FocusNode _discoverFocus = FocusNode(
+    debugLabel: 'Yeels: back to Discover',
+  );
+
+  /// Where focus rests after a pointer switched the scope: inside the feed
+  /// (so Escape still reaches it) but on no control, so a finger or a mouse
+  /// never leaves a focus ring behind on the control it did not touch.
+  final FocusNode _feedAnchor = FocusNode(
+    debugLabel: 'Yeels: feed',
+    skipTraversal: true,
+  );
   bool _friendServiceResolved = false;
   FriendService? _friendService;
   FriendService? _activeFriendService;
@@ -208,6 +264,7 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
     _syncFriendRelationships();
     WidgetsBinding.instance.addObserver(this);
     widget.isVisible?.addListener(_handleHostVisibilityChanged);
+    widget.refreshRequests?.addListener(_refresh);
     _viewerId = _service.currentUserId;
     _identitySubscription = _service.identityChanges.listen(
       _identityChanged,
@@ -268,7 +325,116 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
       _includeSeen = false;
       _hasWatchedReels = false;
     });
+    widget.onScopeChanged?.call(
+      ownOnly ? ReelFeedScope.own : ReelFeedScope.discover,
+    );
     _load(reset: true);
+  }
+
+  /// Jumps the pager to the first page without treating the jump as the
+  /// viewer's paging (no selection change, prefetch or load-more from it).
+  void _showFirstPage() {
+    if (!_pageController.hasClients) return;
+    final page = _pageController.page?.round() ?? 0;
+    if (page == 0) return;
+    _programmaticPageJump = true;
+    try {
+      _pageController.jumpToPage(0);
+    } finally {
+      _programmaticPageJump = false;
+    }
+  }
+
+  /// Reads the current pool again — every refresh control at every width,
+  /// and the re-selected "Yeels" tab of the compact chrome.
+  void _refresh() {
+    if (!mounted || _loading) return;
+    _load(reset: true);
+  }
+
+  /// The viewer's avatar: "Twoje Yeels", exactly the pool the chip used to
+  /// open.
+  void _openOwnScope() {
+    if (_ownOnly) return;
+    _selectAudience(true);
+    _settleScopeChange(own: true);
+  }
+
+  /// Back from "Twoje Yeels" to Discover: the chevron, a system Back and
+  /// Escape all end here.
+  void _returnToDiscover() {
+    if (!_ownOnly) return;
+    _selectAudience(false);
+    _settleScopeChange(own: false);
+  }
+
+  /// A scope switch replaces the control that caused it, so focus is moved on
+  /// purpose instead of falling to the route, and the new page is named.
+  ///
+  /// A keyboard, or a screen reader (whose activation is a semantic tap),
+  /// lands on the counterpart control — the Back chevron in "Twoje Yeels",
+  /// the avatar in Discover — with its focus ring. A finger or a mouse lands
+  /// on the feed itself: still inside it, so Escape and the next Tab work
+  /// from here, but without a ring on a control nobody touched.
+  void _settleScopeChange({required bool own}) {
+    if (!mounted) return;
+    final keyboardOrAssistive =
+        FocusManager.instance.highlightMode == FocusHighlightMode.traditional ||
+        MediaQuery.accessibleNavigationOf(context);
+    _focusAfterFrame(
+      keyboardOrAssistive
+          ? (own ? _discoverFocus : _ownScopeFocus)
+          : _feedAnchor,
+    );
+    if (!_isHostVisible) return;
+    final copy = AppLocalizations.of(context);
+    unawaited(
+      SemanticsService.sendAnnouncement(
+        View.of(context),
+        own
+            ? copy.text('Your Yeels', 'Twoje Yeels')
+            : copy.text('Discover', 'Odkrywaj'),
+        Directionality.of(context),
+      ),
+    );
+  }
+
+  void _focusAfterFrame(FocusNode node) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && node.context != null && node.canRequestFocus) {
+        node.requestFocus();
+      }
+    });
+  }
+
+  /// Whether [node] belongs to this feed's own subtree.
+  bool _focusIsWithinFeed(FocusNode? node) {
+    final focusContext = node?.context;
+    if (focusContext == null || !mounted) return false;
+    var inside = false;
+    focusContext.visitAncestorElements((element) {
+      if (identical(element, context)) {
+        inside = true;
+        return false;
+      }
+      return true;
+    });
+    return inside;
+  }
+
+  /// When a Yeel leaves the feed (it expired, or its author deleted it) while
+  /// keyboard focus rested on one of its controls, focus lands on the compact
+  /// chrome's scope control instead of falling to the root. Focus that is
+  /// still attached — anywhere else on the page — is left alone.
+  void _recoverFocusAfterRemoval(FocusNode? previous) {
+    if (previous == null || !_focusIsWithinFeed(previous)) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_isHostVisible || previous.hasFocus) return;
+      final target = _ownOnly ? _discoverFocus : _ownScopeFocus;
+      if (target.context != null && target.canRequestFocus) {
+        target.requestFocus();
+      }
+    });
   }
 
   @override
@@ -281,6 +447,10 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
       oldWidget.isVisible?.removeListener(_handleHostVisibilityChanged);
       widget.isVisible?.addListener(_handleHostVisibilityChanged);
       if (_isHostVisible) _revalidateAvailability();
+    }
+    if (!identical(oldWidget.refreshRequests, widget.refreshRequests)) {
+      oldWidget.refreshRequests?.removeListener(_refresh);
+      widget.refreshRequests?.addListener(_refresh);
     }
   }
 
@@ -309,8 +479,12 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
     _identitySubscription?.cancel();
     _expiryTimer?.cancel();
     widget.isVisible?.removeListener(_handleHostVisibilityChanged);
+    widget.refreshRequests?.removeListener(_refresh);
     WidgetsBinding.instance.removeObserver(this);
     _pageController.dispose();
+    _ownScopeFocus.dispose();
+    _discoverFocus.dispose();
+    _feedAnchor.dispose();
     _soundOn.dispose();
     _friendRelationships?.dispose();
     _panelArbiter
@@ -352,10 +526,12 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
       final selected = available.isEmpty
           ? 0
           : _selected.clamp(0, available.length - 1);
+      final previousFocus = FocusManager.instance.primaryFocus;
       setState(() {
         _items = available;
         _selected = selected;
       });
+      _recoverFocusAfterRemoval(previousFocus);
       if (available.isNotEmpty) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted || !_pageController.hasClients) return;
@@ -392,6 +568,10 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
     final generation = reset ? ++_loadGeneration : _loadGeneration;
     final viewer = _viewerId;
     final ownOnly = _ownOnly;
+    // A reset selects the first Yeel, so the pager must show it. A fast
+    // answer lands before the pager was ever taken down, and without this
+    // it kept its old page: page N on screen, page 0 the active one.
+    if (reset) _showFirstPage();
     setState(() {
       if (reset) {
         _loading = true;
@@ -752,10 +932,12 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
       await _service.deleteReel(reel.id, requestId: requestId);
       if (!mounted || !_isCurrentRequest(generation, viewer)) return;
       _deleteRequestIds.remove(reel.id);
+      final previousFocus = FocusManager.instance.primaryFocus;
       setState(() {
         _items = _items.where((item) => item.id != reel.id).toList();
         _selected = _items.isEmpty ? 0 : _selected.clamp(0, _items.length - 1);
       });
+      _recoverFocusAfterRemoval(previousFocus);
       _revalidateAvailability();
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
@@ -1005,6 +1187,7 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
             onMediaLike: _viewerId == null ? null : _likeFromMedia,
             onComments: (reel) => _openComments(reel, wide: wide),
             onChanged: (index) {
+              if (_programmaticPageJump) return;
               setState(() => _selected = index);
               _prefetchNeighbor();
               if (index >= _items.length - 3) _load(reset: false);
@@ -1064,14 +1247,116 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
           );
   }
 
+  /// The compact chrome below the local-panel width: ONE row (Y3).
+  ///
+  /// Discover: [host Back] [Głos | Yeels] … [your avatar] [+]. The avatar
+  /// opens "Twoje Yeels"; the already selected "Yeels" tab is the refresh
+  /// here — it says so in a tooltip and to assistive technology — and
+  /// refreshes the pool when activated again (the host wires that through
+  /// [ReelsFeedScreen.refreshRequests]).
+  ///
+  /// "Twoje Yeels": [‹ back to Discover] [Twoje Yeels] … [refresh] [+]. The
+  /// pool is a page of its own here, so it is named by a heading, left by a
+  /// Back, and has its own explicit refresh.
+  ///
+  /// A host that supplies no format switch has no tab to re-select, so the
+  /// Discover row keeps a refresh plate as well: refresh is never
+  /// unreachable, in either scope.
+  ///
+  /// [onCanvas] draws the same controls for the page canvas (palette roles,
+  /// no media plates or glyph outlines) whenever the row does not sit over a
+  /// Yeel.
+  Widget _buildCompactChrome(
+    BuildContext context,
+    _StageMetrics metrics, {
+    required bool onCanvas,
+  }) {
+    final copy = AppLocalizations.of(context);
+    final header = onCanvas
+        ? widget.immersiveCanvasHeader ?? widget.immersiveHeader
+        : widget.immersiveHeader;
+    final ownLabel = copy.text('Your Yeels', 'Twoje Yeels');
+    final refreshLabel = copy.text('Refresh', 'Odśwież');
+    // The host header owns CREATE when there is one; a standalone immersive
+    // feed keeps its own, so creation is never silently unreachable.
+    final create =
+        header?.trailing ??
+        (widget.onCreate == null
+            ? null
+            : _ChromePlate(
+                key: const ValueKey('reels-create-persistent'),
+                icon: Icons.add_rounded,
+                semanticLabel: copy.text('Create Yeel', 'Utwórz Yeel'),
+                onTap: _creating ? null : _create,
+                onCanvas: onCanvas,
+              ));
+    final own = _ownOnly;
+    final hasFormatSwitch = header?.formatSwitch != null;
+    final refresh = _ChromePlate(
+      key: const ValueKey('reels-refresh'),
+      icon: Icons.refresh_rounded,
+      semanticLabel: refreshLabel,
+      onTap: _loading ? null : _refresh,
+      onCanvas: onCanvas,
+      refresh: true,
+    );
+    // One chrome for both scopes: only the slots change, so the create
+    // control keeps its element — and any focus it holds — across the
+    // switch. The container keeps the row's reading order its own: without
+    // it the row's controls were sorted together with the full-screen Yeel
+    // beside them, and a stacked row read avatar, switch, create.
+    return Semantics(
+      container: true,
+      explicitChildNodes: true,
+      child: ImmersiveFeedChrome(
+        gutter: metrics.toolbarGutter,
+        onCanvas: onCanvas,
+        leading: own
+            ? _ChromePlate(
+                key: const ValueKey<String>('reels-own-back'),
+                icon: Icons.chevron_left_rounded,
+                semanticLabel: copy.text(
+                  'Back to Discover',
+                  'Wróć do Odkrywaj',
+                ),
+                onTap: _returnToDiscover,
+                focusNode: _discoverFocus,
+                onCanvas: onCanvas,
+              )
+            : header?.leading,
+        formatSwitch: own
+            ? _OwnScopeTitle(label: ownLabel, onCanvas: onCanvas)
+            : header?.formatSwitch,
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            if (own || !hasFormatSwitch) refresh,
+            if (!own)
+              _ViewerScopeButton(
+                key: const ValueKey<String>('reels-own-scope'),
+                userId: _viewerId,
+                displayName: _service.currentUserDisplayName,
+                label: ownLabel,
+                focusNode: _ownScopeFocus,
+                onTap: _openOwnScope,
+                onCanvas: onCanvas,
+              ),
+            if (create != null) ...<Widget>[
+              const SizedBox(
+                key: ValueKey<String>('reels-chrome-create-gap'),
+                width: AppRhythm.hairline,
+              ),
+              create,
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
-    final discoverLabel = copy.text('Discover', 'Odkrywaj');
-    final ownLabel = copy.text('Your Yeels', 'Twoje Yeels');
-    final createLabel = copy.text('Create Yeel', 'Utwórz Yeel');
-    final refreshLabel = copy.text('Refresh', 'Odśwież');
-    final filtersLabel = copy.text('Filters', 'Filtry');
     final palette = context.appPalette;
     final body = Material(
       key: const ValueKey<String>('reels-stage'),
@@ -1133,7 +1418,7 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
                           width: layout.localPanelWidth,
                           ownOnly: _ownOnly,
                           onAudienceSelected: _selectAudience,
-                          onRefresh: _loading ? null : () => _load(reset: true),
+                          onRefresh: _loading ? null : _refresh,
                           showCreate: widget.onCreate != null,
                           onCreate: _creating ? null : _create,
                         )
@@ -1164,10 +1449,9 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
                 ),
               ],
             );
-            return CustomMultiChildLayout(
-              delegate: _ReelsViewportLayout(
-                overlayChrome: immersive && _items.isNotEmpty,
-              ),
+            final overlayChrome = immersive && _items.isNotEmpty;
+            final viewport = CustomMultiChildLayout(
+              delegate: _ReelsViewportLayout(overlayChrome: overlayChrome),
               children: [
                 LayoutId(id: _ReelsViewportSlot.content, child: below),
                 LayoutId(
@@ -1180,47 +1464,10 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
                       }
                     },
                     child: compactChrome
-                        ? ImmersiveFeedChrome(
-                            gutter: metrics.toolbarGutter,
-                            formatSwitch: widget.immersiveHeader?.formatSwitch,
-                            leading: widget.immersiveHeader?.leading,
-                            // The host header owns CREATE when there is one;
-                            // a standalone immersive feed keeps its own, so
-                            // creation is never silently unreachable.
-                            trailing:
-                                widget.immersiveHeader?.trailing ??
-                                (widget.onCreate == null
-                                    ? null
-                                    : OverlayPlateButton(
-                                        key: const ValueKey(
-                                          'reels-create-persistent',
-                                        ),
-                                        icon: Icons.add_rounded,
-                                        semanticLabel: createLabel,
-                                        onTap: _creating ? null : _create,
-                                      )),
-                            filters: <ImmersiveChromeOption>[
-                              ImmersiveChromeOption(
-                                key: const ValueKey<String>(
-                                  'reels-discover-filter',
-                                ),
-                                label: discoverLabel,
-                              ),
-                              ImmersiveChromeOption(
-                                key: const ValueKey<String>('reels-own-filter'),
-                                label: ownLabel,
-                              ),
-                            ],
-                            selectedFilterIndex: _ownOnly ? 1 : 0,
-                            onFilterSelected: (index) =>
-                                _selectAudience(index == 1),
-                            filterGroupLabel: filtersLabel,
-                            filterTrailing: OverlayPlateButton(
-                              key: const ValueKey('reels-refresh'),
-                              icon: Icons.refresh_rounded,
-                              semanticLabel: refreshLabel,
-                              onTap: _loading ? null : () => _load(reset: true),
-                            ),
+                        ? _buildCompactChrome(
+                            context,
+                            metrics,
+                            onCanvas: !overlayChrome,
                           )
                         : DecoratedBox(
                             decoration: const BoxDecoration(),
@@ -1235,9 +1482,7 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
                                     gutter: metrics.toolbarGutter,
                                     ownOnly: _ownOnly,
                                     onAudienceSelected: _selectAudience,
-                                    onRefresh: _loading
-                                        ? null
-                                        : () => _load(reset: true),
+                                    onRefresh: _loading ? null : _refresh,
                                     showCreate: widget.onCreate != null,
                                     onCreate: _creating ? null : _create,
                                   ),
@@ -1248,6 +1493,35 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
                 ),
               ],
             );
+            // "Twoje Yeels" is a page of its own in the compact chrome, so
+            // Back — the system's, or Escape from inside the feed — leaves
+            // it for Discover before it leaves the screen. Only while this
+            // feed is the one on screen: a retained, hidden feed claims
+            // nothing.
+            final ownPage = compactChrome && _ownOnly;
+            Widget backScope(bool visible) => EmbeddedBackScope(
+              claimed: ownPage && visible,
+              onBack: _returnToDiscover,
+              child: CallbackShortcuts(
+                bindings: <ShortcutActivator, VoidCallback>{
+                  if (ownPage)
+                    const SingleActivator(LogicalKeyboardKey.escape):
+                        _returnToDiscover,
+                },
+                child: Focus(
+                  focusNode: _feedAnchor,
+                  includeSemantics: false,
+                  child: viewport,
+                ),
+              ),
+            );
+            final visibility = widget.isVisible;
+            return visibility == null
+                ? backScope(true)
+                : ValueListenableBuilder<bool>(
+                    valueListenable: visibility,
+                    builder: (context, visible, _) => backScope(visible),
+                  );
           },
         ),
       ),
@@ -1320,6 +1594,238 @@ class _ReelsViewportLayout extends MultiChildLayoutDelegate {
   @override
   bool shouldRelayout(_ReelsViewportLayout oldDelegate) =>
       oldDelegate.overlayChrome != overlayChrome;
+}
+
+/// A plate on the compact chrome's row.
+///
+/// Over a Yeel it is the media plate every overlay control is made of. On
+/// the page canvas it takes the canvas treatment the host's own Back already
+/// uses — a transparent disc with the palette's ink and a muted hover — and
+/// refresh sits in the Głos row's 40 px hairline circle (refine-look §8.4),
+/// so the canvas row never carries a black disc on Pearl.
+class _ChromePlate extends StatefulWidget {
+  const _ChromePlate({
+    required this.icon,
+    required this.semanticLabel,
+    required this.onTap,
+    required this.onCanvas,
+    this.focusNode,
+    this.refresh = false,
+    super.key,
+  });
+
+  final IconData icon;
+  final String semanticLabel;
+  final VoidCallback? onTap;
+  final bool onCanvas;
+  final FocusNode? focusNode;
+  final bool refresh;
+
+  static const double refreshCircle = 40;
+
+  @override
+  State<_ChromePlate> createState() => _ChromePlateState();
+}
+
+class _ChromePlateState extends State<_ChromePlate> {
+  bool _hovered = false;
+
+  void _hover(bool value) {
+    if (value != _hovered) setState(() => _hovered = value);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!widget.onCanvas) {
+      return OverlayPlateButton(
+        icon: widget.icon,
+        semanticLabel: widget.semanticLabel,
+        onTap: widget.onTap,
+        focusNode: widget.focusNode,
+      );
+    }
+    final palette = context.appPalette;
+    final plate = OverlayPlateButton(
+      icon: widget.icon,
+      semanticLabel: widget.semanticLabel,
+      onTap: widget.onTap,
+      focusNode: widget.focusNode,
+      glyphColor: widget.refresh ? palette.textSecondary : palette.textPrimary,
+      plateColor: Colors.transparent,
+      // The refresh circle carries its own hover, so the 48 px plate stays
+      // clear and a pointer never shows two concentric circles.
+      hoverPlateColor: widget.refresh
+          ? Colors.transparent
+          : palette.surfaceMuted,
+    );
+    if (!widget.refresh) return plate;
+    final highContrast = MediaQuery.highContrastOf(context);
+    return MouseRegion(
+      onEnter: (_) => _hover(true),
+      onExit: (_) => _hover(false),
+      child: Stack(
+        alignment: Alignment.center,
+        children: <Widget>[
+          IgnorePointer(
+            child: AnimatedContainer(
+              key: const ValueKey<String>('reels-refresh-ring'),
+              duration: AppMotion.resolve(context, AppMotion.quick),
+              width: _ChromePlate.refreshCircle,
+              height: _ChromePlate.refreshCircle,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: _hovered
+                    ? AppFinish.glass(palette, hovered: true)
+                    : Colors.transparent,
+                border: Border.all(
+                  color: highContrast
+                      ? palette.borderStrong
+                      : _hovered
+                      ? palette.hairlineHover
+                      : palette.hairlineControl,
+                ),
+              ),
+            ),
+          ),
+          plate,
+        ],
+      ),
+    );
+  }
+}
+
+/// The viewer's own avatar on the compact chrome: the way into "Twoje
+/// Yeels" (Y3), replacing the chip that used to sit on a second row.
+///
+/// A 32 px avatar resolved by uid through the shared [UserAvatar] (the
+/// initial or a person glyph while there is no photo), inside the same 48 px
+/// tap region and tooltip as every other control on the row.
+///
+/// Over a Yeel: a 2 px white ring with a hairline black edge outside it, so
+/// the ring survives a white frame, the black-backed focus ring, and the
+/// immersive palette in both appearances. On the page canvas: a 1 px palette
+/// hairline (`borderStrong` under high contrast) in the same 36 px box, the
+/// app's own palette, and the canvas focus ring.
+class _ViewerScopeButton extends StatelessWidget {
+  const _ViewerScopeButton({
+    required this.userId,
+    required this.displayName,
+    required this.label,
+    required this.focusNode,
+    required this.onTap,
+    required this.onCanvas,
+    super.key,
+  });
+
+  final String? userId;
+  final String? displayName;
+  final String label;
+  final FocusNode focusNode;
+  final VoidCallback onTap;
+  final bool onCanvas;
+
+  static const double avatarDiameter = 32;
+  static const double ringWidth = 2;
+
+  @override
+  Widget build(BuildContext context) {
+    final highContrast = MediaQuery.highContrastOf(context);
+    final palette = context.appPalette;
+    final avatar = UserAvatar(
+      radius: avatarDiameter / 2,
+      userId: userId,
+      displayName: displayName,
+      fallbackIcon: Icons.person_rounded,
+      finish: UserAvatarFinish.brand,
+    );
+    final Widget ring = Container(
+      key: const ValueKey<String>('reels-own-scope-ring'),
+      width: avatarDiameter + 2 * ringWidth,
+      height: avatarDiameter + 2 * ringWidth,
+      padding: const EdgeInsets.all(ringWidth),
+      decoration: onCanvas
+          ? BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: highContrast
+                    ? palette.borderStrong
+                    : palette.hairlineControl,
+              ),
+            )
+          : BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white, width: ringWidth),
+              boxShadow: <BoxShadow>[
+                BoxShadow(
+                  color: highContrast ? Colors.black : const Color(0x73000000),
+                  spreadRadius: highContrast ? 1.5 : 1,
+                ),
+              ],
+            ),
+      child: avatar,
+    );
+    return AccessibleTapRegion(
+      onTap: onTap,
+      semanticLabel: label,
+      tooltip: label,
+      circular: true,
+      minimumSize: const Size.square(48),
+      focusContrastColor: onCanvas ? null : Colors.black,
+      focusNode: focusNode,
+      child: ExcludeSemantics(
+        child: onCanvas
+            ? ring
+            : Theme(
+                data: Theme.of(context).copyWith(
+                  extensions: const <ThemeExtension<dynamic>>[AppPalette.dark],
+                ),
+                child: ring,
+              ),
+      ),
+    );
+  }
+}
+
+/// "Twoje Yeels" set where the format switch stands in Discover, announced
+/// as the level-1 heading of the page it names. Over a Yeel it is the
+/// switch's own 17 px w800 white word with its glyph outline; on the page
+/// canvas the same word in `textPrimary`, with no outline.
+class _OwnScopeTitle extends StatelessWidget {
+  const _OwnScopeTitle({required this.label, required this.onCanvas});
+
+  final String label;
+  final bool onCanvas;
+
+  @override
+  Widget build(BuildContext context) {
+    return ConstrainedBox(
+      // The row keeps the switch's 48 px, so switching scope never moves
+      // the stage the measured chrome sits on.
+      constraints: const BoxConstraints(minHeight: 48),
+      child: Align(
+        alignment: AlignmentDirectional.centerStart,
+        widthFactor: 1,
+        child: Semantics(
+          key: const ValueKey<String>('reels-own-title'),
+          container: true,
+          header: true,
+          headingLevel: 1,
+          child: Text(
+            label,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: onCanvas ? context.appPalette.textPrimary : Colors.white,
+              fontSize: 17,
+              height: 1.15,
+              fontWeight: FontWeight.w800,
+              shadows: onCanvas ? null : immersiveChromeTextShadows,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 /// Stage geometry for the width the feed was given.
