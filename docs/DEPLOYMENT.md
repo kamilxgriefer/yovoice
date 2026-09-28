@@ -230,6 +230,34 @@ from another VIP's list and from Top reactions; a cursor page 2 works.
   effect on the next list call; the badge mirrors follow through their
   existing triggers.
 
+## Build 39 release round — web, TestFlight and Play internal (2026-09-28)
+
+Source: `main` at `f99cb1d1` (`pubspec.yaml` `3.4.0+39`): G4/Y3 (first time on
+phones; 38 went to the web only), the Yeels create ring (ADR-229) and See
+who liked / comment likes / Hide my likes (ADR-230, backend deployed the same
+day, lists switched off). Built on Kamil's Mac from a clean worktree.
+
+- **Web:** `flutter build web --release` with the same dart-defines as CI
+  (the reCAPTCHA site-key variable is empty in CI too), `firebase deploy
+  --only hosting` at 11:58 UTC; `version.json` reads `3.4.0` / `39` on
+  yovoice-ec54a.web.app and app.yovoice.app, and the live `main.dart.js` is
+  byte-identical to the build (sha256 `1b88db1f…`).
+- **iOS:** IPA sha256 `3596dfa1…`, `altool` upload, ASC build
+  `5fa63485-03ac-4471-9a42-353d8b7b7444` VALID; internal group
+  IN_BETA_TESTING; What to Test (en-US) stored and read back; external group
+  attached and beta review submitted (WAITING_FOR_BETA_REVIEW).
+- **Android:** AAB signed with the registered upload key (fingerprint as 36
+  and 37); Play internal testing release 32 "39 (3.4.0)", 37 not included,
+  devices unchanged; published 14:03 CEST, read back "Dostępna dla testerów
+  wewnętrznych". The extension's tab sat in a window the window server did
+  not show, so the upload went through a fresh visible Chrome window driven
+  by the Accessibility API (AXPress on "Prześlij", the open panel filled and
+  read back, notes set by AX).
+- Evidence: `yovoice-evidence/2026-09-28/release-39/`.
+- **Next:** when Apple approves the external build, switch the lists on
+  (`set_likers_activation.js --enabled true --server-messages true --apply`,
+  owner decision: no extra wait).
+
 ## Build 37 release round — web, TestFlight and Play internal (2026-09-27)
 
 Source: `main` at `2064419fd83463322a7b1087b150f0d5091bc0f8` (`pubspec.yaml`
