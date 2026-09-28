@@ -14,6 +14,32 @@ someone decide what to pick up next.
 
 ---
 
+## YO Voice 3.5.0 (40) — Premium Pages, the Treści tab (ADR-231..233) — 2026-09-28
+
+**Status: on `main` as `3.5.0+40`.** Pages landed as `a6d5bd50`..`ee18d82b`
+(backend `a6d5bd50`, client `a68268cf`, the owner-review fixes and desktop
+create step 2 after it). The backend is DEPLOYED since 2026-09-28 20:04 UTC
+with `appConfig/pagesV1` absent, so every client, this build included, shows
+the five-tab dock and no Pages surface until the switch admits the account.
+Owner decision (2026-09-28): once this build is on TestFlight, Play and the
+web, Pages are switched on in testers mode (alerts first, Kamil's own
+canonical VIP grant), per [DEPLOYMENT.md](DEPLOYMENT.md#premium-pages-adr-231233--packages-b1--b2--b3--b4--b5-backend-deployed-2026-09-28-switched-off)
+step 5. Full status of the feature:
+[Premium Pages ("Treści")](#premium-pages-treści--landed-on-main-2026-09-28-backend-deployed-switched-off-app-hidden-until-switched-on).
+
+- A VIP account turns itself into a Page (Business or Community): text,
+  up to 10 photos and 60 s voice posts on the Treści wall for its
+  followers, likes, comments (oldest first), reports, lapse without
+  deletion.
+- The six-tab dock at 90 % and the desktop rail item appear only while the
+  switch admits the account.
+- The purple VIP rosette on Page headers and cards, with the "VIP doesn't
+  mean verified" sheet.
+- Verified by the full Flutter suite (6,939 tests), `flutter analyze`, the
+  functions, rules and Storage emulator suites, and harness renders
+  compared with the approved renders; **not verified on a device,
+  simulator or real browser.**
+
 ## YO Voice 3.4.0 (39) — the create ring (ADR-229) and See who liked (ADR-230) — 2026-09-28
 
 **Status: on `main` as `3.4.0+39`.** The ring landed as `8212785e`; See who
