@@ -23,6 +23,7 @@ import 'package:yovoice/features/pages/presentation/pages_flows.dart';
 import 'package:yovoice/features/pages/presentation/screens/content_screen.dart';
 import 'package:yovoice/features/pages/presentation/widgets/content_desktop_panel.dart';
 import 'package:yovoice/features/pages/presentation/widgets/pages_focus_ink.dart';
+import 'package:yovoice/features/pages/presentation/widgets/page_post_card.dart';
 import 'package:yovoice/shared/identity/public_identity.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
 
@@ -732,6 +733,17 @@ void main() {
       final size = tester.getSize(likers);
       expect(size.height, greaterThanOrEqualTo(44));
       expect(size.width, greaterThanOrEqualTo(44));
+      // The likes row is only its 44 px target: it ends where the action
+      // row's hairline starts, with no padding of its own (deviation §13).
+      final like = find.byKey(const ValueKey('page-post-like')).first;
+      final gap = tester.getRect(like).top - tester.getRect(likers).bottom;
+      expect(gap, inInclusiveRange(0, 1.5));
+      // Post 1 is a voice post: its transport is the body's last block.
+      final body = find.byType(PageVoiceTransport).first;
+      expect(
+        tester.getRect(likers).top - tester.getRect(body).bottom,
+        inInclusiveRange(0, 0.5),
+      );
       expect(
         find.bySemanticsLabel('19 polubień, pokaż kto polubił'),
         findsOneWidget,

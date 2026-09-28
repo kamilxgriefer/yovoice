@@ -187,8 +187,10 @@ class PagePostCard extends StatelessWidget {
       if (held)
         const SizedBox(height: 12)
       else
+        // The 44 px row is the whole gap between the body and the actions
+        // (the renders' 12 + line + 10), so its target adds only ~5 px.
         Padding(
-          padding: const EdgeInsets.fromLTRB(8, 2, 8, 0),
+          padding: const EdgeInsets.symmetric(horizontal: 8),
           child: _CountLine(post: post, onOpenLikers: onOpenLikers),
         ),
     ];
