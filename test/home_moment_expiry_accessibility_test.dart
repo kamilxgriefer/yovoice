@@ -23,7 +23,6 @@ import 'package:yovoice/features/profile/data/models/profile_visibility.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
-import 'package:yovoice/shared/widgets/overlays/immersive_overlay_atoms.dart';
 
 final _anchor = DateTime.utc(2026, 8, 27, 12);
 
@@ -740,9 +739,13 @@ void main() {
         find.byKey(const ValueKey('moment-row-social-only')),
         findsOneWidget,
       );
+      // The row's own body (G4: the compact row has no separate title).
       Focus.of(
         tester.element(
-          find.byKey(const ValueKey('moment-row-title-social-only')),
+          find.descendant(
+            of: find.byKey(const ValueKey('moment-row-body-social-only')),
+            matching: find.byType(Padding),
+          ).first,
         ),
       ).requestFocus();
       await tester.pump();
@@ -756,8 +759,12 @@ void main() {
         find.byKey(const ValueKey('moment-row-social-only')),
         findsNothing,
       );
-      final reload = tester.widget<OverlayPlateButton>(
-        find.byKey(const ValueKey('moments-discovery-refresh')),
+      // Recovery lands on the active tab — the phone's refresh since G4.
+      final reload = tester.widget<InkWell>(
+        find.descendant(
+          of: find.byKey(const ValueKey('moments-filter-following')),
+          matching: find.byType(InkWell),
+        ),
       );
       expect(reload.focusNode!.hasFocus, isTrue);
       expect(_messages(announcements), [

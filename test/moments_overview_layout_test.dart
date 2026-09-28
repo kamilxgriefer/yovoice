@@ -69,10 +69,20 @@ void main() {
       final expectedList = math.min(slot, 640 + 2 * gutter);
       expect(list.width, expectedList, reason: 'slot $slot');
       expect(list.left, (slot - expectedList) / 2, reason: 'slot $slot');
+      // G4: the row is full-bleed in the column (its hairline spans it) and
+      // its content keeps the gutter: avatar → play button is the measure.
       final card = tester.getRect(find.byKey(const ValueKey('moment-row-m4')));
-      expect(card.left, list.left + gutter, reason: 'slot $slot');
-      expect(card.width, expectedList - 2 * gutter, reason: 'slot $slot');
-      expect(card.width, lessThanOrEqualTo(640));
+      expect(card.left, list.left, reason: 'slot $slot');
+      expect(card.width, expectedList, reason: 'slot $slot');
+      final avatar = tester.getRect(
+        find.byKey(const ValueKey('moment-row-chain-m4')),
+      );
+      final play = tester.getRect(
+        find.byKey(const ValueKey('moment-row-play-m4')),
+      );
+      expect(avatar.left, list.left + gutter, reason: 'slot $slot');
+      expect(play.right, list.right - gutter, reason: 'slot $slot');
+      expect(play.right - avatar.left, lessThanOrEqualTo(640));
       expect(
         find.byKey(const ValueKey<String>('yo-moments-local-panel')),
         findsNothing,

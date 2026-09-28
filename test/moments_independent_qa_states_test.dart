@@ -8,6 +8,7 @@
 // reads, and the identity.
 
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
@@ -21,6 +22,7 @@ import 'package:yovoice/features/moments/data/services/moment_discovery_service.
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/presentation/screens/moments_screen.dart';
 import 'package:yovoice/features/moments/presentation/screens/record_voice_moment_screen.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_compact_row.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moments_feed_view.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moments_queue_list.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
@@ -149,25 +151,8 @@ class _CountingReelService extends ReelService {
 }
 
 List<String> _visibleMomentIds(WidgetTester tester) => tester
-    .widgetList<Widget>(
-      find.byWidgetPredicate((widget) {
-        final key = widget.key;
-        return key is ValueKey<String> &&
-            key.value.startsWith('moment-row-') &&
-            !key.value.startsWith('moment-row-play') &&
-            !key.value.startsWith('moment-row-title') &&
-            !key.value.startsWith('moment-row-badge') &&
-            !key.value.startsWith('moment-row-author') &&
-            !key.value.startsWith('moment-row-chain') &&
-            !key.value.startsWith('moment-row-like') &&
-            !key.value.startsWith('moment-row-comments') &&
-            !key.value.startsWith('moment-row-share') &&
-            !key.value.startsWith('moment-row-reply') &&
-            !key.value.startsWith('moment-row-progress') &&
-            !key.value.startsWith('moment-row-time');
-      }),
-    )
-    .map((widget) => (widget.key! as ValueKey<String>).value)
+    .widgetList<MomentCompactRow>(find.byType(MomentCompactRow))
+    .map((row) => (row.key! as ValueKey<String>).value)
     .toList(growable: false);
 
 void main() {
@@ -380,6 +365,9 @@ void main() {
           tester,
           discovery: discovery,
           navigatorKey: navigatorKey,
+          // G4 rows are compact: a shorter window keeps the list scrollable
+          // so the case can measure a real offset.
+          size: const Size(900, 600),
         );
         await playFirstCard(tester, players, 'm1');
         final player = players.single;
@@ -421,14 +409,20 @@ void main() {
         await tester.pumpAndSettle();
         await settleOverview(tester);
 
+        // G4: the open row closes when the transport is released, and the
+        // list gives back its player's height; the offset holds wherever
+        // the shorter list still reaches it — never a reset to the top.
+        final position = tester.state<ScrollableState>(scrollable).position;
         expect(
-          tester.state<ScrollableState>(scrollable).position.pixels,
-          offsetBefore,
+          position.pixels,
+          math.min(offsetBefore, position.maxScrollExtent),
           reason: 'the viewer comes back to where they were reading',
         );
+        expect(position.pixels, greaterThan(0));
+        final orderAfter = _visibleMomentIds(tester);
         expect(
-          _visibleMomentIds(tester),
-          orderBefore,
+          orderAfter.where(orderBefore.contains).toList(),
+          orderBefore.where(orderAfter.contains).toList(),
           reason:
               'the pool the viewer left is the pool they come back to — the '
               'refresh on return must not re-rank the list under them',
@@ -452,8 +446,14 @@ void main() {
         await pumpDestination(tester, discovery: discovery);
 
         expect(discovery.loadCalls, 1);
+        // G4: below 1100 the error card's own retry is the way out (the
+        // refresh button left the chrome).
+        final retry = find.descendant(
+          of: find.byKey(const ValueKey<String>('moments-discovery-error')),
+          matching: find.text('Try again'),
+        );
         expect(
-          find.byKey(const ValueKey<String>('moments-discovery-refresh')),
+          retry,
           findsOneWidget,
           reason: 'a denial is an error state with a way out, not a blank',
         );
@@ -475,9 +475,7 @@ void main() {
               permanent: true,
             ),
           ];
-        await tester.tap(
-          find.byKey(const ValueKey<String>('moments-discovery-refresh')),
-        );
+        await tester.tap(retry);
         await settleOverview(tester);
 
         expect(discovery.loadCalls, 2);
@@ -591,8 +589,10 @@ void main() {
       },
     );
 
-    testWidgets('no cover is invented: the card draws no image and an empty '
-        'caption reads "Voice Moment"', (tester) async {
+    testWidgets('no cover is invented: the row draws no image, and an empty '
+        'caption is not printed but reads "Voice Moment" to a screen reader', (
+      tester,
+    ) async {
       await pumpDestination(
         tester,
         discovery: StaticDiscovery(populatedPool()),
@@ -604,8 +604,15 @@ void main() {
       expect(card, findsOneWidget);
       expect(
         find.descendant(of: card, matching: find.text('Voice Moment')),
-        findsOneWidget,
+        findsNothing,
+        reason: 'G4 omits the fallback caption line',
       );
+      final semantics = tester.ensureSemantics();
+      final label = tester.getSemantics(card).getSemanticsData().label;
+      // Still names the format — without saying it twice.
+      expect(label, startsWith('Open Voice Moment by '));
+      expect(label, isNot(contains('Voice Moment: Voice Moment')));
+      semantics.dispose();
       expect(
         find.descendant(
           of: card,

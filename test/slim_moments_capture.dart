@@ -1,16 +1,18 @@
 // Slim redesign phase 4 (YO Moments) frame harness, extended for the
-// refine-look batch 5 (the voice bead and Głos, signature moment W3).
+// refine-look batch 5 (the voice bead and Głos, signature moment W3) and for
+// the G4 Głos redesign (text tabs, author circles, compact rows that open
+// into the player).
 //
 // Adapted from `test/moments_visual_review_capture_test.dart` (same fixtures,
 // same production seams): the Moments screen with Głos selected, with Yeels
 // selected, and the Moment detail view — at 390, 768 and 1440, Dark and
 // Pearl, locale pl, 100 % and 200 % text, plus high-contrast frames — in the
 // states the refine spec's §11 matrix names for Głos / detail: populated,
-// one card playing (exactly one lit card), paused, busy (the grant is
+// one row playing (exactly one open, lit row), paused, busy (the grant is
 // resolving), failed, uncaptioned with < 1 h left, loading, empty and error;
 // the detail playing, paused, busy, failed and gone. Also keyboard focus
-// (card, bead, chip, capsule, the chosen Yeels chip), pointer hover (card,
-// refresh), two frames with motion ON (the lit fade 90 ms in, the pour
+// (row, play button, tab, author circle, the chosen Yeels chip), pointer
+// hover (row), two frames with motion ON (the lit fade 90 ms in, the pour
 // mid-way — every other frame is the Reduce Motion path), and three
 // component boards: `MomentCard` (the 44 px bead), `VoiceCore` on the
 // LiveNowHero empty state, and the shared voice row (the thread row in
@@ -30,7 +32,8 @@
 //
 // `YO_CAPTURE_DIR` defaults to `test/.screenshots/slim-p4`. Add
 // `--dart-define=YO_CAPTURE_MATRIX=slim` for the original 12-frame Slim set
-// only. Frames are named
+// only, or `--dart-define=YO_CAPTURE_MATRIX=g4` for the Głos feed alone
+// (board 06, plus 320 px frames). Frames are named
 // `<screen>_<width>_<dark|pearl>_pl_<100|200>_<state>[-hc].png`
 // (`moments-voice`, `moments-yeels`, `moment-detail`).
 //
@@ -86,7 +89,8 @@ const _outDir = String.fromEnvironment(
 );
 
 /// `full` (default): the refine-look B5 matrix. `slim`: the original Slim
-/// set (390 / 1440, Dark / Pearl, 100 %, populated).
+/// set (390 / 1440, Dark / Pearl, 100 %, populated). `g4`: the Głos feed
+/// (board 06) only, with the narrow 320 px frames.
 const _matrixName = String.fromEnvironment(
   'YO_CAPTURE_MATRIX',
   defaultValue: 'full',
@@ -794,6 +798,11 @@ enum _State {
   focusCapsule,
   hoverCard,
   hoverRefresh,
+  retap,
+  focusSlider,
+  openRowMenu,
+  focusHeardCircle,
+  tabThree,
   motionLit,
   motionPour,
   rest,
@@ -837,9 +846,14 @@ String _frameName(_Frame frame) {
     _State.focusCard => 'focus-card',
     _State.focusBead => 'focus-bead',
     _State.focusChip => 'focus-chip',
-    _State.focusCapsule => 'focus-capsule',
-    _State.hoverCard => 'hover-card',
+    _State.focusCapsule => 'focus-circle',
+    _State.hoverCard => 'hover-row',
     _State.hoverRefresh => 'hover-refresh',
+    _State.retap => 'retap-refresh',
+    _State.focusSlider => 'focus-slider',
+    _State.openRowMenu => 'openrow-menu',
+    _State.focusHeardCircle => 'focus-heard-circle',
+    _State.tabThree => 'tab3-selected',
     _State.motionLit => 'motion-lit-90ms',
     _State.motionPour => 'motion-pour-100ms',
     _State.rest => 'rest',
@@ -853,6 +867,7 @@ String _frameName(_Frame frame) {
 bool _animates(_Frame frame) =>
     frame.state == _State.motionLit || frame.state == _State.motionPour;
 
+const _narrow = (320.0, 640.0);
 const _phone = (390.0, 844.0);
 const _tablet = (768.0, 1024.0);
 const _desktop = (1440.0, 900.0);
@@ -924,7 +939,7 @@ List<_Frame> _fullMatrix() => <_Frame>[
   ],
   _f('06', _phone, _State.focusBead),
   _f('06', _phone, _State.focusCapsule),
-  _f('06', _tablet, _State.hoverRefresh),
+  _f('06', _desktop, _State.hoverCard, highContrast: true),
   // Motion ON: the light 90 ms into its 180 ms fade; the pour mid-way.
   _f('06', _phone, _State.motionLit),
   _f('06', _phone, _State.motionPour),
@@ -1030,13 +1045,8 @@ void main() {
     await tester.pump(const Duration(milliseconds: 200));
   }
 
-  /// Plays the second card of the feed (`m5`), moves it to a real position
-  /// and — for [pause] — pauses it there. The list is scrolled so the card
-  /// above it stays partly in view: one lit card among resting ones.
-  /// [emit] false leaves the transport where `play()` left it (busy or
-  /// failed).
-  /// Scrolls the second card (`m5`) into view with the card above it still
-  /// partly visible; returns its play bead, or null when it is absent.
+  /// Scrolls the second row (`m5`) into view with the rows above it still
+  /// visible; returns its play button, or null when it is absent.
   Future<Finder?> revealSecondCard(WidgetTester tester) async {
     final play = find.byKey(const ValueKey('moment-row-play-m5'));
     if (play.evaluate().isEmpty) return null;
@@ -1050,14 +1060,18 @@ void main() {
     );
     if (scroll.evaluate().isNotEmpty) {
       final position = tester.state<ScrollableState>(scroll.first).position;
-      position.jumpTo(
-        (position.pixels - 260).clamp(0.0, position.maxScrollExtent),
-      );
+      // Back to the top: the strip and the first row stay in view, so the
+      // open row sits among collapsed ones.
+      position.jumpTo(0);
       await tester.pump();
     }
     return play;
   }
 
+  /// Plays the second row of the feed (`m5`), moves it to a real position
+  /// and — for [pause] — pauses it there: one open row among collapsed
+  /// ones. [emit] false leaves the transport where `play()` left it (busy
+  /// or failed).
   Future<void> playSecondCard(
     WidgetTester tester, {
     bool pause = false,
@@ -1139,17 +1153,12 @@ void main() {
         // Motion does not stop it): shoot it with a readable arc.
         await tester.pump(const Duration(milliseconds: 450));
       case _State.focusCard:
-        // The first card's own ink well (the card body, not a control in
-        // it): the lit block paints the 2 px focus ring for it.
+        // The first row's own ink well (the row body, not a control in it):
+        // the row paints its 2 px focus ring for it.
         await focusOn(
           tester,
           find.descendant(
-            of: find.byWidgetPredicate(
-              (w) =>
-                  w is InkWell &&
-                  w.excludeFromSemantics &&
-                  w.borderRadius == const BorderRadius.all(Radius.circular(20)),
-            ),
+            of: find.byKey(const ValueKey('moment-row-body-m4')),
             matching: find.byType(Padding),
           ),
         );
@@ -1174,10 +1183,8 @@ void main() {
         await focusOn(
           tester,
           find.descendant(
-            of: find.byWidgetPredicate(
-              (w) => w.runtimeType.toString() == 'MomentAuthorCapsule',
-            ),
-            matching: find.byType(Row),
+            of: find.byKey(const ValueKey('moments-circle-maja')),
+            matching: find.byType(Text),
           ),
         );
       case _State.hoverCard:
@@ -1193,10 +1200,64 @@ void main() {
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 200));
       case _State.hoverRefresh:
+        // The desktop panel's refresh (the phone has none any more).
         await hoverOn(
           tester,
-          find.byKey(const ValueKey('moments-discovery-refresh-ring')),
+          find.byKey(const ValueKey('moments-discovery-refresh')),
         );
+      case _State.retap:
+        // Scroll the list, then tap the active tab again: back to the top,
+        // with the refresh running.
+        final scroll = find.descendant(
+          of: find.byKey(const ValueKey('moments-feed-scroll')),
+          matching: find.byWidgetPredicate(
+            (w) => w is Scrollable && w.axisDirection == AxisDirection.down,
+          ),
+        );
+        if (scroll.evaluate().isNotEmpty) {
+          tester.state<ScrollableState>(scroll.first).position.jumpTo(160);
+          await tester.pump();
+        }
+        await tester.tap(find.byKey(const ValueKey('moments-filter-discover')));
+        await tester.pump();
+        // The spinner snaps in over 150 ms, then the read starts.
+        await tester.pump(const Duration(milliseconds: 180));
+      case _State.focusSlider:
+        // The open row's seek, focused from the keyboard: its ring.
+        await playSecondCard(tester);
+        final seek = find.byKey(const ValueKey('moment-row-progress-m5'));
+        if (seek.evaluate().isNotEmpty) {
+          tester.widget<Slider>(seek).focusNode?.requestFocus();
+          await tester.pump();
+          await tester.pump();
+        }
+      case _State.openRowMenu:
+        // The open row's ⋯: the menu over a row that stays open and lit.
+        await playSecondCard(tester);
+        final more = find.byKey(const ValueKey('moment-row-menu-m5'));
+        if (more.evaluate().isNotEmpty) {
+          await tester.tap(more, warnIfMissed: false);
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 400));
+        }
+      case _State.focusHeardCircle:
+        await focusOn(
+          tester,
+          find.descendant(
+            of: find.byKey(const ValueKey('moments-circle-kamil')),
+            matching: find.byType(Text),
+          ),
+        );
+      case _State.tabThree:
+        // The third tab chosen at a size where it had been cut off.
+        final third = find.byKey(const ValueKey('moments-filter-mostEngaged'));
+        if (third.evaluate().isNotEmpty) {
+          await tester.ensureVisible(third);
+          await tester.pump();
+          await tester.tap(third, warnIfMissed: false);
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 300));
+        }
       case _State.motionLit:
         final play = await revealSecondCard(tester);
         if (play == null) break;
@@ -1554,13 +1615,36 @@ void main() {
     await tester.pump(const Duration(milliseconds: 450));
   }
 
-  final frames = _matrixName == 'slim'
-      ? <_Frame>[
-          ..._slimMatrix('06'),
-          ..._slimMatrix('07'),
-          ..._slimMatrix('08'),
-        ]
-      : _fullMatrix();
+  final frames = switch (_matrixName) {
+    'slim' => <_Frame>[
+      ..._slimMatrix('06'),
+      ..._slimMatrix('07'),
+      ..._slimMatrix('08'),
+    ],
+    'g4' => <_Frame>[
+      ..._fullMatrix().where((frame) => frame.board == '06'),
+      // The narrow phone: collapsed and open rows at 100 % and 200 %.
+      for (final scale in const <double>[1, 2]) ...[
+        _f('06', _narrow, _State.populated, textScale: scale),
+        _f('06', _narrow, _State.playing, textScale: scale),
+      ],
+      _f('06', _narrow, _State.populated, pearl: true, textScale: 2),
+      _f('06', _tablet, _State.playing, textScale: 2),
+      _f('06', _desktop, _State.playing, textScale: 2),
+      _f('06', _phone, _State.retap),
+      // The review round's states.
+      _f('06', _phone, _State.focusSlider),
+      _f('06', _phone, _State.focusSlider, pearl: true),
+      _f('06', _phone, _State.focusSlider, highContrast: true),
+      _f('06', _desktop, _State.focusSlider, pearl: true),
+      _f('06', _phone, _State.openRowMenu),
+      _f('06', _phone, _State.focusHeardCircle),
+      _f('06', _phone, _State.focusHeardCircle, pearl: true),
+      _f('06', _narrow, _State.tabThree, textScale: 2),
+      _f('06', _phone, _State.tabThree, textScale: 2),
+    ],
+    _ => _fullMatrix(),
+  };
   for (final frame in frames) {
     final name = _frameName(frame);
     testWidgets(name, (tester) async {

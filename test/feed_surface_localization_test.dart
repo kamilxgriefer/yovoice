@@ -36,6 +36,9 @@ import 'package:yovoice/features/reels/data/services/reel_service.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_card.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_playback_coordinator.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
+import 'moments_overview_test_support.dart'
+    as support
+    show momentMetaLine, momentMetaVisible;
 
 const _capture = bool.fromEnvironment('YO_CAPTURE_FEED_LOCALIZATION');
 final _now = DateTime.utc(2026, 9, 11, 14);
@@ -680,22 +683,65 @@ void main() {
             locale,
             boundary: boundary,
           );
+          // G4: the collapsed row speaks its totals on its meta line — the
+          // bare numbers drawn, the localized phrases spoken, a zero neither.
+          final meta = support.momentMetaLine(tester, 'localized');
+          if (count == 0) {
+            expect(
+              meta.semanticsLabel,
+              isNot(contains(expected['likes1']!.split(':').first)),
+            );
+          } else {
+            expect(
+              support.momentMetaVisible(tester, 'localized'),
+              contains(' $count'),
+            );
+            expect(meta.semanticsLabel, contains(expected['likes$count']!));
+            expect(meta.semanticsLabel, contains(expected['comments$count']!));
+          }
+          expect(
+            find.text('Voice caption {count} stays unchanged.'),
+            findsOneWidget,
+          );
+          final play = find.byKey(const ValueKey('moment-row-play-localized'));
+          // The visible tooltip is the short localized word; the button's
+          // spoken name leads with the same word (and adds the length).
+          String tooltipOf(Finder button) => tester
+              .widget<Tooltip>(
+                find.ancestor(of: button, matching: find.byType(Tooltip)).first,
+              )
+              .message!;
+          expect(tooltipOf(play), expected['play']);
+          expect(
+            Directionality.of(tester.element(play)),
+            locale == 'ar' ? TextDirection.rtl : TextDirection.ltr,
+          );
+          await tester.ensureVisible(play);
+          await tester.tap(play);
+          await tester.pumpAndSettle();
+          expect(service.requested, ['localized']);
+          expect(player.plays, 1);
+          expect(tooltipOf(play), expected['pause']);
+
+          // The open row's action line draws a glyph and the count; the
+          // whole localized phrase is the control's SPOKEN name. Word labels
+          // broke mid-word at 200 % text, so the phrase lives in the
+          // semantic label — where it must be complete and correct.
           final like = find.byKey(const ValueKey('moment-row-like-localized'));
           final comments = find.byKey(
             const ValueKey('moment-row-comments-localized'),
           );
-          // Board 06's action row draws a glyph and the count; the whole
-          // localized phrase is the control's SPOKEN name. Word labels
-          // never fitted the row at any width and broke mid-word at 200 %
-          // text, so the phrase moved to the semantic label — where it is
-          // still required to be complete and correct in this locale.
           Text labelOf(Finder button) => tester.widget<Text>(
             find.descendant(of: button, matching: find.byType(Text)),
           );
           expect(labelOf(like).data, '$count');
+          // The like is an action with its count: "Like, Likes: 2".
+          final likeName = count == 0
+              ? expected['like']!
+              : '${expected['like']}, ${expected['likes$count']}';
           expect(
             labelOf(like).semanticsLabel,
-            expected[count == 0 ? 'like' : 'likes$count'],
+            likeName,
             reason: 'the exact total stays in the spoken name',
           );
           expect(labelOf(comments).data, '$count');
@@ -706,22 +752,16 @@ void main() {
           expect(
             _spokenNames(tester),
             containsAll(<String>[
-              expected[count == 0 ? 'like' : 'likes$count']!,
+              likeName,
               expected[count == 0 ? 'comments' : 'comments$count']!,
             ]),
             reason:
                 'both totals must reach assistive technology by their '
                 'localized names, not only the widget tree',
           );
-          expect(
-            find.text('Voice caption {count} stays unchanged.'),
-            findsOneWidget,
-          );
-          // Board 06 hides the share LABEL when the card slot is under
-          // 400 (visual contract §3) and keeps the glyph, which is what a
-          // 390-wide phone gets. The control must still be reachable, still
-          // NAMED in this locale for assistive technology, and still a full
-          // 48-px target — an unnamed glyph would be a defect, not a design.
+          // Share is a glyph on the action line. It must still be
+          // reachable, NAMED in this locale for assistive technology, and a
+          // full 48-px target — an unnamed glyph would be a defect.
           final share = find.byKey(
             const ValueKey('moment-row-share-localized'),
           );
@@ -739,18 +779,6 @@ void main() {
           expect(shareSize.width, greaterThanOrEqualTo(48));
           expect(shareSize.height, greaterThanOrEqualTo(48));
           semantics.dispose();
-          final play = find.byKey(const ValueKey('moment-row-play-localized'));
-          expect(tester.widget<IconButton>(play).tooltip, expected['play']);
-          expect(
-            Directionality.of(tester.element(play)),
-            locale == 'ar' ? TextDirection.rtl : TextDirection.ltr,
-          );
-          await tester.ensureVisible(play);
-          await tester.tap(play);
-          await tester.pumpAndSettle();
-          expect(service.requested, ['localized']);
-          expect(player.plays, 1);
-          expect(tester.widget<IconButton>(play).tooltip, expected['pause']);
           expect(tester.takeException(), isNull);
           if (count == 2 && ['de', 'nl', 'ar'].contains(locale)) {
             await _shot(tester, boundary, 'voice-$locale-390-dark');

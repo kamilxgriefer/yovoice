@@ -185,8 +185,10 @@ class MomentAvatarPlayControl extends StatelessWidget {
 }
 
 /// Details, plus Delete on the caller's OWN Moment or Report on somebody
-/// else's. One definition, used by the featured grid and the recent list,
-/// so an action can never exist on one and be missing from the other.
+/// else's. One definition, used by the featured grid, the recent list and
+/// the Głos row (its ⋯ button, its long-press / secondary-click menu and
+/// its screen-reader "More" action), so an action can never exist on one
+/// and be missing from another.
 ///
 /// [keyPrefix] keeps the keys unique when the same Moment is on screen
 /// twice — a featured Moment is also a row in the list underneath.
@@ -200,6 +202,9 @@ class MomentOverflowMenu extends StatelessWidget {
     required this.onReport,
     required this.onDelete,
     this.iconSize = 20,
+    this.icon = Icons.more_vert_rounded,
+    this.iconColor,
+    this.onOpenProfile,
     super.key,
   });
 
@@ -217,88 +222,193 @@ class MomentOverflowMenu extends StatelessWidget {
   final VoidCallback onDelete;
   final double iconSize;
 
-  @override
-  Widget build(BuildContext context) {
+  /// The glyph: the vertical dots by default, the horizontal ones on the
+  /// Głos row's action line.
+  final IconData icon;
+
+  /// Defaults to `textSecondary`.
+  final Color? iconColor;
+
+  /// "View profile" as the first entry — only where the surface has no
+  /// other route to the author's profile (the Głos row, whose name is no
+  /// longer its own target). Absent, the menu is unchanged.
+  final VoidCallback? onOpenProfile;
+
+  /// The menu's entries, for the button below and for a caller that opens
+  /// the same menu at a position of its own ([showAt]).
+  static List<PopupMenuEntry<String>> entries(
+    BuildContext context, {
+    required VoiceMoment moment,
+    required bool isOwn,
+    required bool uploading,
+    required String keyPrefix,
+    bool profile = false,
+  }) {
     final palette = context.appPalette;
     final colors = Theme.of(context).colorScheme;
     final copy = AppLocalizations.of(context);
-    return PopupMenuButton<String>(
-      key: ValueKey('$keyPrefix-menu-${moment.id}'),
-      tooltip: copy.text('More', 'Więcej'),
-      color: palette.surfaceRaised,
-      padding: EdgeInsets.zero,
-      icon: Icon(
-        Icons.more_vert_rounded,
-        size: iconSize,
-        color: palette.textSecondary,
-      ),
-      onSelected: (value) {
-        if (value == 'details') onOpenDetail();
-        if (value == 'report') onReport();
-        if (value == 'delete') onDelete();
-      },
-      itemBuilder: (context) => [
-        if (!uploading)
-          PopupMenuItem<String>(
-            key: ValueKey('$keyPrefix-details-${moment.id}'),
-            value: 'details',
-            child: Row(
-              children: [
-                Icon(
-                  Icons.info_outline_rounded,
-                  size: 18,
-                  color: palette.textSecondary,
+    return <PopupMenuEntry<String>>[
+      if (profile)
+        PopupMenuItem<String>(
+          key: ValueKey('$keyPrefix-profile-${moment.id}'),
+          value: 'profile',
+          child: Row(
+            children: [
+              Icon(
+                Icons.person_outline_rounded,
+                size: 18,
+                color: palette.textSecondary,
+              ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  copy.text('View profile', 'Zobacz profil'),
+                  style: TextStyle(color: palette.textPrimary),
                 ),
-                const SizedBox(width: 8),
-                Text(
+              ),
+            ],
+          ),
+        ),
+      if (!uploading)
+        PopupMenuItem<String>(
+          key: ValueKey('$keyPrefix-details-${moment.id}'),
+          value: 'details',
+          child: Row(
+            children: [
+              Icon(
+                Icons.info_outline_rounded,
+                size: 18,
+                color: palette.textSecondary,
+              ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
                   copy.text('Details', 'Szczegóły'),
                   style: TextStyle(color: palette.textPrimary),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
-        // Delete on OWN Moments only — the author's exit, and for a
-        // permanent Moment the only one. Report only on others':
-        // reporting yourself is not a real intent.
-        if (isOwn)
-          PopupMenuItem<String>(
-            key: ValueKey('$keyPrefix-delete-${moment.id}'),
-            value: 'delete',
-            child: Row(
-              children: [
-                Icon(
-                  Icons.delete_outline_rounded,
-                  size: 18,
-                  color: colors.error,
-                ),
-                const SizedBox(width: 8),
-                Text(
+        ),
+      // Delete on OWN Moments only — the author's exit, and for a
+      // permanent Moment the only one. Report only on others':
+      // reporting yourself is not a real intent.
+      if (isOwn)
+        PopupMenuItem<String>(
+          key: ValueKey('$keyPrefix-delete-${moment.id}'),
+          value: 'delete',
+          child: Row(
+            children: [
+              Icon(Icons.delete_outline_rounded, size: 18, color: colors.error),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
                   copy.text('Delete', 'Usuń'),
                   style: TextStyle(color: colors.error),
                 ),
-              ],
-            ),
-          )
-        else
-          PopupMenuItem<String>(
-            key: ValueKey('$keyPrefix-report-${moment.id}'),
-            value: 'report',
-            child: Row(
-              children: [
-                Icon(
-                  Icons.flag_outlined,
-                  size: 18,
-                  color: palette.textSecondary,
-                ),
-                const SizedBox(width: 8),
-                Text(
+              ),
+            ],
+          ),
+        )
+      else
+        PopupMenuItem<String>(
+          key: ValueKey('$keyPrefix-report-${moment.id}'),
+          value: 'report',
+          child: Row(
+            children: [
+              Icon(Icons.flag_outlined, size: 18, color: palette.textSecondary),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
                   copy.text('Report', 'Zgłoś'),
                   style: TextStyle(color: palette.textPrimary),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
-      ],
+        ),
+    ];
+  }
+
+  /// Routes a chosen entry to its action.
+  static void dispatch(
+    String? value, {
+    required VoidCallback onOpenDetail,
+    required VoidCallback onReport,
+    required VoidCallback onDelete,
+    VoidCallback? onOpenProfile,
+  }) {
+    if (value == 'profile') onOpenProfile?.call();
+    if (value == 'details') onOpenDetail();
+    if (value == 'report') onReport();
+    if (value == 'delete') onDelete();
+  }
+
+  /// Opens the same menu at [position] (a long press, a secondary click or
+  /// a screen reader's "More" on a row that shows no ⋯ button).
+  static Future<void> showAt(
+    BuildContext context, {
+    required RelativeRect position,
+    required VoiceMoment moment,
+    required bool isOwn,
+    required bool uploading,
+    required String keyPrefix,
+    required VoidCallback onOpenDetail,
+    required VoidCallback onReport,
+    required VoidCallback onDelete,
+    VoidCallback? onOpenProfile,
+  }) async {
+    final value = await showMenu<String>(
+      context: context,
+      position: position,
+      color: context.appPalette.surfaceRaised,
+      items: entries(
+        context,
+        moment: moment,
+        isOwn: isOwn,
+        uploading: uploading,
+        keyPrefix: keyPrefix,
+        profile: onOpenProfile != null,
+      ),
+    );
+    dispatch(
+      value,
+      onOpenDetail: onOpenDetail,
+      onReport: onReport,
+      onDelete: onDelete,
+      onOpenProfile: onOpenProfile,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final copy = AppLocalizations.of(context);
+    return PopupMenuButton<String>(
+      key: ValueKey('$keyPrefix-menu-${moment.id}'),
+      tooltip: copy.text('More options', 'Więcej opcji'),
+      color: palette.surfaceRaised,
+      padding: EdgeInsets.zero,
+      icon: Icon(
+        icon,
+        size: iconSize,
+        color: iconColor ?? palette.textSecondary,
+      ),
+      onSelected: (value) => dispatch(
+        value,
+        onOpenDetail: onOpenDetail,
+        onReport: onReport,
+        onDelete: onDelete,
+        onOpenProfile: onOpenProfile,
+      ),
+      itemBuilder: (context) => entries(
+        context,
+        moment: moment,
+        isOwn: isOwn,
+        uploading: uploading,
+        keyPrefix: keyPrefix,
+        profile: onOpenProfile != null,
+      ),
     );
   }
 }

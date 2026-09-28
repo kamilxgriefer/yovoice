@@ -4,7 +4,7 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/semantics.dart';
+import 'package:flutter/rendering.dart';
 import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 import 'package:share_plus/share_plus.dart';
 
@@ -34,7 +34,8 @@ import 'package:yovoice/features/moments/data/services/moment_views_service.dart
 import 'package:yovoice/features/moments/presentation/screens/moment_comments_screen.dart';
 import 'package:yovoice/features/moments/presentation/screens/moment_detail_screen.dart';
 import 'package:yovoice/features/moments/presentation/screens/record_voice_moment_screen.dart';
-import 'package:yovoice/features/moments/presentation/widgets/moment_discover_tiles.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_circles_strip.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_compact_row.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_accessibility.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_pill.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_sheet.dart';
@@ -43,19 +44,17 @@ import 'package:yovoice/features/moments/presentation/widgets/moments_queue_list
 import 'package:yovoice/features/moments/presentation/widgets/moment_story_viewer.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_time_labels.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moments_follow_panel.dart';
+import 'package:yovoice/features/moments/presentation/widgets/voice_feed_filter_tabs.dart';
 import 'package:yovoice/features/moments/presentation/widgets/yo_moments_chrome.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_gradient_filled_button.dart';
-import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/overlays/immersive_feed_chrome.dart';
-import 'package:yovoice/shared/widgets/overlays/immersive_overlay_atoms.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/shared/widgets/voice/voice_player_row.dart'
-    show VoiceBeadButton, VoiceLitBlock, VoicePourWaveform;
-import 'package:yovoice/shared/widgets/waveform/yo_waveform.dart';
+    show VoiceBeadButton, VoicePourWaveform;
 
 /// Which slice of the Moments corpus the feed is showing.
 enum MomentsFilter {
@@ -67,12 +66,32 @@ enum MomentsFilter {
   /// the personal feed, fed by the existing [HomeFeedService] stream.
   following,
 
-  /// The same pool in pure engagement order, most-engaged first.
+  /// The same pool in pure engagement order, most-engaged first — the
+  /// "Popularne" / "Popular" tab.
   mostEngaged,
 
   /// The same pool ordered by `createdAt` descending, nothing else.
+  ///
+  /// NOT offered in the UI (G4): it produced exactly the list [discover]
+  /// produces (both are `createdAt` descending over the same pool), so two
+  /// tabs showed one list. The value and its code path stay for the entry
+  /// seams and saved state that may still name it; the feed shows it as
+  /// [discover] ([momentsShownFilter]).
   recent,
 }
+
+/// The tabs the Głos feed offers, in order.
+const List<MomentsFilter> momentsVisibleFilters = <MomentsFilter>[
+  MomentsFilter.discover,
+  MomentsFilter.following,
+  MomentsFilter.mostEngaged,
+];
+
+/// The filter the feed actually shows for a requested [filter]: a request
+/// for the retired "Recent" (a legacy seam, saved state) lands on
+/// Discover, which is the same list.
+MomentsFilter momentsShownFilter(MomentsFilter filter) =>
+    filter == MomentsFilter.recent ? MomentsFilter.discover : filter;
 
 /// One readable, lazy Voice Moments list with one shared audio transport.
 /// Author chains, details and full comment threads remain explicit actions;
@@ -106,6 +125,7 @@ class MomentsFeedView extends StatefulWidget {
     this.friendService,
     this.followService,
     this.neighbourQueue,
+    this.refreshRequests,
     super.key,
   });
 
@@ -139,6 +159,14 @@ class MomentsFeedView extends StatefulWidget {
   /// Where this feed publishes the pool the expanded player may hand off
   /// to. Production shares one instance; tests pass their own.
   final MomentNeighbourQueue? neighbourQueue;
+
+  /// Fires when the host asks for the list to be read again — YO Moments
+  /// fires it when the already selected "Głos" format tab is activated a
+  /// second time (as [ReelsFeedScreen.refreshRequests] does for "Yeels").
+  /// The same path as re-tapping the active filter tab: back to the top,
+  /// the pull-to-refresh spinner, a polite announcement, and a no-op while
+  /// a reload is already running.
+  final Listenable? refreshRequests;
   final MomentDiscoveryService? discoveryService;
   final HomeFeedService? feedService;
   final MomentService? momentService;
@@ -178,7 +206,11 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
   MomentService? _moments;
   MomentViewsService? _views;
 
-  late MomentsFilter _filter = widget.initialFilter;
+  late MomentsFilter _filter = momentsShownFilter(widget.initialFilter);
+
+  /// The feed list's scroll position: re-tapping the active tab returns it
+  /// to the top before the refresh.
+  final ScrollController _feedScroll = ScrollController();
 
   _Phase _phase = _Phase.loading;
   Object? _error;
@@ -221,6 +253,12 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
   int _socialEpoch = 0;
   ModalRoute<void>? _observedRoute;
   bool _routeIsCurrent = true;
+
+  /// A transient popup — a menu — sits directly above the feed's route. It
+  /// covers a few rows, not the feed: playback continues, the open row
+  /// stays open (its ⋯ answers from it and gets focus back), and closing it
+  /// reloads nothing (a reload would drop every "Wczytaj więcej" page).
+  bool _transientPopupAbove = false;
   bool _foreground = true;
   late bool _wasVisible;
   bool _openingDestination = false;
@@ -247,13 +285,24 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
   Uri? _loadedUri;
   bool _playbackBusy = false;
   bool _transportBlocked = false;
-  final _playback = ValueNotifier<_FeedPlayback>(const _FeedPlayback());
+  final _playback = ValueNotifier<MomentFeedPlayback>(
+    const MomentFeedPlayback(),
+  );
 
-  /// W3's energy: the id of the ONE card whose clip is actually playing
+  /// The controller's current clip (playing, paused, loading or failed), or
+  /// null: the ONE row that is open. It changes on play, a switch or a stop
+  /// and never on a position tick, so the rows that listen to it never
+  /// rebuild per tick.
+  final _current = ValueNotifier<String?>(null);
+
+  /// The row being pressed while the current clip switches, so the list
+  /// keeps it where the reader pressed it ([_AnchoredRows]).
+  final _scrollAnchor = _ScrollAnchor();
+
+  /// W3's energy: the id of the ONE row whose clip is actually playing
   /// (never while its grant resolves), or null. It changes only on play,
-  /// pause or a switch of clip — a position tick leaves it alone — so the
-  /// card shells that listen to it never rebuild per tick, and exactly one
-  /// card in the feed is ever lit.
+  /// pause or a switch of clip — a position tick leaves it alone — and
+  /// exactly one row in the feed is ever lit.
   final _lit = ValueNotifier<String?>(null);
 
   /// Bumped by every COMPLETED seek, together with the sought position, so
@@ -274,6 +323,21 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
   final FocusNode _expiryRecoveryFocus = FocusNode(
     debugLabel: 'Reload Moments after expiry',
   );
+
+  /// The one pull-to-refresh indicator mounted at a time (the list's, or an
+  /// empty state's), so a requested reload can show its spinner.
+  final GlobalKey<RefreshIndicatorState> _refreshIndicator =
+      GlobalKey<RefreshIndicatorState>(debugLabel: 'Głos refresh');
+
+  /// The reload in flight: a second request joins it instead of starting
+  /// another read.
+  Future<void>? _refreshInFlight;
+
+  /// A requested reload whose spinner is still snapping in (the indicator
+  /// starts the read once it has): a second request then is the same one.
+  bool _reloadStarting = false;
+  Timer? _reloadStartGuard;
+  int _reloadRequests = 0;
   final MomentExpiryAnnouncer _expiryAnnouncer = MomentExpiryAnnouncer();
 
   AppLocalizations get _copy => AppLocalizations.of(context);
@@ -326,6 +390,7 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
     _subscribeAccountStreams();
     _bindAuth();
     widget.isVisible?.addListener(_handleVisibility);
+    widget.refreshRequests?.addListener(_requestRefresh);
     unawaited(_load());
   }
 
@@ -535,6 +600,10 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
       oldWidget.isVisible?.removeListener(_handleVisibility);
       widget.isVisible?.addListener(_handleVisibility);
     }
+    if (!identical(oldWidget.refreshRequests, widget.refreshRequests)) {
+      oldWidget.refreshRequests?.removeListener(_requestRefresh);
+      widget.refreshRequests?.addListener(_requestRefresh);
+    }
     if (oldWidget.auth != widget.auth) {
       try {
         _auth = widget.auth ?? FirebaseAuth.instance;
@@ -556,16 +625,66 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
       _observedRoute = route;
       if (route != null) appRouteObserver.subscribe(this, route);
     }
-    _routeIsCurrent = route?.isCurrent ?? true;
+    final isCurrent = route?.isCurrent ?? true;
+    if (isCurrent) {
+      _transientPopupAbove = false;
+    } else if (_routeIsCurrent &&
+        !_transientPopupAbove &&
+        _isTransientPopup(_topRoute())) {
+      // Just covered, and by a popup — told here too, for a host whose
+      // navigator carries no route observer: the route directly above ours
+      // is the one that was just pushed.
+      _transientPopupAbove = true;
+    }
+    _routeIsCurrent = isCurrent || _transientPopupAbove;
     _handleVisibility();
   }
 
   @override
-  void didPushNext() => _setRouteCurrent(false);
+  void didPushNext() {
+    if (_isTransientPopup(_topRoute())) {
+      _transientPopupAbove = true;
+      return;
+    }
+    _transientPopupAbove = false;
+    _setRouteCurrent(false);
+  }
+
   @override
-  void didPopNext() => _setRouteCurrent(true);
+  void didPopNext() {
+    // The menu that just closed covered nothing: no stop happened, so no
+    // reload follows either.
+    _transientPopupAbove = false;
+    _setRouteCurrent(true);
+  }
+
   @override
-  void didPop() => _setRouteCurrent(false);
+  void didPop() {
+    _transientPopupAbove = false;
+    _setRouteCurrent(false);
+  }
+
+  /// The navigator's topmost route. `popUntil` hands its predicate the
+  /// topmost route first, and answering `true` at once pops nothing; the
+  /// navigator offers no other public read of it.
+  Route<dynamic>? _topRoute() {
+    final navigator = _observedRoute?.navigator;
+    if (navigator == null) return null;
+    Route<dynamic>? top;
+    navigator.popUntil((route) {
+      top = route;
+      return true;
+    });
+    return top;
+  }
+
+  /// A popup that lays a few entries over the feed (a menu, a dropdown) —
+  /// not a dialog or a bottom sheet, which host content of their own (the
+  /// Moment sheet plays its own audio) and do cover the feed.
+  static bool _isTransientPopup(Route<dynamic>? route) =>
+      route is PopupRoute &&
+      route is! RawDialogRoute &&
+      route is! ModalBottomSheetRoute;
 
   void _setRouteCurrent(bool value) {
     _routeIsCurrent = value;
@@ -598,6 +717,8 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
     _loadEpoch += 1;
     _socialEpoch += 1;
     widget.isVisible?.removeListener(_handleVisibility);
+    widget.refreshRequests?.removeListener(_requestRefresh);
+    _reloadStartGuard?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     appRouteObserver.unsubscribe(this);
     _expiry.dispose();
@@ -608,7 +729,9 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
     unawaited(_mineSubscription?.cancel());
     unawaited(_stopPanelPlayback(release: true, notify: false));
     _playback.dispose();
+    _current.dispose();
     _lit.dispose();
+    _feedScroll.dispose();
     _expiryRecoveryFocus.dispose();
     if (_neighbourQueue.value.belongsTo(_viewerUid)) _neighbourQueue.clear();
     super.dispose();
@@ -687,9 +810,67 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
     );
   }
 
-  Future<void> _refreshAll() async {
-    _retrySocial();
-    await _load();
+  /// Reads the list again. A reload already running is joined, not
+  /// doubled: two quick requests are one read.
+  Future<void> _refreshAll() {
+    _reloadStarting = false;
+    _reloadStartGuard?.cancel();
+    final inFlight = _refreshInFlight;
+    if (inFlight != null) return inFlight;
+    late final Future<void> reload;
+    reload = () async {
+      try {
+        _retrySocial();
+        await _load();
+      } finally {
+        if (identical(_refreshInFlight, reload)) _refreshInFlight = null;
+      }
+    }();
+    _refreshInFlight = reload;
+    return reload;
+  }
+
+  /// A reload the READER asked for — the active tab tapped again, the
+  /// host's reselect ([MomentsFeedView.refreshRequests]), the desktop
+  /// "Odśwież Momenty": back to the top, the pull-to-refresh spinner as its
+  /// visible progress, and a polite announcement. Ignored while a reload is
+  /// starting or running.
+  void _requestRefresh() {
+    if (!mounted || _reloadStarting || _refreshInFlight != null) return;
+    if (_feedScroll.hasClients && _feedScroll.offset > 0) {
+      final duration = AppMotion.resolve(context, AppMotion.entrance);
+      if (duration == Duration.zero) {
+        _feedScroll.jumpTo(0);
+      } else {
+        unawaited(
+          _feedScroll.animateTo(
+            0,
+            duration: duration,
+            curve: AppMotion.entranceCurve,
+          ),
+        );
+      }
+    }
+    _expiryAnnouncer.announce(
+      context,
+      transition: 'reload-request-${++_reloadRequests}',
+      message: _copy.text('Reloading Moments…', 'Odświeżanie Momentów…'),
+    );
+    final indicator = _refreshIndicator.currentState;
+    if (indicator == null || !indicator.mounted) {
+      unawaited(_refreshAll());
+      return;
+    }
+    // The spinner snaps in and then calls its onRefresh ([_refreshAll]);
+    // should it be torn down first (the list replaced mid-snap), the guard
+    // still reads the list.
+    _reloadStarting = true;
+    _reloadStartGuard?.cancel();
+    _reloadStartGuard = Timer(const Duration(seconds: 1), () {
+      if (!mounted || !_reloadStarting) return;
+      unawaited(_refreshAll());
+    });
+    unawaited(indicator.show());
   }
 
   Future<void> _loadMore() async {
@@ -759,7 +940,9 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
       _foreground &&
       _routeIsCurrent &&
       widget.isVisible?.value != false &&
-      momentExpirySurfaceIsVisible(context);
+      // The route half is [_routeIsCurrent]'s, which knows that a transient
+      // popup over the feed does not hide it.
+      momentExpirySurfaceIsVisible(context, requireCurrentRoute: false);
 
   VoiceMoment? _currentSnapshot(VoiceMoment moment, {bool allowDraft = false}) {
     if (_viewerUid.isEmpty || _viewerUid != _uid) return null;
@@ -850,7 +1033,7 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
 
   void _publishPlayback() {
     if (!mounted) return;
-    _playback.value = _FeedPlayback(
+    _playback.value = MomentFeedPlayback(
       id: _playingId,
       playing: _isPlaying,
       busy: _playbackBusy,
@@ -859,6 +1042,7 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
       error: _playbackError,
       seek: _seekGeneration,
     );
+    _current.value = _playingId;
     _lit.value = _isPlaying && !_playbackBusy ? _playingId : null;
   }
 
@@ -1014,6 +1198,16 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
         _position > Duration.zero &&
         (total <= Duration.zero || _position < total);
     final resumeAt = resuming ? _position : Duration.zero;
+    if (_playingId != moment.id) {
+      // Opening this row closes the open one; if that one is above it, the
+      // list keeps THIS row — the control just pressed — where it is.
+      _scrollAnchor.pressedId = moment.id;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_scrollAnchor.pressedId == moment.id) {
+          _scrollAnchor.pressedId = null;
+        }
+      });
+    }
     _playingId = moment.id;
     _playingMoment = moment;
     _isPlaying = false;
@@ -1761,12 +1955,24 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
   List<MomentChain> _chainsFor(List<VoiceMoment> moments) =>
       buildMomentChains(moments);
 
-  void _setFilter(MomentsFilter filter) {
+  void _setFilter(MomentsFilter requested) {
+    final filter = momentsShownFilter(requested);
     if (filter == _filter) return;
     unawaited(_stopPanelPlayback());
     setState(() {
       _filter = filter;
     });
+  }
+
+  /// A tap on a tab. The ACTIVE tab tapped again takes the list back to its
+  /// top and reloads it — the phone's refresh now that the refresh button
+  /// is gone (pull-to-refresh is the other way).
+  void _selectTab(MomentsFilter filter) {
+    if (momentsShownFilter(filter) != _filter) {
+      _setFilter(filter);
+      return;
+    }
+    _requestRefresh();
   }
 
   // ---------------------------------------------------------------- build
@@ -1782,16 +1988,19 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
       switch (value) {
         MomentsFilter.discover => copy.text('Discover', 'Odkrywaj'),
         MomentsFilter.following => copy.text('Following', 'Obserwowani'),
-        MomentsFilter.mostEngaged => copy.text(
-          'Most engaged',
-          'Najbardziej angażujące',
+        // "Najbardziej angażujące" became "Popularne": the same engagement
+        // order behind a word that fits a tab.
+        MomentsFilter.mostEngaged => copy.contextualText(
+          'yoMoments.popular',
+          'Popular',
+          'Popularne',
         ),
         MomentsFilter.recent => copy.text('Recent', 'Najnowsze'),
       };
 
   List<YoMomentsFilterOption> _filterOptions(AppLocalizations copy) =>
       <YoMomentsFilterOption>[
-        for (final value in MomentsFilter.values)
+        for (final value in momentsVisibleFilters)
           YoMomentsFilterOption(
             key: ValueKey('moments-filter-${value.name}'),
             label: filterLabel(copy, value),
@@ -1799,7 +2008,7 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
           ),
       ];
 
-  /// Whether the column is still waiting for its first page: the capsule
+  /// Whether the column is still waiting for its first page: the author
   /// strip and the calm panel stay ABSENT then (they would fake authors).
   bool get _isLoadingFirstPage => _filter == MomentsFilter.following
       ? _socialError == null && _socialData == null && _feed != null
@@ -1819,7 +2028,9 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
           textScale: MediaQuery.textScalerOf(context).scale(1),
         );
         final copy = _copy;
+        final palette = context.appPalette;
         final options = _filterOptions(copy);
+        final selectedIndex = momentsVisibleFilters.indexOf(_filter);
         final groupLabel = copy.contextualText(
           'yoMoments.voiceFilters',
           'Voice Moment filters',
@@ -1832,6 +2043,22 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
         final body = _filter == MomentsFilter.following
             ? _buildFollowing(layout)
             : _buildPool(layout);
+        // Level 2 below 1100: three trackless text tabs. The active one is
+        // also the focus-recovery target after an expiry removal (it took
+        // over from the refresh button), and tapping it again scrolls to the
+        // top and reloads.
+        final tabs = VoiceFeedFilterTabs(
+          key: const ValueKey<String>('voice-filter-tabs'),
+          groupLabel: groupLabel,
+          selectedIndex: selectedIndex,
+          selectedFocusNode: _expiryRecoveryFocus,
+          selectedHint: voiceFeedTabRefreshHint(copy),
+          onSelected: (index) => _selectTab(momentsVisibleFilters[index]),
+          tabs: <ImmersiveChromeOption>[
+            for (final option in options)
+              ImmersiveChromeOption(key: option.key, label: option.label),
+          ],
+        );
 
         Widget mainColumn = Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1840,65 +2067,37 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
               ImmersiveFeedChrome(
                 key: const ValueKey<String>('voice-immersive-chrome'),
                 // Głos is a list on the page canvas, not footage: the same
-                // compact two-level chrome, drawn in palette roles.
+                // compact chrome, drawn in palette roles, with the text tabs
+                // as its level 2.
                 onCanvas: true,
                 gutter: layout.gutter,
                 formatSwitch: immersiveHeader.formatSwitch,
                 leading: immersiveHeader.leading,
                 trailing: immersiveHeader.trailing,
-                filters: <ImmersiveChromeOption>[
-                  for (final option in options)
-                    ImmersiveChromeOption(key: option.key, label: option.label),
-                ],
-                selectedFilterIndex: _filter.index,
-                onFilterSelected: (index) =>
-                    _setFilter(MomentsFilter.values[index]),
+                filterBar: tabs,
                 filterGroupLabel: groupLabel,
-                // Refresh sits in a 40 px hairline circle (refine-look
-                // §8.4), drawn behind the same keyed 48 px plate button that
-                // is also the focus-recovery target.
-                filterTrailing: _RefreshCircle(
-                  child: OverlayPlateButton(
-                    key: const ValueKey('moments-discovery-refresh'),
-                    icon: Icons.refresh_rounded,
-                    semanticLabel: copy.text(
-                      'Reload Moments',
-                      'Odśwież Momenty',
-                    ),
-                    focusNode: _expiryRecoveryFocus,
-                    onTap: _refreshAll,
-                    glyphColor: context.appPalette.textSecondary,
-                    // The 40 px circle behind it carries the hover, so the
-                    // 48 px plate stays clear and hover never shows two
-                    // concentric circles.
-                    plateColor: Colors.transparent,
-                    hoverPlateColor: Colors.transparent,
-                  ),
-                ),
               )
             else
               ?header,
             if (!layout.showsLocalPanel && !usesImmersiveChrome)
               Padding(
-                padding: const EdgeInsets.only(top: AppRhythm.tight),
-                child: YoMomentsFilterChips(
-                  options: options,
-                  selectedIndex: _filter.index,
-                  onSelected: (index) =>
-                      _setFilter(MomentsFilter.values[index]),
-                  groupLabel: groupLabel,
-                  gutter: layout.gutter,
-                  trailing: IconButton(
-                    key: const ValueKey('moments-discovery-refresh'),
-                    focusNode: _expiryRecoveryFocus,
-                    onPressed: _refreshAll,
-                    tooltip: copy.text('Reload Moments', 'Odśwież Momenty'),
-                    icon: Icon(
-                      Icons.refresh_rounded,
-                      color: context.appPalette.textSecondary,
-                    ),
-                  ),
+                padding: EdgeInsets.fromLTRB(
+                  layout.gutter,
+                  AppRhythm.tight,
+                  layout.gutter,
+                  0,
                 ),
+                child: tabs,
+              ),
+            // The chrome ends on a hairline; the list scrolls under it.
+            if (!layout.showsLocalPanel)
+              Divider(
+                key: const ValueKey<String>('voice-chrome-divider'),
+                height: 1,
+                thickness: 1,
+                color: MediaQuery.highContrastOf(context)
+                    ? palette.borderStrong
+                    : palette.hairline,
               ),
             Expanded(child: body),
           ],
@@ -1927,24 +2126,24 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
               FocusTraversalGroup(
                 child: YoMomentsLocalPanel(
                   options: options,
-                  selectedIndex: _filter.index,
+                  selectedIndex: selectedIndex,
                   onSelected: (index) =>
-                      _setFilter(MomentsFilter.values[index]),
+                      _setFilter(momentsVisibleFilters[index]),
                   groupLabel: groupLabel,
                   width: layout.localPanelWidth,
                   onCreate: widget.onCreate,
-                  // The same control as the phone's refresh (an IconButton
-                  // with the same key, tooltip and focus-recovery node), given
-                  // its label as a row so it reads like the panel's rows.
+                  // The desktop refresh: an IconButton with the feed's
+                  // refresh key, tooltip and focus-recovery node, given its
+                  // label as a row so it reads like the panel's rows.
                   trailing: Align(
                     alignment: AlignmentDirectional.centerStart,
                     child: IconButton(
                       key: const ValueKey('moments-discovery-refresh'),
                       focusNode: _expiryRecoveryFocus,
-                      onPressed: _refreshAll,
+                      onPressed: _requestRefresh,
                       tooltip: copy.text('Reload Moments', 'Odśwież Momenty'),
                       style: IconButton.styleFrom(
-                        foregroundColor: context.appPalette.textSecondary,
+                        foregroundColor: palette.textSecondary,
                         minimumSize: const Size(
                           AppSizing.minimumTouchTarget,
                           AppSizing.standardControlHeight,
@@ -1969,7 +2168,7 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: AppTypography.titleSmall.copyWith(
-                                  color: context.appPalette.textSecondary,
+                                  color: palette.textSecondary,
                                 ),
                               ),
                             ),
@@ -2042,7 +2241,7 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
   Widget _buildPool(YoMomentsLayout layout) {
     switch (_phase) {
       case _Phase.loading:
-        return _LoadingState(gutter: layout.gutter, compact: layout.isNarrow);
+        return _LoadingState(layout: layout);
       case _Phase.error:
         return _ErrorState(error: _error, onRetry: _load);
       case _Phase.ready:
@@ -2069,6 +2268,8 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
     }
     if (result.corpusIsEmpty) {
       return _EmptyState(
+        onPull: _refreshAll,
+        refreshKey: _refreshIndicator,
         icon: Icons.mic_none_rounded,
         title: _copy.text(
           'No Voice Moments yet',
@@ -2094,6 +2295,8 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
       // explanation for Moments it never saw.
       _reportServerDroppedFeed();
       return _EmptyState(
+        onPull: _refreshAll,
+        refreshKey: _refreshIndicator,
         icon: Icons.cloud_off_rounded,
         title: _copy.text(
           'These Moments could not be loaded',
@@ -2127,6 +2330,8 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
                 reason == MomentDropReason.blockedAuthor,
           );
       return _EmptyState(
+        onPull: _refreshAll,
+        refreshKey: _refreshIndicator,
         icon: expiredOnly
             ? Icons.timer_off_outlined
             : Icons.error_outline_rounded,
@@ -2193,7 +2398,7 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
       return _ErrorState(error: _socialError, onRetry: _retrySocial);
     }
     if (_socialData == null && _feed != null) {
-      return _LoadingState(gutter: layout.gutter, compact: layout.isNarrow);
+      return _LoadingState(layout: layout);
     }
     final list = _followingList(
       _effectiveNow(),
@@ -2201,6 +2406,8 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
     if (list.isEmpty) {
       final findPeople = widget.onOpenFindCreators;
       return _EmptyState(
+        onPull: _refreshAll,
+        refreshKey: _refreshIndicator,
         key: const ValueKey('moments-following-empty'),
         icon: Icons.graphic_eq_rounded,
         title: _copy.text('Nothing here yet', 'Jeszcze nic tu nie ma'),
@@ -2226,9 +2433,15 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
     required YoMomentsLayout layout,
     Widget? footer,
   }) {
-    // The capsule strip lists EXACTLY the authors of the list being shown —
+    // The author strip lists EXACTLY the authors of the list being shown —
     // loaded, active, unblocked, playable — and nothing else.
     final chains = _chainsFor(list);
+    String? viewerName;
+    try {
+      viewerName = _auth?.currentUser?.displayName;
+    } catch (_) {
+      viewerName = null;
+    }
     return NotificationListener<ScrollNotification>(
       onNotification: (_) {
         _checkVisiblePlaybackAfterFrame();
@@ -2239,16 +2452,23 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
         moments: list,
         chains: chains,
         gutter: layout.gutter,
-        compact: layout.isNarrow,
+        block: layout.showsLocalPanel,
+        controller: _feedScroll,
+        anchor: _scrollAnchor,
         viewedIds: _viewedIds,
         currentUserId: _uid,
+        viewerName: viewerName,
         playback: _playback,
+        current: _current,
         lit: _lit,
         pendingLikes: _pendingLikes,
         canLike: _feed != null,
         footer: footer,
-        onCardBuild: _rememberCard,
-        onCardDispose: _forgetCard,
+        refreshKey: _refreshIndicator,
+        onRefresh: _refreshAll,
+        onRecord: widget.onRecord,
+        onRowBuild: _rememberCard,
+        onRowDispose: _forgetCard,
         onTapMoment: (moment) => unawaited(_openSheet(moment)),
         onPlayMoment: (moment) => unawaited(_togglePanelPlay(moment)),
         onSeek: (moment, target) => unawaited(_seekPanel(moment, target)),
@@ -2266,121 +2486,36 @@ class _MomentsFeedViewState extends State<MomentsFeedView>
   }
 }
 
-/// The horizontal strip of author capsules above the first card.
+/// The Głos list (G4): the author circles, then one compact row per Moment,
+/// then the pool footer — one lazy scroll view that pulls to refresh.
 ///
-/// It lists exactly the authors of the loaded, active, unblocked, playable
-/// list (one chain per author, newest first — `buildMomentChains`); the
-/// unheard/heard fact comes from the caller's own `momentViews` set. Nothing
-/// is invented: no author outside the list, no order beyond the chains',
-/// no amplitude in the decorative motif.
-class MomentAuthorCapsuleStrip extends StatelessWidget {
-  const MomentAuthorCapsuleStrip({
-    required this.chains,
-    required this.viewedIds,
-    required this.onOpenChain,
-    required this.gutter,
-    super.key,
-  });
-
-  final List<MomentChain> chains;
-  final Set<String> viewedIds;
-  final ValueChanged<MomentChain> onOpenChain;
-
-  /// The page gutter, used as scroll padding so the strip is full-bleed
-  /// and its first capsule still starts on the column's edge.
-  final double gutter;
-
-  /// Below this slot width the motif is dropped so at least three capsules
-  /// stay visible.
-  static const double barsMinSlotWidth = 360;
-
-  @override
-  Widget build(BuildContext context) {
-    final copy = AppLocalizations.of(context);
-    return SizedBox(
-      height: MomentAuthorCapsule.height,
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final showBars = constraints.maxWidth >= barsMinSlotWidth;
-          return ListView.separated(
-            key: const ValueKey('moments-author-capsules'),
-            scrollDirection: Axis.horizontal,
-            padding: EdgeInsets.symmetric(horizontal: gutter),
-            itemCount: chains.length,
-            separatorBuilder: (_, __) => const SizedBox(width: AppRhythm.item),
-            itemBuilder: (context, index) {
-              final chain = chains[index];
-              final seen = !chain.hasUnviewed(viewedIds);
-              return MomentAuthorCapsule(
-                key: ValueKey('moments-capsule-${chain.authorId}'),
-                name: chain.authorName,
-                seen: seen,
-                userId: chain.authorId,
-                photoUrl: chain.authorPhotoUrl,
-                displayName: chain.authorName,
-                showBars: showBars,
-                semanticLabel: chain.length > 1
-                    ? copy.template(
-                        'Open the story chain by {name}, {count} Moments',
-                        'Otwórz relację użytkownika {name}, Momenty: {count}',
-                        values: {
-                          'name': chain.authorName,
-                          'count': chain.length,
-                        },
-                      )
-                    : copy.template(
-                        'Open the story chain by {name}',
-                        'Otwórz relację użytkownika {name}',
-                        values: {'name': chain.authorName},
-                      ),
-                onTap: () => onOpenChain(chain),
-              );
-            },
-          );
-        },
-      ),
-    );
-  }
-}
-
-/// Only mounted cards listen to the shared transport. Playback ticks never
-/// reorder the feed or recreate an audio player for an offscreen item.
-class _FeedPlayback {
-  const _FeedPlayback({
-    this.id,
-    this.playing = false,
-    this.busy = false,
-    this.elapsed = Duration.zero,
-    this.duration,
-    this.error,
-    this.seek = 0,
-  });
-
-  final String? id;
-  final bool playing;
-  final bool busy;
-  final Duration elapsed;
-  final Duration? duration;
-  final String? error;
-
-  /// The feed's seek generation: a change snaps the poured waveform.
-  final int seek;
-}
-
+/// Below 1100 the rows sit on the canvas, full-bleed, a hairline between
+/// them. At 1100 and wider (the local panel exists) the rows are ONE R2
+/// block — radius 20, a flat `surface` fill, the hairline edge (Pearl's
+/// lift outside) — with the dividers inside it; the strip stays above it on
+/// the canvas. The block is painted behind the lazy list as a sliver
+/// decoration, so it is one shape however long the list grows.
 class _FeedColumn extends StatelessWidget {
   const _FeedColumn({
     required this.moments,
     required this.chains,
     required this.gutter,
-    required this.compact,
+    required this.block,
+    required this.controller,
+    required this.anchor,
     required this.viewedIds,
     required this.currentUserId,
+    required this.viewerName,
     required this.playback,
+    required this.current,
     required this.lit,
     required this.pendingLikes,
     required this.canLike,
-    required this.onCardBuild,
-    required this.onCardDispose,
+    required this.refreshKey,
+    required this.onRefresh,
+    required this.onRecord,
+    required this.onRowBuild,
+    required this.onRowDispose,
     required this.onTapMoment,
     required this.onPlayMoment,
     required this.onSeek,
@@ -2400,18 +2535,27 @@ class _FeedColumn extends StatelessWidget {
   final List<VoiceMoment> moments;
   final List<MomentChain> chains;
   final double gutter;
-  final bool compact;
+
+  /// The rows are one R2 block (≥ 1100).
+  final bool block;
+  final ScrollController controller;
+  final _ScrollAnchor anchor;
   final Set<String> viewedIds;
   final String currentUserId;
-  final ValueListenable<_FeedPlayback> playback;
+  final String? viewerName;
+  final ValueListenable<MomentFeedPlayback> playback;
+  final ValueListenable<String?> current;
 
-  /// The id of the one playing card (W3's energy notifier).
+  /// The id of the one playing row (W3's energy notifier).
   final ValueListenable<String?> lit;
   final Set<String> pendingLikes;
   final bool canLike;
   final Widget? footer;
-  final void Function(String, BuildContext) onCardBuild;
-  final void Function(String, BuildContext) onCardDispose;
+  final GlobalKey<RefreshIndicatorState> refreshKey;
+  final Future<void> Function() onRefresh;
+  final VoidCallback onRecord;
+  final void Function(String, BuildContext) onRowBuild;
+  final void Function(String, BuildContext) onRowDispose;
   final ValueChanged<VoiceMoment> onTapMoment;
   final ValueChanged<VoiceMoment> onPlayMoment;
   final void Function(VoiceMoment, Duration) onSeek;
@@ -2425,77 +2569,303 @@ class _FeedColumn extends StatelessWidget {
   final ValueChanged<VoiceMoment> onDelete;
   final ValueChanged<VoiceMoment> onReplyVoice;
 
+  /// The rows' inner gutter inside the desktop block (the board's 20).
+  static const double blockInset = 20;
+
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final highContrast = MediaQuery.highContrastOf(context);
     final hasStrip = chains.isNotEmpty;
-    final offset = hasStrip ? 1 : 0;
     final indices = <Key, int>{
-      if (hasStrip) const ValueKey('moments-author-capsules-item'): 0,
       for (var index = 0; index < moments.length; index++)
-        ValueKey('moment-row-${moments[index].id}'): index + offset,
+        ValueKey('moment-row-${moments[index].id}'): index,
     };
-    return ListView.builder(
-      key: const ValueKey('moments-feed-scroll'),
-      // The cards carry the gutter themselves so the capsule strip can be
-      // full-bleed with the gutter as its scroll padding.
-      padding: const EdgeInsets.only(
-        top: AppRhythm.title,
-        bottom: AppRhythm.page,
+    final last = moments.length - 1;
+
+    Widget row(BuildContext context, int index) {
+      final moment = moments[index];
+      final BorderRadius? clip;
+      if (!block) {
+        clip = null;
+      } else if (index == 0 && index == last) {
+        clip = AppRadius.block;
+      } else if (index == 0) {
+        clip = const BorderRadius.vertical(top: Radius.circular(20));
+      } else if (index == last) {
+        clip = const BorderRadius.vertical(bottom: Radius.circular(20));
+      } else {
+        clip = null;
+      }
+      return MomentCompactRow(
+        key: ValueKey('moment-row-${moment.id}'),
+        moment: moment,
+        seen: viewedIds.contains(moment.id),
+        isOwn: currentUserId.isNotEmpty && moment.authorId == currentUserId,
+        canInteract: currentUserId.isNotEmpty,
+        canLike: canLike,
+        likePending: pendingLikes.contains(moment.id),
+        current: current,
+        playback: playback,
+        lit: lit,
+        inset: block ? blockInset : gutter,
+        onCanvas: !block,
+        divider: index != last,
+        clip: clip,
+        onRowBuild: onRowBuild,
+        onRowDispose: onRowDispose,
+        onTap: () => onTapMoment(moment),
+        onPlay: () => onPlayMoment(moment),
+        onSeek: (position) => onSeek(moment, position),
+        onLike: () => onLike(moment),
+        onComments: () => onComments(moment),
+        onOpenChain: () => onOpenChain(moment),
+        onOpenProfile: () => onOpenProfile(moment),
+        onOpenDetail: () => onOpenDetail(moment),
+        onShare: () => onShare(moment),
+        onReport: () => onReport(moment),
+        onDelete: () => onDelete(moment),
+        onReplyVoice: () => onReplyVoice(moment),
+      );
+    }
+
+    Widget rows = _AnchoredRows(
+      ids: <String>[for (final moment in moments) moment.id],
+      anchor: anchor,
+      controller: controller,
+      sliver: SliverList(
+        delegate: SliverChildBuilderDelegate(
+          row,
+          childCount: moments.length,
+          findChildIndexCallback: (key) => indices[key],
+        ),
       ),
-      itemCount: offset + moments.length + (footer == null ? 0 : 1),
-      findChildIndexCallback: (key) => indices[key],
-      itemBuilder: (context, index) {
-        if (hasStrip && index == 0) {
-          return Padding(
-            key: const ValueKey('moments-author-capsules-item'),
-            padding: const EdgeInsets.only(bottom: AppRhythm.title),
-            child: MomentAuthorCapsuleStrip(
-              chains: chains,
-              viewedIds: viewedIds,
-              gutter: gutter,
-              onOpenChain: (chain) => onOpenChain(chain.moments.last),
-            ),
-          );
-        }
-        final momentIndex = index - offset;
-        if (momentIndex == moments.length) {
-          return Padding(
-            padding: EdgeInsets.fromLTRB(gutter, AppRhythm.title, gutter, 0),
-            child: footer,
-          );
-        }
-        final moment = moments[momentIndex];
-        return Padding(
-          padding: EdgeInsets.symmetric(horizontal: gutter),
-          child: _MomentFeedCard(
-            key: ValueKey('moment-row-${moment.id}'),
-            moment: moment,
-            seen: viewedIds.contains(moment.id),
-            isOwn: currentUserId.isNotEmpty && moment.authorId == currentUserId,
-            canInteract: currentUserId.isNotEmpty,
-            canLike: canLike,
-            likePending: pendingLikes.contains(moment.id),
-            playback: playback,
-            lit: lit,
-            compact: compact,
-            onCardBuild: onCardBuild,
-            onCardDispose: onCardDispose,
-            onTap: () => onTapMoment(moment),
-            onPlay: () => onPlayMoment(moment),
-            onSeek: (position) => onSeek(moment, position),
-            onLike: () => onLike(moment),
-            onComments: () => onComments(moment),
-            onOpenChain: () => onOpenChain(moment),
-            onOpenProfile: () => onOpenProfile(moment),
-            onOpenDetail: () => onOpenDetail(moment),
-            onShare: () => onShare(moment),
-            onReport: () => onReport(moment),
-            onDelete: () => onDelete(moment),
-            onReplyVoice: () => onReplyVoice(moment),
-          ),
-        );
-      },
     );
+    if (block && moments.isNotEmpty) {
+      rows = SliverPadding(
+        padding: EdgeInsets.symmetric(horizontal: gutter),
+        sliver: DecoratedSliver(
+          key: const ValueKey<String>('moments-feed-block'),
+          decoration: BoxDecoration(
+            color: palette.surface,
+            borderRadius: AppRadius.block,
+            boxShadow: AppFinish.blockShadows(
+              palette,
+              highContrast: highContrast,
+            ),
+          ),
+          sliver: DecoratedSliver(
+            // The edge over the rows, so a row's ink never covers it.
+            position: DecorationPosition.foreground,
+            decoration: BoxDecoration(
+              borderRadius: AppRadius.block,
+              border: AppFinish.blockEdge(palette, highContrast: highContrast),
+            ),
+            sliver: rows,
+          ),
+        ),
+      );
+    }
+
+    return KeyedSubtree(
+      key: const ValueKey<String>('moments-feed-refresh'),
+      child: RefreshIndicator(
+        key: refreshKey,
+        onRefresh: onRefresh,
+        color: palette.interactiveForeground,
+        backgroundColor: palette.surfaceRaised,
+        child: CustomScrollView(
+          key: const ValueKey('moments-feed-scroll'),
+          controller: controller,
+          // Pull-to-refresh must work on a short list too.
+          physics: const AlwaysScrollableScrollPhysics(),
+          slivers: <Widget>[
+            if (hasStrip)
+              SliverToBoxAdapter(
+                key: const ValueKey('moments-author-circles-item'),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[
+                    MomentCirclesStrip(
+                      chains: chains,
+                      viewedIds: viewedIds,
+                      gutter: gutter,
+                      onRecord: onRecord,
+                      viewerUid: currentUserId.isEmpty ? null : currentUserId,
+                      viewerName: viewerName,
+                      onOpenChain: (chain) => onOpenChain(chain.moments.last),
+                    ),
+                    if (block)
+                      const SizedBox(height: AppRhythm.tight)
+                    else
+                      Divider(
+                        height: 1,
+                        thickness: 1,
+                        color: highContrast
+                            ? palette.borderStrong
+                            : palette.hairline,
+                      ),
+                  ],
+                ),
+              )
+            else if (block)
+              const SliverToBoxAdapter(
+                child: SizedBox(height: AppRhythm.title),
+              ),
+            rows,
+            if (footer != null)
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(
+                    gutter,
+                    AppRhythm.title,
+                    gutter,
+                    0,
+                  ),
+                  child: footer,
+                ),
+              ),
+            const SliverToBoxAdapter(child: SizedBox(height: AppRhythm.page)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The Moment whose row the reader is pressing (a play that switches the
+/// current clip), for the next layout of [_AnchoredRows]; null otherwise.
+class _ScrollAnchor {
+  String? pressedId;
+}
+
+/// Keeps what the reader is looking at — or pressing — still when a row
+/// above it changes height, in the frame the change happens (scroll
+/// anchoring, as a browser does it).
+///
+/// Only one row is ever open, so opening a clip closes another one, and a
+/// clip whose row scrolls off stops and closes its row. Without this the
+/// rows below a closing row jumped by its player's height (~90 px): under
+/// the reader's eyes when it had scrolled away above them, and under the
+/// finger or the keyboard focus that had just pressed Play on a row below
+/// it. The anchor is the pressed row when there is one, otherwise the first
+/// row that reached into the viewport; its top keeps its place on screen
+/// through a `scrollOffsetCorrection` the viewport applies before it
+/// paints.
+///
+/// The list's first pixel is a hard edge: at the very top of the list there
+/// is no scroll to give back, so a row closing above the anchor there still
+/// moves it up by the part the offset cannot absorb.
+///
+/// It anchors only while the list is the same list (same ids, same order):
+/// a reload, a filter switch, a deletion or an expiry lays the new list out
+/// as it always did.
+class _AnchoredRows extends SingleChildRenderObjectWidget {
+  const _AnchoredRows({
+    required this.ids,
+    required this.anchor,
+    required this.controller,
+    required Widget sliver,
+  }) : super(child: sliver);
+
+  final List<String> ids;
+  final _ScrollAnchor anchor;
+  final ScrollController controller;
+
+  @override
+  _RenderAnchoredRows createRenderObject(BuildContext context) =>
+      _RenderAnchoredRows(ids: ids, anchor: anchor, controller: controller);
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    _RenderAnchoredRows renderObject,
+  ) {
+    renderObject
+      ..ids = ids
+      ..anchor = anchor
+      ..controller = controller;
+  }
+}
+
+class _RenderAnchoredRows extends RenderProxySliver {
+  _RenderAnchoredRows({
+    required this.ids,
+    required this.anchor,
+    required this.controller,
+  });
+
+  List<String> ids;
+  _ScrollAnchor anchor;
+  ScrollController controller;
+
+  List<String> _laidOutIds = const <String>[];
+  double _laidOutScrollOffset = 0;
+
+  /// Row id → layout offset of every row the list holds now, read against
+  /// the ids of the layout that placed them. Offsets only: a row's size
+  /// belongs to the list that lays it out.
+  Map<String, double> _rows(List<String> idsAtLayout) {
+    final list = child;
+    final rows = <String, double>{};
+    if (list is! RenderSliverMultiBoxAdaptor) return rows;
+    for (var box = list.firstChild; box != null; box = list.childAfter(box)) {
+      final data = box.parentData;
+      if (data is! SliverMultiBoxAdaptorParentData) continue;
+      final index = data.index;
+      final offset = data.layoutOffset;
+      if (index == null || offset == null || index >= idsAtLayout.length) {
+        continue;
+      }
+      rows[idsAtLayout[index]] = offset;
+    }
+    return rows;
+  }
+
+  @override
+  void performLayout() {
+    final sameList = listEquals(_laidOutIds, ids);
+    final before = sameList ? _rows(_laidOutIds) : const <String, double>{};
+    final previousScrollOffset = _laidOutScrollOffset;
+    super.performLayout();
+    _laidOutIds = ids;
+    _laidOutScrollOffset = constraints.scrollOffset;
+    if (before.isEmpty || geometry!.scrollOffsetCorrection != null) return;
+    final after = _rows(ids);
+
+    String? anchorId;
+    final pressed = anchor.pressedId;
+    if (pressed != null &&
+        before.containsKey(pressed) &&
+        after.containsKey(pressed)) {
+      anchorId = pressed;
+    } else {
+      // The first row whose top was at or below the viewport's top edge:
+      // what the reader sees first, whatever happens above it.
+      var top = double.infinity;
+      before.forEach((id, offset) {
+        if (offset >= previousScrollOffset - precisionErrorTolerance &&
+            offset < top &&
+            after.containsKey(id)) {
+          top = offset;
+          anchorId = id;
+        }
+      });
+    }
+    final id = anchorId;
+    if (id == null) return;
+    var correction = after[id]! - before[id]!;
+    if (correction.abs() < precisionErrorTolerance) return;
+    // Never above the list's first pixel.
+    if (controller.hasClients) {
+      final position = controller.position;
+      if (position.hasPixels && position.hasContentDimensions) {
+        final room = position.pixels - position.minScrollExtent;
+        if (correction < -room) correction = -room;
+      }
+    }
+    if (correction.abs() < precisionErrorTolerance) return;
+    geometry = SliverGeometry(scrollOffsetCorrection: correction);
   }
 }
 
@@ -2550,934 +2920,6 @@ class MomentStoryStrip extends StatelessWidget {
           );
         },
       ),
-    );
-  }
-}
-
-/// One complete, readable recording — the 06 Voice card.
-///
-/// Author, real age, the caption as ONE block, the availability pill, the
-/// transport (the voice bead + the decorative waveform poured to the real
-/// position + the clock under it), real counters and "Odpowiedz głosem".
-/// The model has no cover, no title and no recorded waveform, so the card
-/// shows none of them: the caption is followed directly by the transport
-/// (the quiet no-cover variant).
-///
-/// Refine-look W3: the card is an R2 block that lights — a primary edge and
-/// the corner tint — only while ITS clip is playing, driven by the feed's
-/// energy notifier ([lit]) that changes on play, pause or a switch and
-/// never on a position tick; the card's content is handed to that listener
-/// as a child, so lighting never rebuilds it.
-class _MomentFeedCard extends StatefulWidget {
-  const _MomentFeedCard({
-    required this.moment,
-    required this.seen,
-    required this.isOwn,
-    required this.canInteract,
-    required this.canLike,
-    required this.likePending,
-    required this.playback,
-    required this.lit,
-    required this.compact,
-    required this.onCardBuild,
-    required this.onCardDispose,
-    required this.onTap,
-    required this.onPlay,
-    required this.onSeek,
-    required this.onLike,
-    required this.onComments,
-    required this.onOpenChain,
-    required this.onOpenProfile,
-    required this.onOpenDetail,
-    required this.onShare,
-    required this.onReport,
-    required this.onDelete,
-    required this.onReplyVoice,
-    super.key,
-  });
-
-  final VoiceMoment moment;
-  final bool seen;
-  final bool isOwn;
-  final bool canInteract;
-  final bool canLike;
-  final bool likePending;
-  final ValueListenable<_FeedPlayback> playback;
-
-  /// The id of the one playing card, from the feed's energy notifier.
-  final ValueListenable<String?> lit;
-
-  /// True below a 600 slot: avatar 48 and no format badge (the switch above
-  /// already names the format).
-  final bool compact;
-  final void Function(String, BuildContext) onCardBuild;
-  final void Function(String, BuildContext) onCardDispose;
-  final VoidCallback onTap;
-  final VoidCallback onPlay;
-  final ValueChanged<Duration> onSeek;
-  final VoidCallback onLike;
-  final VoidCallback onComments;
-  final VoidCallback onOpenChain;
-  final VoidCallback onOpenProfile;
-  final VoidCallback onOpenDetail;
-  final VoidCallback onShare;
-  final VoidCallback onReport;
-  final VoidCallback onDelete;
-  final VoidCallback onReplyVoice;
-
-  @override
-  State<_MomentFeedCard> createState() => _MomentFeedCardState();
-}
-
-class _MomentFeedCardState extends State<_MomentFeedCard> {
-  bool _hovered = false;
-
-  /// Keyboard focus on the card's own ink well: the lit block paints the
-  /// R2 2 px focus ring for it (the ink well's own focus wash is off). Only
-  /// PRIMARY focus counts — a focused control inside the card (the bead,
-  /// the like button) draws its own ring and must not ring the card too.
-  bool _focused = false;
-  final FocusNode _focusNode = FocusNode(debugLabel: 'Voice Moment card');
-
-  void _focusChanged(bool _) {
-    final focused = _focusNode.hasPrimaryFocus;
-    if (focused != _focused) setState(() => _focused = focused);
-  }
-
-  void _afterMenu(VoidCallback action) {
-    // PopupMenu returns its selection before the route's inherited current
-    // state has rebuilt. Dispatch after that frame, retaining all destination
-    // guards. The account-keyed list disposes this card on every auth epoch.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) action();
-    });
-  }
-
-  @override
-  void dispose() {
-    widget.onCardDispose(widget.moment.id, context);
-    _focusNode.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final moment = widget.moment;
-    widget.onCardBuild(moment.id, context);
-    final copy = AppLocalizations.of(context);
-    final palette = context.appPalette;
-    final uploading = !moment.isPublished;
-    final enabled = widget.canInteract && !uploading;
-    final availability = uploading
-        ? copy.text('Uploading…', 'Przesyłanie…')
-        : widget.isOwn
-        ? momentAvailabilityLabel(moment.expiresAt, copy: copy)
-        : momentExpiryLabel(moment.expiresAt, copy: copy);
-    final age = momentRelativeAge(moment.createdAt, copy: copy);
-    final hasCaption = moment.caption.trim().isNotEmpty;
-    final caption = hasCaption
-        ? moment.caption
-        : copy.text('Voice Moment', 'Voice Moment');
-    final avatarDiameter = widget.compact ? 48.0 : 56.0;
-
-    Widget avatar() => AccessibleTapRegion(
-      key: ValueKey('moment-row-chain-${moment.id}'),
-      circular: true,
-      onTap: enabled ? widget.onOpenChain : null,
-      minimumSize: const Size(
-        AppSizing.standardControlHeight,
-        AppSizing.standardControlHeight,
-      ),
-      semanticLabel:
-          '${copy.template('Open the story chain by {name}', 'Otwórz relację użytkownika {name}', values: {'name': moment.authorName})}, ${MomentSeenAvatar.stateLabel(context, seen: widget.seen)}',
-      child: MomentSeenAvatar(
-        seen: widget.seen,
-        diameter: avatarDiameter,
-        userId: moment.authorId,
-        photoUrl: moment.authorPhotoUrl,
-        displayName: moment.authorName,
-        finish: UserAvatarFinish.brand,
-      ),
-    );
-
-    Widget identity() => Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        AccessibleTapRegion(
-          key: ValueKey('moment-row-author-${moment.id}'),
-          onTap: enabled ? widget.onOpenProfile : null,
-          semanticLabel: moment.authorName,
-          minimumSize: const Size(
-            AppSizing.minimumTouchTarget,
-            AppSizing.standardControlHeight,
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Flexible(
-                child: Text(
-                  moment.authorName,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: AppTypography.titleMedium.copyWith(
-                    color: palette.textPrimary,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-              const SizedBox(width: AppRhythm.hairline),
-              UserIdentityBadges(
-                uid: moment.authorId,
-                variant: IdentityBadgeVariant.icon,
-              ),
-            ],
-          ),
-        ),
-        if (age.isNotEmpty && !uploading)
-          Text(
-            age,
-            style: AppTypography.bodySmall.copyWith(
-              color: palette.textSecondary,
-            ),
-          ),
-      ],
-    );
-
-    Widget badge() =>
-        YoMomentsFormatBadge(key: ValueKey('moment-row-badge-${moment.id}'));
-
-    Widget menu() => MomentOverflowMenu(
-      moment: moment,
-      isOwn: widget.isOwn,
-      uploading: uploading,
-      keyPrefix: 'moment-row',
-      iconSize: 22,
-      onOpenDetail: () => _afterMenu(widget.onOpenDetail),
-      onReport: () => _afterMenu(widget.onReport),
-      onDelete: () => _afterMenu(widget.onDelete),
-    );
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: AppRhythm.item),
-      child: Semantics(
-        container: true,
-        explicitChildNodes: true,
-        // The largest target on the screen used to reach the accessibility
-        // bridge with no role and no name of its own: what it announced was
-        // whatever loose text had not claimed a node — the relative age, the
-        // expiry line, the seek slider's label — under the REPLY button's
-        // tooltip. It is a button, and it says what opening it does.
-        button: enabled,
-        // ...and the bridge can press it. `explicitChildNodes` keeps every
-        // descendant's node, so the InkWell's own tap action would land on a
-        // CHILD and leave this one an enabled button with nothing to
-        // activate — the defect the four dead transport controls were rated
-        // P0 for, arrived at from the other side. The action lives here, on
-        // the named node, and the ink below is excluded from semantics so
-        // there is exactly one card-body affordance rather than two.
-        onTap: widget.canInteract ? widget.onTap : null,
-        label: copy.template(
-          'Open Voice Moment: {caption}, {author}, {age}',
-          'Otwórz Voice Moment: {caption}, {author}, {age}',
-          values: <String, Object>{
-            'caption': caption,
-            'author': moment.authorName,
-            // The relative age when there is one; the availability line is
-            // the honest stand-in while a Moment is still uploading.
-            'age': age.isEmpty ? (availability ?? '') : age,
-          },
-        ),
-        child: MouseRegion(
-          onEnter: (_) => setState(() => _hovered = true),
-          onExit: (_) => setState(() => _hovered = false),
-          child: ValueListenableBuilder<String?>(
-            valueListenable: widget.lit,
-            // The card's content, built once per card build: lighting the
-            // shell (play, pause, a switch) never rebuilds it.
-            child: Material(
-              type: MaterialType.transparency,
-              child: InkWell(
-                onTap: widget.canInteract ? widget.onTap : null,
-                // The node above carries this same action under the card's
-                // own name; a second, unnamed tap node under it is what a
-                // screen reader would read instead of the name.
-                excludeFromSemantics: true,
-                borderRadius: AppRadius.block,
-                splashFactory: momentBlockSplashFactory,
-                overlayColor: WidgetStateProperty.resolveWith(
-                  (states) => states.contains(WidgetState.pressed)
-                      ? AppFinish.blockPressedWash(palette)
-                      : Colors.transparent,
-                ),
-                // Focus shows as the block's 2 px ring (VoiceLitBlock), not
-                // as a wash, which the overlay above switches off.
-                focusNode: _focusNode,
-                onFocusChange: _focusChanged,
-                child: Padding(
-                  padding: const EdgeInsets.all(AppRhythm.title),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      LayoutBuilder(
-                        builder: (context, constraints) {
-                          final scale =
-                              MediaQuery.textScalerOf(context).scale(16) / 16;
-                          if (constraints.maxWidth < 240 * scale) {
-                            return Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    avatar(),
-                                    const Spacer(),
-                                    if (!widget.compact) ...[
-                                      badge(),
-                                      const SizedBox(width: AppRhythm.hairline),
-                                    ],
-                                    menu(),
-                                  ],
-                                ),
-                                const SizedBox(height: AppRhythm.tight),
-                                identity(),
-                              ],
-                            );
-                          }
-                          return Row(
-                            crossAxisAlignment: CrossAxisAlignment.center,
-                            children: [
-                              avatar(),
-                              const SizedBox(width: AppRhythm.item),
-                              Expanded(child: identity()),
-                              if (!widget.compact) ...[
-                                const SizedBox(width: AppRhythm.tight),
-                                badge(),
-                                const SizedBox(width: AppRhythm.hairline),
-                              ],
-                              menu(),
-                            ],
-                          );
-                        },
-                      ),
-                      const SizedBox(height: AppRhythm.item),
-                      AccessibleTapRegion(
-                        key: ValueKey('moment-row-title-${moment.id}'),
-                        onTap: enabled ? widget.onOpenDetail : null,
-                        semanticLabel: copy.template(
-                          'Open details of the Moment by {name}',
-                          'Otwórz szczegóły Momentu użytkownika {name}',
-                          values: {'name': moment.authorName},
-                        ),
-                        child: Align(
-                          alignment: AlignmentDirectional.centerStart,
-                          // A real caption is the card's heading (w700, tight);
-                          // an empty one falls back to the format name in a
-                          // quiet secondary style — same string, not a title.
-                          child: Text(
-                            caption,
-                            maxLines: 3,
-                            overflow: TextOverflow.ellipsis,
-                            style: hasCaption
-                                ? AppTypography.titleLarge.copyWith(
-                                    color: palette.textPrimary,
-                                    fontWeight: FontWeight.w700,
-                                    letterSpacing: -0.2,
-                                  )
-                                : AppTypography.titleMedium.copyWith(
-                                    color: palette.textSecondary,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                          ),
-                        ),
-                      ),
-                      if (availability != null) ...[
-                        const SizedBox(height: AppRhythm.tight),
-                        // The neutral R12 pill: same copy and position, a
-                        // ring for the real remaining share, amber only in
-                        // the last hour.
-                        MomentExpiryPill(
-                          label: availability,
-                          createdAt: moment.createdAt,
-                          expiresAt: moment.expiresAt,
-                          countdown: !uploading,
-                        ),
-                      ],
-                      const SizedBox(height: AppRhythm.item),
-                      ValueListenableBuilder<_FeedPlayback>(
-                        valueListenable: widget.playback,
-                        builder: (context, playback, _) {
-                          final active = playback.id == moment.id;
-                          return _VoiceMomentTransport(
-                            moment: moment,
-                            state: active ? playback : const _FeedPlayback(),
-                            active: active,
-                            enabled: enabled && moment.hasMediaReference,
-                            onPlay: widget.onPlay,
-                            onSeek: widget.onSeek,
-                          );
-                        },
-                      ),
-                      const SizedBox(height: AppRhythm.item),
-                      _CardActions(
-                        moment: moment,
-                        enabled: enabled,
-                        canLike: widget.canLike && !widget.likePending,
-                        onLike: widget.onLike,
-                        onComments: widget.onComments,
-                        onShare: widget.onShare,
-                        onReplyVoice: widget.onReplyVoice,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            builder: (context, litId, content) => VoiceLitBlock(
-              lit: litId == moment.id,
-              hovered: _hovered,
-              focused: _focused,
-              edgeKey: ValueKey('moment-row-edge-${moment.id}'),
-              child: content!,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// The Głos refresh's 40 px hairline circle (refine-look §8.4) behind the
-/// unchanged keyed 48 px plate button. The circle itself takes the hover —
-/// glass fill, `hairlineHover` edge — so a pointer never shows the plate's
-/// 48 px disc around the 40 px ring. It is decoration only: the plate
-/// keeps the tap, the tooltip, the focus ring and the semantics.
-class _RefreshCircle extends StatefulWidget {
-  const _RefreshCircle({required this.child});
-
-  final Widget child;
-
-  static const double diameter = 40;
-
-  @override
-  State<_RefreshCircle> createState() => _RefreshCircleState();
-}
-
-class _RefreshCircleState extends State<_RefreshCircle> {
-  bool _hovered = false;
-
-  void _hover(bool value) {
-    if (value != _hovered) setState(() => _hovered = value);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.appPalette;
-    final highContrast = MediaQuery.highContrastOf(context);
-    return MouseRegion(
-      onEnter: (_) => _hover(true),
-      onExit: (_) => _hover(false),
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          IgnorePointer(
-            child: AnimatedContainer(
-              key: const ValueKey('moments-discovery-refresh-ring'),
-              duration: AppMotion.resolve(context, AppMotion.quick),
-              width: _RefreshCircle.diameter,
-              height: _RefreshCircle.diameter,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: _hovered
-                    ? AppFinish.glass(palette, hovered: true)
-                    : Colors.transparent,
-                border: Border.all(
-                  color: highContrast
-                      ? palette.borderStrong
-                      : _hovered
-                      ? palette.hairlineHover
-                      : palette.hairlineControl,
-                ),
-              ),
-            ),
-          ),
-          widget.child,
-        ],
-      ),
-    );
-  }
-}
-
-/// ♡ · 💬 · Udostępnij · "Odpowiedz głosem" (R7 accent) — real counters
-/// only.
-///
-/// Below a 328-px content width (a slot under 360) the reply action drops
-/// to its own full-width row; otherwise the row wraps only when the four
-/// items genuinely exceed it. The share LABEL goes below 336 (a slot under
-/// 400) and the icon keeps its tooltip.
-class _CardActions extends StatelessWidget {
-  const _CardActions({
-    required this.moment,
-    required this.enabled,
-    required this.canLike,
-    required this.onLike,
-    required this.onComments,
-    required this.onShare,
-    required this.onReplyVoice,
-  });
-
-  final VoiceMoment moment;
-  final bool enabled;
-  final bool canLike;
-  final VoidCallback onLike;
-  final VoidCallback onComments;
-  final VoidCallback onShare;
-  final VoidCallback onReplyVoice;
-
-  static const double stackedBelow = 328;
-  static const double shareLabelBelow = 336;
-
-  /// The width the labelled share button needs at the reader's text size:
-  /// its padding, the 24 px glyph, the icon gap and the whole word on one
-  /// line.
-  static double labelledShareWidth(BuildContext context, String label) {
-    final painter = TextPainter(
-      text: TextSpan(text: label, style: AppTypography.labelLarge),
-      textScaler: MediaQuery.textScalerOf(context),
-      textDirection: Directionality.of(context),
-      maxLines: 1,
-    )..layout();
-    final width = painter.width;
-    painter.dispose();
-    // Padding (2 × tight) + glyph + the button's icon gap (8 at most) + a
-    // pixel of rounding.
-    return 2 * AppRhythm.tight + 24 + 8 + width + 1;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.appPalette;
-    final copy = AppLocalizations.of(context);
-    final id = moment.id;
-    ButtonStyle quiet() => TextButton.styleFrom(
-      foregroundColor: palette.textSecondary,
-      minimumSize: const Size(
-        AppSizing.standardControlHeight,
-        AppSizing.standardControlHeight,
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: AppRhythm.tight),
-      textStyle: AppTypography.labelLarge,
-    );
-    // The board draws a glyph and a number; the word belongs to the spoken
-    // name, not to the row. Word labels never fitted one line at any width
-    // and broke mid-word at 200 % text ("Polubieni / a: 3"), which reads as
-    // a rendering fault. The exact total stays in the semantic label, so
-    // nothing is lost to assistive technology — the same split the Reels
-    // engagement bar already makes.
-    final likeLabel = moment.likeCount > 0
-        ? copy.template(
-            'Likes: {count}',
-            'Polubienia: {count}',
-            values: {'count': moment.likeCount},
-          )
-        : copy.text('Like', 'Lubię to');
-    final commentsLabel = moment.commentCount > 0
-        ? copy.template(
-            'Comments: {count}',
-            'Komentarze: {count}',
-            values: {'count': moment.commentCount},
-          )
-        : copy.text('Comments', 'Komentarze');
-    // MergeSemantics so the liked STATE lands on the same node as the role,
-    // the name and the tap action: the glyph swap alone never announced it.
-    final like = MergeSemantics(
-      child: Semantics(
-        selected: moment.callerLiked,
-        child: TextButton.icon(
-          key: ValueKey('moment-row-like-$id'),
-          onPressed: enabled && canLike ? onLike : null,
-          style: quiet(),
-          icon: Icon(
-            moment.callerLiked
-                ? Icons.favorite_rounded
-                : Icons.favorite_border_rounded,
-            size: 24,
-            color: moment.callerLiked ? AppColors.secondary : null,
-          ),
-          label: Text(
-            '${moment.likeCount}',
-            maxLines: 1,
-            semanticsLabel: likeLabel,
-          ),
-        ),
-      ),
-    );
-    final comments = TextButton.icon(
-      key: ValueKey('moment-row-comments-$id'),
-      onPressed: enabled ? onComments : null,
-      style: quiet(),
-      icon: const Icon(Icons.mode_comment_outlined, size: 24),
-      label: Text(
-        '${moment.commentCount}',
-        maxLines: 1,
-        semanticsLabel: commentsLabel,
-      ),
-    );
-    final replyLabel = copy.text('Reply with voice', 'Odpowiedz głosem');
-    final reply = Tooltip(
-      message: copy.template(
-        'Reply with voice to {name}',
-        'Odpowiedz głosem: {name}',
-        values: {'name': moment.authorName},
-      ),
-      // R7 accent — the one voice-reply affordance of the block: a faint
-      // interactive wash, a 1.5 px edge and a w700 label.
-      child: OutlinedButton.icon(
-        key: ValueKey('moment-row-reply-voice-$id'),
-        onPressed: enabled ? onReplyVoice : null,
-        style:
-            AppFinish.tonalAccent(
-              palette,
-              highContrast: MediaQuery.highContrastOf(context),
-            ).copyWith(
-              minimumSize: const WidgetStatePropertyAll(
-                Size(
-                  AppSizing.minimumTouchTarget,
-                  AppSizing.standardControlHeight,
-                ),
-              ),
-              padding: const WidgetStatePropertyAll(
-                EdgeInsets.symmetric(horizontal: AppRhythm.title),
-              ),
-            ),
-        icon: const Icon(Icons.mic_rounded, size: 18),
-        // Two lines at 200 % text on a 320 slot rather than an ellipsis:
-        // the button grows, the words stay whole.
-        label: Text(
-          replyLabel,
-          maxLines: 2,
-          softWrap: true,
-          textAlign: TextAlign.center,
-          overflow: TextOverflow.ellipsis,
-        ),
-      ),
-    );
-    final shareText = copy.text('Share', 'Udostępnij');
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final width = constraints.maxWidth;
-        final shareLabelled = width >= shareLabelBelow;
-        Widget shareButton({required bool labelled}) => labelled
-            ? TextButton.icon(
-                key: ValueKey('moment-row-share-$id'),
-                onPressed: enabled ? onShare : null,
-                style: quiet(),
-                icon: const Icon(Icons.ios_share_rounded, size: 24),
-                label: Text(shareText),
-              )
-            : IconButton(
-                key: ValueKey('moment-row-share-$id'),
-                onPressed: enabled ? onShare : null,
-                tooltip: copy.text('Share', 'Udostępnij'),
-                color: palette.textSecondary,
-                constraints: const BoxConstraints(
-                  minWidth: AppSizing.standardControlHeight,
-                  minHeight: AppSizing.standardControlHeight,
-                ),
-                icon: const Icon(Icons.ios_share_rounded, size: 24),
-              );
-        final share = shareButton(labelled: shareLabelled);
-        if (width < stackedBelow) {
-          // Stacked: the counters on their own line(s); share and the
-          // full-width reply share the last row, as the board's phone does.
-          // At an accessibility text size the reply takes the WHOLE width
-          // instead, so its longest word ("Odpowiedz" at 200 %) still fits
-          // on one line and the label wraps between words, never inside one.
-          final accessibility =
-              MediaQuery.textScalerOf(context).scale(1) >= 1.6;
-          if (accessibility) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Wrap(
-                  spacing: AppRhythm.tight,
-                  runSpacing: AppRhythm.hairline,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [like, comments, share],
-                ),
-                const SizedBox(height: AppRhythm.tight),
-                reply,
-              ],
-            );
-          }
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Wrap(
-                spacing: AppRhythm.tight,
-                runSpacing: AppRhythm.hairline,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [like, comments],
-              ),
-              const SizedBox(height: AppRhythm.tight),
-              Row(
-                children: [
-                  share,
-                  const SizedBox(width: AppRhythm.tight),
-                  Expanded(child: reply),
-                ],
-              ),
-            ],
-          );
-        }
-        // The reply stays at the trailing end of the row; the three quiet
-        // actions wrap among themselves in the width that remains. The
-        // reply is bounded to 60 % of the row so a long label (200 % text,
-        // a long locale) wraps to its second line instead of overflowing.
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            Expanded(
-              // The share LABEL only where the whole word fits the run the
-              // reply leaves: the 1440 feed column at 200 % text left too
-              // little and "Udostępnij" broke inside the word. There the
-              // icon keeps its tooltip, as it does below 336.
-              child: LayoutBuilder(
-                builder: (context, run) => Wrap(
-                  spacing: AppRhythm.tight,
-                  runSpacing: AppRhythm.hairline,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    like,
-                    comments,
-                    shareButton(
-                      labelled:
-                          shareLabelled &&
-                          run.maxWidth >=
-                              labelledShareWidth(context, shareText),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(width: AppRhythm.title),
-            ConstrainedBox(
-              constraints: BoxConstraints(maxWidth: width * .6),
-              child: reply,
-            ),
-          ],
-        );
-      },
-    );
-  }
-}
-
-/// The voice bead (48) · the decorative waveform poured to the REAL
-/// position · the clock under the wave, end-aligned (refine-look §8.4).
-///
-/// One position source: the feed's playback notifier drives the waveform
-/// fill, the accessible seek control laid over it and the time label. The
-/// seek is a Material [Slider] painted transparent — the waveform is what
-/// the eye reads, the slider is what a finger, a keyboard and a screen
-/// reader get — so it keeps the platform's drag, arrow-key and value
-/// semantics without a second position.
-///
-/// The bead is lit only while this clip plays; the waveform is the R13
-/// recipe (`waveUnplayed` bars, the variant-B played sweep across the whole
-/// run, the bar under the playhead filled partially) and a Moment that is
-/// not the active one shows a still silhouette, never a fill.
-class _VoiceMomentTransport extends StatelessWidget {
-  const _VoiceMomentTransport({
-    required this.moment,
-    required this.state,
-    required this.active,
-    required this.enabled,
-    required this.onPlay,
-    required this.onSeek,
-  });
-
-  final VoiceMoment moment;
-  final _FeedPlayback state;
-  final bool active;
-  final bool enabled;
-  final VoidCallback onPlay;
-  final ValueChanged<Duration> onSeek;
-
-  static const double discSize = AppSizing.standardControlHeight;
-
-  /// R13 feed geometry: 36 high, 3 px bars, 2 px gaps.
-  static const double waveformHeight = 36;
-  static const double barWidth = 3;
-  static const double barGap = 2;
-  static const double barRadius = 1.5;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.appPalette;
-    final colors = Theme.of(context).colorScheme;
-    final copy = AppLocalizations.of(context);
-    final total = state.duration ?? Duration(seconds: moment.durationSeconds);
-    final maxMs = total.inMilliseconds;
-    final position = state.elapsed.inMilliseconds.clamp(
-      0,
-      maxMs > 0 ? maxMs : 0,
-    );
-    final progress = maxMs > 0 ? position / maxMs : 0.0;
-    final label = state.playing
-        ? copy.text('Pause', 'Pauza')
-        : copy.text('Play', 'Odtwórz');
-    final timeText = active
-        ? '${_clock(position ~/ 1000)} / ${_clock(total.inSeconds)}'
-        : _clock(total.inSeconds);
-
-    final play = VoiceBeadButton(
-      buttonKey: ValueKey('moment-row-play-${moment.id}'),
-      size: discSize,
-      playing: state.playing,
-      busy: state.busy,
-      onPressed: enabled && !state.busy ? onPlay : null,
-      tooltip: label,
-    );
-
-    final waveform = SizedBox(
-      height: discSize,
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          Positioned.fill(
-            child: Center(
-              child: ExcludeSemantics(
-                child: VoicePourWaveform(
-                  key: ValueKey('moment-row-wave-${moment.id}'),
-                  // Only the active clip has a position; every other card
-                  // is a still silhouette.
-                  progress: active ? progress : null,
-                  snapKey: state.seek,
-                  color: palette.waveUnplayed,
-                  playedGradient: AppGradients.voicePlayed(colors, palette),
-                  height: waveformHeight,
-                  barWidth: barWidth,
-                  barGap: barGap,
-                  barRadius: barRadius,
-                ),
-              ),
-            ),
-          ),
-          Positioned.fill(
-            // One node carrying the name AND the value. Without the
-            // container the label merged into the CARD's node — which is
-            // where the card's junk name came from — and the slider itself
-            // reached the accessibility bridge unnamed; without the merge
-            // the name and the position would be two separate nodes.
-            child: MergeSemantics(
-              child: Semantics(
-                container: true,
-                label: copy.contextualText(
-                  'yoMoments.playbackPosition',
-                  'Playback position',
-                  'Pozycja odtwarzania',
-                ),
-                child: SliderTheme(
-                  data: SliderTheme.of(context).copyWith(
-                    trackHeight: waveformHeight,
-                    activeTrackColor: Colors.transparent,
-                    inactiveTrackColor: Colors.transparent,
-                    disabledActiveTrackColor: Colors.transparent,
-                    disabledInactiveTrackColor: Colors.transparent,
-                    secondaryActiveTrackColor: Colors.transparent,
-                    thumbColor: Colors.transparent,
-                    disabledThumbColor: Colors.transparent,
-                    overlayColor: Colors.transparent,
-                    thumbShape: SliderComponentShape.noThumb,
-                    overlayShape: SliderComponentShape.noOverlay,
-                    trackShape: const RectangularSliderTrackShape(),
-                    showValueIndicator: ShowValueIndicator.never,
-                  ),
-                  child: Slider(
-                    key: ValueKey('moment-row-progress-${moment.id}'),
-                    value: position.toDouble(),
-                    max: maxMs > 0 ? maxMs.toDouble() : 1,
-                    padding: EdgeInsets.zero,
-                    onChanged:
-                        enabled &&
-                            active &&
-                            !state.busy &&
-                            state.error == null &&
-                            maxMs > 0
-                        ? (value) =>
-                              onSeek(Duration(milliseconds: value.round()))
-                        : null,
-                    // Both numbers, not the bare position: "0:18" alone tells
-                    // a screen-reader user nothing about how much is left.
-                    semanticFormatterCallback: (value) => copy.template(
-                      '{position} of {total}',
-                      '{position} z {total}',
-                      values: <String, Object>{
-                        'position': _clock(value ~/ 1000),
-                        'total': _clock(maxMs ~/ 1000),
-                      },
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-
-    // Under the wave, at its end: the clock never competes with the bars
-    // for width, so the wave keeps the whole row at every text size (the
-    // 88 px reserved box it used to need is gone).
-    final time = Text(
-      timeText,
-      key: ValueKey('moment-row-time-${moment.id}'),
-      textAlign: TextAlign.end,
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-      style: AppTypography.bodyMedium.copyWith(
-        color: palette.textSecondary,
-        fontWeight: FontWeight.w600,
-        fontFeatures: const [FontFeature.tabularFigures()],
-      ),
-    );
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            play,
-            const SizedBox(width: AppRhythm.item),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  waveform,
-                  Align(alignment: AlignmentDirectional.centerEnd, child: time),
-                ],
-              ),
-            ),
-          ],
-        ),
-        if (state.error != null) ...[
-          const SizedBox(height: AppRhythm.tight),
-          Text(
-            state.error!,
-            style: AppTypography.bodySmall.copyWith(
-              color: palette.dangerForeground,
-            ),
-          ),
-          TextButton.icon(
-            key: ValueKey('moment-row-play-retry-${moment.id}'),
-            onPressed: enabled && !state.busy ? onPlay : null,
-            icon: const Icon(Icons.refresh_rounded),
-            label: Text(copy.text('Try again', 'Spróbuj ponownie')),
-          ),
-        ],
-      ],
     );
   }
 }
@@ -4407,15 +3849,17 @@ class MomentCommentsInlineState extends State<MomentCommentsInline> {
   }
 }
 
-/// Three card silhouettes at the card's real geometry — header, two caption
-/// lines, transport — on the card surface. A gentle pulse, static under
-/// Reduce Motion. The capsule strip and the side panels are ABSENT here: a
+/// Row silhouettes at the compact row's real geometry — a 44 px avatar
+/// bone, the name and meta bones, the 44 px play outline — with the rows'
+/// hairlines (inside the R2 block from 1100). A gentle pulse, static under
+/// Reduce Motion. The author strip and the side panels are ABSENT here: a
 /// skeleton of authors would fake authors.
 class _LoadingState extends StatefulWidget {
-  const _LoadingState({required this.gutter, required this.compact});
+  const _LoadingState({required this.layout});
 
-  final double gutter;
-  final bool compact;
+  final YoMomentsLayout layout;
+
+  static const int rows = 6;
 
   @override
   State<_LoadingState> createState() => _LoadingStateState();
@@ -4449,7 +3893,11 @@ class _LoadingStateState extends State<_LoadingState>
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final copy = AppLocalizations.of(context);
-    final avatar = widget.compact ? 48.0 : 56.0;
+    final highContrast = MediaQuery.highContrastOf(context);
+    final layout = widget.layout;
+    final block = layout.showsLocalPanel;
+    final inset = block ? _FeedColumn.blockInset : layout.gutter;
+    final hairline = highContrast ? palette.borderStrong : palette.hairline;
     Widget bone(double width, double height, {bool round = false}) => Container(
       width: width,
       height: height,
@@ -4459,90 +3907,87 @@ class _LoadingStateState extends State<_LoadingState>
         borderRadius: round ? null : AppRadius.sm,
       ),
     );
-    final highContrast = MediaQuery.highContrastOf(context);
+    Widget row(int index) => Container(
+      constraints: const BoxConstraints(minHeight: MomentCompactRow.minHeight),
+      padding: EdgeInsets.symmetric(horizontal: inset, vertical: 10),
+      decoration: BoxDecoration(
+        border: index == _LoadingState.rows - 1
+            ? null
+            : Border(bottom: BorderSide(color: hairline)),
+      ),
+      child: Row(
+        children: [
+          bone(
+            MomentCompactRow.avatarDiameter,
+            MomentCompactRow.avatarDiameter,
+            round: true,
+          ),
+          const SizedBox(width: AppRhythm.item),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                bone(index.isEven ? 132 : 104, 14),
+                const SizedBox(height: 8),
+                FractionallySizedBox(
+                  widthFactor: index.isEven ? .72 : .56,
+                  child: bone(double.infinity, 12),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: AppRhythm.item),
+          Container(
+            width: MomentRowTransportButton.size,
+            height: MomentRowTransportButton.size,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(color: palette.border),
+            ),
+          ),
+        ],
+      ),
+    );
+    final rows = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [for (var i = 0; i < _LoadingState.rows; i++) row(i)],
+    );
     return Semantics(
       liveRegion: true,
       label: copy.text('Loading Moments', 'Wczytywanie Momentów'),
       child: ExcludeSemantics(
         child: FadeTransition(
           opacity: Tween<double>(begin: .55, end: 1).animate(_pulse),
-          child: ListView.builder(
+          child: ListView(
             key: const ValueKey('moments-discovery-loading'),
             padding: EdgeInsets.fromLTRB(
-              widget.gutter,
-              AppRhythm.title,
-              widget.gutter,
+              block ? layout.gutter : 0,
+              block ? AppRhythm.title : 0,
+              block ? layout.gutter : 0,
               AppRhythm.page,
             ),
-            itemCount: 3,
-            // The card's own shape (R2): the block, the author, two caption
-            // lines, then the transport — a 48 px bead bone, the waveform's
-            // silhouette as a bone, and the clock bone under the wave.
-            itemBuilder: (context, index) => Container(
-              margin: const EdgeInsets.only(bottom: AppRhythm.item),
-              padding: const EdgeInsets.all(AppRhythm.title),
-              decoration: AppFinish.block(palette, highContrast: highContrast),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      bone(avatar, avatar, round: true),
-                      const SizedBox(width: AppRhythm.item),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            bone(140, 14),
-                            const SizedBox(height: 6),
-                            bone(72, 10),
-                          ],
-                        ),
-                      ),
-                    ],
+            children: [
+              if (block)
+                Container(
+                  clipBehavior: Clip.antiAlias,
+                  decoration: BoxDecoration(
+                    color: palette.surface,
+                    borderRadius: AppRadius.block,
+                    border: AppFinish.blockEdge(
+                      palette,
+                      highContrast: highContrast,
+                    ),
+                    boxShadow: AppFinish.blockShadows(
+                      palette,
+                      highContrast: highContrast,
+                    ),
                   ),
-                  const SizedBox(height: AppRhythm.item),
-                  bone(double.infinity, 18),
-                  const SizedBox(height: AppRhythm.tight),
-                  FractionallySizedBox(
-                    widthFactor: .7,
-                    child: bone(double.infinity, 18),
-                  ),
-                  const SizedBox(height: AppRhythm.item),
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      bone(
-                        _VoiceMomentTransport.discSize,
-                        _VoiceMomentTransport.discSize,
-                        round: true,
-                      ),
-                      const SizedBox(width: AppRhythm.item),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            SizedBox(
-                              height: _VoiceMomentTransport.discSize,
-                              child: Center(
-                                child: YoWaveform(
-                                  color: palette.surfaceMuted,
-                                  height: _VoiceMomentTransport.waveformHeight,
-                                  barWidth: _VoiceMomentTransport.barWidth,
-                                  barGap: _VoiceMomentTransport.barGap,
-                                  barRadius: _VoiceMomentTransport.barRadius,
-                                ),
-                              ),
-                            ),
-                            bone(40, 14),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
+                  child: rows,
+                )
+              else
+                rows,
+            ],
           ),
         ),
       ),
@@ -4670,6 +4115,8 @@ class _EmptyState extends StatelessWidget {
     this.secondaryActionKey,
     this.secondaryActionLabel,
     this.onSecondaryAction,
+    this.onPull,
+    this.refreshKey,
     super.key,
   });
 
@@ -4682,63 +4129,106 @@ class _EmptyState extends StatelessWidget {
   final String? secondaryActionLabel;
   final VoidCallback? onSecondaryAction;
 
+  /// Pull-to-refresh on the empty feed too: the reader can reload a list
+  /// that is empty right now at every width, and a requested reload (the
+  /// active tab re-tapped) shows the same spinner here ([refreshKey]).
+  final RefreshCallback? onPull;
+  final GlobalKey<RefreshIndicatorState>? refreshKey;
+
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final secondaryLabel = secondaryActionLabel;
     final secondary = onSecondaryAction;
-    return Center(
+    const padding = EdgeInsets.symmetric(
+      horizontal: AppRhythm.section,
+      vertical: AppRhythm.page,
+    );
+    final content = _content(context, palette, secondaryLabel, secondary);
+    final pull = onPull;
+    if (pull == null) {
+      return Center(
+        key: const ValueKey('moments-discovery-empty'),
+        child: SingleChildScrollView(padding: padding, child: content),
+      );
+    }
+    return KeyedSubtree(
       key: const ValueKey('moments-discovery-empty'),
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(
-          horizontal: AppRhythm.section,
-          vertical: AppRhythm.page,
-        ),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 320),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _StateGlyph(icon: icon),
-              const SizedBox(height: AppRhythm.title),
-              Text(
-                title,
-                textAlign: TextAlign.center,
-                style: AppTypography.titleMedium.copyWith(
-                  color: palette.textPrimary,
+      child: RefreshIndicator(
+        key: refreshKey,
+        onRefresh: pull,
+        color: palette.interactiveForeground,
+        backgroundColor: palette.surfaceRaised,
+        child: LayoutBuilder(
+          builder: (context, constraints) => SingleChildScrollView(
+            key: const ValueKey('moments-empty-scroll'),
+            // Scrollable at any content height, so the pull always works.
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: padding,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                minHeight: (constraints.maxHeight - padding.vertical).clamp(
+                  0,
+                  double.infinity,
                 ),
               ),
-              const SizedBox(height: AppRhythm.tight),
-              Text(
-                body,
-                textAlign: TextAlign.center,
-                style: AppTypography.bodyMedium.copyWith(
-                  color: palette.textSecondary,
-                ),
-              ),
-              const SizedBox(height: AppRhythm.section),
-              // R5 gradient; flat, because the screen's lift belongs to the
-              // create action ("+" / "Utwórz").
-              YoGradientFilledButton(
-                onPressed: onAction,
-                emphasis: YoActionEmphasis.flat,
-                child: Text(actionLabel),
-              ),
-              if (secondaryLabel != null && secondary != null) ...[
-                const SizedBox(height: AppRhythm.tight),
-                OutlinedButton(
-                  key: secondaryActionKey,
-                  onPressed: secondary,
-                  style: AppFinish.tonalNeutral(
-                    palette,
-                    highContrast: MediaQuery.highContrastOf(context),
-                  ),
-                  child: Text(secondaryLabel),
-                ),
-              ],
-            ],
+              child: Center(child: content),
+            ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _content(
+    BuildContext context,
+    AppPalette palette,
+    String? secondaryLabel,
+    VoidCallback? secondary,
+  ) {
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 320),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _StateGlyph(icon: icon),
+          const SizedBox(height: AppRhythm.title),
+          Text(
+            title,
+            textAlign: TextAlign.center,
+            style: AppTypography.titleMedium.copyWith(
+              color: palette.textPrimary,
+            ),
+          ),
+          const SizedBox(height: AppRhythm.tight),
+          Text(
+            body,
+            textAlign: TextAlign.center,
+            style: AppTypography.bodyMedium.copyWith(
+              color: palette.textSecondary,
+            ),
+          ),
+          const SizedBox(height: AppRhythm.section),
+          // R5 gradient; flat, because the screen's lift belongs to the
+          // create action ("+" / "Utwórz").
+          YoGradientFilledButton(
+            onPressed: onAction,
+            emphasis: YoActionEmphasis.flat,
+            child: Text(actionLabel),
+          ),
+          if (secondaryLabel != null && secondary != null) ...[
+            const SizedBox(height: AppRhythm.tight),
+            OutlinedButton(
+              key: secondaryActionKey,
+              onPressed: secondary,
+              style: AppFinish.tonalNeutral(
+                palette,
+                highContrast: MediaQuery.highContrastOf(context),
+              ),
+              child: Text(secondaryLabel),
+            ),
+          ],
+        ],
       ),
     );
   }

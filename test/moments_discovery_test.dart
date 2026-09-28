@@ -29,6 +29,9 @@ import 'package:yovoice/features/moments/presentation/screens/moments_screen.dar
 import 'package:yovoice/features/moments/presentation/widgets/moments_feed_view.dart';
 import 'package:yovoice/features/moments/presentation/widgets/yo_moments_chrome.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
+import 'moments_overview_test_support.dart'
+    as support
+    show momentMetaLine, momentMetaVisible;
 
 /// One fixed reading of "now" for the whole file, so every fixture's
 /// `createdAt`/`expiresAt` relation to the clock is stable for the life
@@ -803,45 +806,34 @@ void main() {
       expect(find.byKey(const ValueKey('moment-row-one')), findsOneWidget);
       expect(find.byKey(const ValueKey('moment-row-two')), findsOneWidget);
       expect(find.byKey(const ValueKey('moment-row-play-one')), findsOneWidget);
-      // The real count on the row that owns it — both halves of it. Since
-      // the S1 fix the ROW draws the number and the CONTROL speaks the
-      // phrase (the word labels broke mid-word at 200 % text), so asserting
-      // only the visible half would pass on a row that says nothing, and
-      // only the spoken half would pass on a row that shows nothing.
-      final likeOne = tester.widget<Text>(
-        find.descendant(
-          of: find.byKey(const ValueKey('moment-row-like-one')),
-          matching: find.byType(Text),
-        ),
-      );
-      expect(likeOne.data, '3');
-      expect(likeOne.semanticsLabel, 'Likes: 3');
-      // …and no fabricated numeric engagement for zero counters. The
-      // elapsed transport value is separate, real playback information.
-      expect(find.text('Likes: 0'), findsNothing);
-      expect(find.text('Comments: 0'), findsNothing);
-      final likeTwo = tester.widget<Text>(
-        find.descendant(
-          of: find.byKey(const ValueKey('moment-row-like-two')),
-          matching: find.byType(Text),
-        ),
-      );
-      expect(likeTwo.data, '0');
-      expect(
-        likeTwo.semanticsLabel,
-        'Like',
-        reason: 'a zero counter is the bare action, never "Likes: 0"',
-      );
-      // The creation entry the recorder tile used to own lives in the
-      // header now, and reload is a visible control.
+      // The real count on the row that owns it — both halves of it. The
+      // collapsed G4 row carries it on its meta line: the glyph and the
+      // bare number drawn, the phrase spoken. Asserting only the visible
+      // half would pass on a row that says nothing, and only the spoken
+      // half on a row that shows nothing.
+      Text metaOf(String id) => support.momentMetaLine(tester, id);
+      expect(support.momentMetaVisible(tester, 'one'), contains(' 3'));
+      expect(metaOf('one').semanticsLabel, contains('Likes: 3'));
+      // …and no fabricated numeric engagement for zero counters: a zero is
+      // not printed and not spoken.
+      expect(metaOf('two').semanticsLabel, isNot(contains('Likes')));
+      expect(metaOf('two').semanticsLabel, isNot(contains('Comments')));
+      expect(find.textContaining('Likes: 0'), findsNothing);
+      expect(find.textContaining('Comments: 0'), findsNothing);
+      // The creation entry lives in the header, and reload is the active
+      // tab (tap it again) — the refresh button left the phone's chrome.
       expect(find.byKey(const ValueKey('moments-create-cta')), findsOneWidget);
       expect(
-        find.byKey(const ValueKey('moments-discovery-refresh')),
+        find.byKey(const ValueKey('moments-filter-discover')),
         findsOneWidget,
       );
+      expect(
+        find.byKey(const ValueKey('moments-discovery-refresh')),
+        findsNothing,
+      );
       // The label under every live Moment is derived from the document's
-      // real expiresAt.
-      expect(find.textContaining('Expires in'), findsWidgets);
+      // real expiresAt (mid-sentence on the meta line).
+      expect(find.textContaining('expires in'), findsWidgets);
     });
 
     testWidgets('the approved single list keeps every recording reachable '
@@ -873,7 +865,12 @@ void main() {
       expect(a.left, b.left);
       expect(a.width, b.width);
       expect(a.bottom, lessThanOrEqualTo(b.top));
-      expect(a.width, 390 - 32);
+      // G4 rows are full-bleed; their content keeps the 16 px gutter.
+      expect(a.width, 390);
+      expect(
+        tester.getTopLeft(find.byKey(const ValueKey('moment-row-chain-a'))).dx,
+        16,
+      );
       // The list is lazy: far recordings must still be reachable, not
       // assumed mounted and not duplicated in a decorative grid.
       final scrollable = find
@@ -891,7 +888,13 @@ void main() {
         );
         expect(find.byKey(ValueKey('moment-row-$id')), findsOneWidget);
         expect(find.byKey(ValueKey('moment-row-play-$id')), findsOneWidget);
-        expect(find.byKey(ValueKey('moment-row-menu-$id')), findsOneWidget);
+        // The menu: a long press on the collapsed row (the ⋯ button joins
+        // the open row's action line).
+        await tester.longPress(find.byKey(ValueKey('moment-row-$id')));
+        await tester.pumpAndSettle();
+        expect(find.byKey(ValueKey('moment-row-details-$id')), findsOneWidget);
+        await tester.tapAt(const Offset(4, 4));
+        await tester.pumpAndSettle();
         final play = find.byKey(ValueKey('moment-row-play-$id'));
         await tester.ensureVisible(play);
         await tester.pump();
@@ -930,26 +933,28 @@ void main() {
       await tester.pump(const Duration(milliseconds: 50));
 
       final row = tester.getRect(find.byKey(const ValueKey('moment-row-one')));
-      expect(row.width, 390 - 32);
-      expect(row.left, 16);
+      expect(row.width, 390, reason: 'G4: full-bleed rows');
+      expect(row.left, 0);
+      expect(
+        tester
+            .getTopLeft(find.byKey(const ValueKey('moment-row-chain-one')))
+            .dx,
+        16,
+        reason: 'the content keeps the gutter',
+      );
       final card = find.byKey(const ValueKey('moment-row-one'));
       expect(
         find.descendant(of: card, matching: find.text('caption one')),
         findsOneWidget,
       );
       expect(
-        find.descendant(of: card, matching: find.text('0:12')),
+        find.descendant(of: card, matching: find.textContaining('0:12')),
         findsOneWidget,
       );
-      final progress = tester.widget<Slider>(
-        find.byKey(const ValueKey('moment-row-progress-one')),
-      );
-      expect(progress.max, 12000);
-      expect(progress.value, 0);
       expect(
-        progress.onChanged,
-        isNull,
-        reason: 'Arriving does not start playback.',
+        find.byKey(const ValueKey('moment-row-progress-one')),
+        findsNothing,
+        reason: 'Arriving does not start playback: no row is open.',
       );
       final play = tester.getRect(
         find.byKey(const ValueKey('moment-row-play-one')),

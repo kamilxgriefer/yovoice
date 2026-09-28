@@ -29,7 +29,7 @@ void main() {
     expect(AppLocalizations.supportedLocales, hasLength(43));
     expect(translatedLocaleKeys, hasLength(41));
     expect(momentsOverviewTranslations.keys.toSet(), translatedLocaleKeys);
-    expect(momentsOverviewTranslationKeys.toSet(), hasLength(17));
+    expect(momentsOverviewTranslationKeys.toSet(), hasLength(35));
     expect(appTranslationKeys, containsAll(momentsOverviewTranslationKeys));
     for (final localeKey in translatedLocaleKeys) {
       final entries = momentsOverviewTranslations[localeKey]!;

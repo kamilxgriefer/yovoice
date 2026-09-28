@@ -5,14 +5,9 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
-import 'package:yovoice/core/theme/app_finish.dart';
 import 'package:yovoice/core/theme/app_gradients.dart';
-import 'package:yovoice/core/theme/app_motion.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
-import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
-import 'package:yovoice/core/theme/app_typography.dart';
-import 'package:yovoice/shared/widgets/interactions/yo_press_feedback.dart';
 import 'package:yovoice/features/moments/data/services/moment_views_service.dart';
 import 'package:yovoice/shared/widgets/identity/official_role_badge.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
@@ -24,10 +19,10 @@ import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 ///
 /// Every Moments rail that draws a story tile draws this widget — the Home
 /// Moments strips (mobile and desktop) and the legacy Home screen — so the
-/// seen/unseen language cannot drift between them again. The feed's card
-/// and its author-capsule strip draw the same ring through
-/// [MomentSeenAvatar] and [MomentAuthorCapsule], whose stops come from
-/// [ringColors] / [ringGradient] below: one definition, three shapes.
+/// seen/unseen language cannot drift between them again. The Głos author
+/// circles (`MomentCirclesStrip`) and [MomentSeenAvatar] draw the same ring,
+/// whose stops come from [ringColors] / [ringGradient] below: one
+/// definition, every shape.
 /// Before this widget each surface carried its own disc, ring, badge and
 /// label geometry, and the three rings meant three different things.
 ///
@@ -198,8 +193,8 @@ class MomentStoryTile extends StatelessWidget {
   }
 
   /// [ringColors] as the gradient every ring shape paints — the disc
-  /// ([MomentSeenAvatar]), the capsule border ([MomentAuthorCapsule]) and
-  /// this tile's own disc. It keeps `AppGradients.primary`'s angle so the
+  /// ([MomentSeenAvatar]), the Głos author circle and this tile's own
+  /// disc. It keeps `AppGradients.primary`'s angle so the
   /// unheard ring is exactly the brand gradient, and the SAME angle in both
   /// states so nothing but the stops changes when a chain flips to heard.
   /// Nobody reaches for `AppGradients.primary` directly for a ring: that
@@ -444,6 +439,9 @@ class MomentSeenAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // High contrast draws no gradient: the unheard band is solid primary,
+    // the heard line `borderStrong`.
+    final highContrast = MediaQuery.highContrastOf(context);
     return Container(
       key: ringKey,
       width: diameter,
@@ -451,9 +449,16 @@ class MomentSeenAvatar extends StatelessWidget {
       padding: EdgeInsets.all(ringWidth),
       decoration: BoxDecoration(
         shape: BoxShape.circle,
+        color: highContrast
+            ? (seen
+                  ? AppPalette.of(context).borderStrong
+                  : Theme.of(context).colorScheme.primary)
+            : null,
         // One gradient in both states so the geometry cannot shift when a
         // Moment flips from unheard to heard; only the stops change.
-        gradient: MomentStoryTile.ringGradient(context, seen: seen),
+        gradient: highContrast
+            ? null
+            : MomentStoryTile.ringGradient(context, seen: seen),
       ),
       child: _SeenFace(
         seen: seen,
@@ -471,8 +476,7 @@ class MomentSeenAvatar extends StatelessWidget {
 }
 
 /// Inside the ring: the surface-coloured gap, then the avatar — dimmed once
-/// every link was heard. Shared by [MomentSeenAvatar] and the capsule, whose
-/// ring is its own keyed box.
+/// every link was heard.
 class _SeenFace extends StatelessWidget {
   const _SeenFace({
     required this.seen,
@@ -702,252 +706,10 @@ class _MomentViewedIdsState extends State<MomentViewedIds> {
 
 /// The ink rule of the Moments R2 blocks (refine-look R2): `InkSparkle`
 /// on Android and NO ripple on iOS, macOS, the web or a desktop — the
-/// block's pressed wash carries the press there. Scoped to the blocks that
-/// ask for it (the feed card, the author capsule, the calm panel's record
-/// card); the theme's global splash is unchanged.
+/// block's pressed wash carries the press there. Scoped to the surfaces that
+/// ask for it (the Głos row, the calm panel's record card); the theme's
+/// global splash is unchanged.
 InteractiveInkFeatureFactory get momentBlockSplashFactory =>
     !kIsWeb && defaultTargetPlatform == TargetPlatform.android
     ? InkSparkle.splashFactory
     : NoSplash.splashFactory;
-
-/// One author capsule of the YO Moments overview strip: the author's
-/// avatar in its seen/unseen ring, the name and a DECORATIVE sound motif, in
-/// a 48 px pill (refine-look §8.4).
-///
-/// The capsule itself is a chip-like R2 block — the top-lit fill and a
-/// hairline, no Pearl lift (`elevated: false`) — so the strip reads as one
-/// quiet row. The unheard/heard fact rides on the 38 px ring around the
-/// avatar: the same stops [MomentStoryTile.ringColors] defines (the brand
-/// gradient while anything in the chain is unheard, the quiet line plus a
-/// dimmed avatar once every link was heard), and the name is w700 while
-/// unheard, `textSecondary` w600 once heard. The five bars are decoration
-/// and nothing else: no per-Moment amplitude data exists, they are one
-/// neutral ink (`waveUnplayed`, never cyan — cyan means audio PROGRESS) and
-/// they never animate, so they cannot suggest a listen in progress.
-class MomentAuthorCapsule extends StatefulWidget {
-  const MomentAuthorCapsule({
-    required this.name,
-    required this.seen,
-    required this.semanticLabel,
-    required this.onTap,
-    this.userId,
-    this.photoUrl,
-    this.displayName,
-    this.showBars = true,
-    super.key,
-  });
-
-  final String name;
-  final bool seen;
-  final String semanticLabel;
-  final VoidCallback onTap;
-  final String? userId;
-  final String? photoUrl;
-  final String? displayName;
-
-  /// Below a 360 slot the motif is dropped so at least three capsules stay
-  /// visible.
-  final bool showBars;
-
-  static const double height = 48;
-
-  /// The ringed avatar's outer diameter.
-  static const double avatarDiameter = 38;
-  static const double nameMaxWidth = 96;
-
-  /// The ring's band, the same in both states so nothing moves when a chain
-  /// flips to heard; only the stops change.
-  static const double ringWidth = MomentSeenAvatar.defaultRingWidth;
-  static const double ringInset = MomentSeenAvatar.defaultRingInset;
-
-  /// The ring box, so a widget test can read the painted stops.
-  @visibleForTesting
-  static const Key borderKey = ValueKey('moment-author-capsule-border');
-
-  /// The decorative motif, so a test can prove it is static and non-cyan.
-  @visibleForTesting
-  static const Key barsKey = ValueKey('moment-author-capsule-bars');
-
-  @override
-  State<MomentAuthorCapsule> createState() => _MomentAuthorCapsuleState();
-}
-
-class _MomentAuthorCapsuleState extends State<MomentAuthorCapsule> {
-  bool _hovered = false;
-  bool _focused = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final copy = AppLocalizations.of(context);
-    final palette = context.appPalette;
-    final highContrast = MediaQuery.highContrastOf(context);
-    final seen = widget.seen;
-    final state = seen
-        ? copy.text('already heard', 'odsłuchane')
-        : copy.text('not heard yet', 'nieodsłuchane');
-    const shape = StadiumBorder();
-    const inset =
-        (MomentAuthorCapsule.height - MomentAuthorCapsule.avatarDiameter) / 2;
-    final ring = DecoratedBox(
-      key: MomentAuthorCapsule.borderKey,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        gradient: MomentStoryTile.ringGradient(context, seen: seen),
-      ),
-      child: SizedBox.square(
-        dimension: MomentAuthorCapsule.avatarDiameter,
-        child: Padding(
-          padding: const EdgeInsets.all(MomentAuthorCapsule.ringWidth),
-          child: _SeenFace(
-            seen: seen,
-            inset: MomentAuthorCapsule.ringInset,
-            radius:
-                (MomentAuthorCapsule.avatarDiameter -
-                    (MomentAuthorCapsule.ringWidth +
-                            MomentAuthorCapsule.ringInset) *
-                        2) /
-                2,
-            userId: widget.userId,
-            photoUrl: widget.photoUrl,
-            mediaRevision: null,
-            displayName: widget.displayName ?? widget.name,
-            fallbackIcon: null,
-            finish: UserAvatarFinish.brand,
-          ),
-        ),
-      ),
-    );
-    final block = AppFinish.block(
-      palette,
-      radius: AppRadius.pill,
-      hovered: _hovered,
-      elevated: false,
-      highContrast: highContrast,
-    );
-    return Semantics(
-      button: true,
-      label: '${widget.semanticLabel}, $state',
-      onTap: widget.onTap,
-      excludeSemantics: true,
-      child: YoPressFeedback(
-        scale: YoPressFeedback.tile,
-        child: AnimatedContainer(
-          duration: AppMotion.resolve(context, AppMotion.quick),
-          curve: AppMotion.standardCurve,
-          height: MomentAuthorCapsule.height,
-          decoration: block,
-          // Always present (transparent at rest): a decoration that came
-          // and went would re-parent the ink well and drop its focus node.
-          foregroundDecoration: BoxDecoration(
-            borderRadius: AppRadius.pill,
-            border: Border.all(
-              color: _focused ? palette.focus : Colors.transparent,
-              width: 2,
-            ),
-          ),
-          child: Material(
-            type: MaterialType.transparency,
-            shape: shape,
-            clipBehavior: Clip.antiAlias,
-            child: InkWell(
-              onTap: widget.onTap,
-              customBorder: shape,
-              splashFactory: momentBlockSplashFactory,
-              overlayColor: WidgetStateProperty.resolveWith(
-                (states) => states.contains(WidgetState.pressed)
-                    ? AppFinish.blockPressedWash(palette)
-                    : Colors.transparent,
-              ),
-              onHover: (value) {
-                if (value != _hovered) setState(() => _hovered = value);
-              },
-              onFocusChange: (value) {
-                if (value != _focused) setState(() => _focused = value);
-              },
-              child: Padding(
-                padding: const EdgeInsetsDirectional.fromSTEB(
-                  inset - 1,
-                  0,
-                  AppRhythm.item,
-                  0,
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    ring,
-                    const SizedBox(width: AppRhythm.tight),
-                    ConstrainedBox(
-                      constraints: BoxConstraints(
-                        maxWidth:
-                            MomentAuthorCapsule.nameMaxWidth *
-                            MomentStoryTile.textScaleOf(context),
-                      ),
-                      child: Text(
-                        widget.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        textScaler: MediaQuery.textScalerOf(
-                          context,
-                        ).clamp(maxScaleFactor: 2),
-                        style: AppTypography.titleSmall.copyWith(
-                          color: seen
-                              ? palette.textSecondary
-                              : palette.textPrimary,
-                          fontWeight: seen ? FontWeight.w600 : FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                    if (widget.showBars) ...[
-                      const SizedBox(width: AppRhythm.tight),
-                      const MomentCapsuleBars(key: MomentAuthorCapsule.barsKey),
-                    ],
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Five static bars in the palette's neutral `waveUnplayed` ink (refine-look
-/// §8.4: one colour, never cyan, never the brand wash). Painted once;
-/// nothing here listens to a player.
-class MomentCapsuleBars extends StatelessWidget {
-  const MomentCapsuleBars({super.key});
-
-  static const double width = 24;
-  static const double height = 16;
-  static const List<double> amplitudes = <double>[.45, .8, .6, 1, .5];
-
-  /// The one colour the motif may use.
-  static Color color(AppPalette palette) => palette.waveUnplayed;
-
-  @override
-  Widget build(BuildContext context) {
-    final ink = color(context.appPalette);
-    return ExcludeSemantics(
-      child: SizedBox(
-        width: width,
-        height: height,
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            for (final amplitude in amplitudes)
-              Container(
-                width: 3,
-                height: height * amplitude,
-                decoration: BoxDecoration(
-                  color: ink,
-                  borderRadius: BorderRadius.circular(1.5),
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-}

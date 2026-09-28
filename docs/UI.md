@@ -421,49 +421,129 @@ after-frames of the original phase-0 gate were not produced
   `test/home_section_header_slots_test.dart` (the three slots and the
   vocabulary), `test/desktop_shell_test.dart` (Voice Trending renders
   "See all rooms", never a second "View all").
-- **Story ring = `MomentStoryTile` / `MomentSeenAvatar` / `MomentAuthorCapsule`**
-  (all in `lib/features/moments/presentation/widgets/moment_story_tile.dart`;
-  `moment_discover_tiles.dart` re-exports `MomentSeenAvatar`). THE RING IS
-  THE LISTENED STATE — this account's own `users/{uid}/momentViews` through
-  `MomentViewsService`, resolved once per rail by `MomentViewedIds` (pass
-  `viewedIds` through when the surface already owns the set; unknown state
-  renders as unheard, fail open) — and never presence: a person's
-  availability is `PeopleStatusAvatar` / `AvailabilityDot`, and Home's
-  friend tile draws "new content" as its own cyan `join.ring` on a presence
-  tile, on purpose (ADR-155, ADR-209). The stops come from
-  `MomentStoryTile.ringColors(context, seen:)` and are painted through
-  `MomentStoryTile.ringGradient(context, seen:)` — unheard is the brand
-  gradient (`AppColors.primary` → `AppColors.secondary` at
+- **Story ring = `MomentStoryTile` / `MomentSeenAvatar` / `MomentCircle`**
+  (the first two in `lib/features/moments/presentation/widgets/moment_story_tile.dart`,
+  the circle in `moment_circles_strip.dart`; `moment_discover_tiles.dart`
+  re-exports `MomentSeenAvatar`). THE RING IS THE LISTENED STATE — this
+  account's own `users/{uid}/momentViews` through `MomentViewsService`,
+  resolved once per rail by `MomentViewedIds` (pass `viewedIds` through when
+  the surface already owns the set; unknown state renders as unheard, fail
+  open) — and never presence: a person's availability is `PeopleStatusAvatar`
+  / `AvailabilityDot`, and Home's friend tile draws "new content" as its own
+  cyan `join.ring` on a presence tile, on purpose (ADR-155, ADR-209). The
+  stops come from `MomentStoryTile.ringColors(context, seen:)` and are
+  painted through `MomentStoryTile.ringGradient(context, seen:)` — unheard
+  is the brand gradient (`AppColors.primary` → `AppColors.secondary` at
   `AppGradients.primary`'s angle), heard is `palette.border` twice at the
-  same angle, with the avatar dimmed to .62 and the name in
-  `textSecondary` — and nowhere else: never `AppGradients.primary` directly
-  around an avatar, never a `Border.all`, never a painter, never a
-  story-look gradient on a rail that carries no Moments state (a rail with
-  nothing to say wears a 2 px `palette.border` band, as the Chats rail
-  does). Three shapes, one state: `MomentSeenAvatar(seen:, diameter:)` is
-  the disc (feed card 48 / 56 pt at the 2 / 1.5 defaults; the tile passes
-  2.5 / 2 for its 60 pt disc, 56 below 360 px; `ringKey` lands on the
-  painted `Container` whose `BoxDecoration` carries the gradient, which is
-  where a test reads it); `MomentStoryTile` is the disc plus name, optional
-  caption / identity badge / online dot, the real chain-count badge and the
-  `+` with its own 44 pt record target (constructor and `discFor` /
-  `widthFor` / `heightFor` statics frozen); `MomentAuthorCapsule` is the
-  feed strip's 48 pt pill whose border is the ring (2 px unheard, 1 px
-  heard) with static, never-cyan bars. The caller owns chain building
+  same angle, with the avatar dimmed to .62 (the tile's heard name is
+  `textSecondary`) — and nowhere else: never
+  `AppGradients.primary` directly around an avatar, never a `Border.all`,
+  never a painter, never a story-look gradient on a rail that carries no
+  Moments state (a rail with nothing to say wears a 2 px `palette.border`
+  band, as the Chats rail does). Under high contrast `MomentSeenAvatar`
+  paints no gradient: a solid `colorScheme.primary` band unheard, a
+  `borderStrong` line heard. Three shapes, one state:
+  `MomentSeenAvatar(seen:, diameter:, ringWidth:, ringInset:)` is the disc
+  (2 / 1.5 by default; the tile passes 2.5 / 2 for its 60 pt disc, 56 below
+  360 px; `ringKey` lands on the painted `Container` whose `BoxDecoration`
+  carries the gradient, which is where a test reads it); `MomentStoryTile`
+  is the disc plus name, optional caption / identity badge / online dot, the
+  real chain-count badge and the `+` with its own 44 pt record target
+  (constructor and `discFor` / `widthFor` / `heightFor` statics frozen);
+  `MomentCircle` is the Głos strip's 64 px circle — `MomentSeenAvatar` with a
+  3 px band + 2 px gap unheard and a 1 px line + 4 px gap heard, so the face
+  keeps its 54 px — over a 12 px name (`textPrimary` w700 unheard,
+  `textTertiary` w600 heard). The caller owns chain building
   (`buildMomentChains`), the keys (`home-your-moment`, `home-moment-<id>`,
-  `home-record-moment`, `moments-capsule-<author>`, `moment-row-chain-<id>`),
-  the `copy` semantic label (the primitive appends "not heard yet" /
-  "already heard" itself; `MomentSeenAvatar.stateLabel` gives the same
-  words to a caller that wraps the disc in its own tap region) and the tap
-  callbacks. Contracts: `test/moment_story_tile_test.dart` (stops in both
-  themes, opacity, labels, disc sizes, 44 pt targets, fail-open),
-  `test/moment_author_capsules_test.dart` (border stops == `ringColors`,
-  bars static and `AppColors.primary` @ .32), `test/moments_discover_layout_test.dart`
-  (`seen` per row, unheard is a two-stop gradient of distinct colours),
-  `test/moment_seen_avatar_test.dart` (`ringGradient`'s stops and angle in
-  both themes, the `ringKey` contract, the tile's 2.5 / 2 hand-down, the
-  capsule's angle, the re-export), `test/desktop_home_test.dart` (no
-  `MomentStoryTile` on desktop Home today).
+  `home-record-moment`, `moments-circle-<author>`, `moments-circle-record`,
+  `moment-row-chain-<id>`), the `copy` semantic label (the primitive
+  appends "not heard yet" / "already heard" itself;
+  `MomentSeenAvatar.stateLabel` gives the same words to a caller that wraps
+  the disc in its own tap region) and the tap callbacks. The viewer's own
+  chain is never unheard: in the Głos strip it is "Ty" / "You" with the
+  quiet line and "Otwórz swoją relację" / "Open your story chain", and a
+  row's own avatar says the same. Contracts: `test/moment_story_tile_test.dart`
+  (stops in both themes, opacity, labels, disc sizes, 44 pt targets,
+  fail-open), `test/moment_author_circles_test.dart` (the strip: exactly the
+  loaded authors, "Nagraj" first, ring and dim per state, high contrast,
+  the rounded-rect focus ring, the group label, the own chain),
+  `test/moments_discover_layout_test.dart` (`seen` per row, unheard is a
+  two-stop gradient of distinct colours), `test/moment_seen_avatar_test.dart`
+  (`ringGradient`'s stops and angle in both themes, the `ringKey` contract,
+  the tile's 2.5 / 2 hand-down, the circle's hand-down, the re-export),
+  `test/desktop_home_test.dart` (no `MomentStoryTile` on desktop Home
+  today).
+- **Głos list (G4) = `VoiceFeedFilterTabs` + `MomentCirclesStrip` +
+  `MomentCompactRow`** (`lib/features/moments/presentation/widgets/`
+  `voice_feed_filter_tabs.dart`, `moment_circles_strip.dart`,
+  `moment_compact_row.dart`, composed by `moments_feed_view.dart`). The
+  Voice Moments feed is a list, not cards.
+  - **Filter tabs** (below 1100, in `ImmersiveFeedChrome.filterBar`):
+    "Odkrywaj / Obserwowani / Popularne" as trackless text tabs — 15 px,
+    active `textPrimary` w700 over a 2 px `textPrimary` underline the width
+    of the label, resting `textTertiary` w600, 48 px targets, one button
+    node with `selected` per tab, the row a named group. The row scrolls
+    rather than wraps and fades an edge over 32 px whenever a label
+    continues past it (`VoiceFeedFilterTabs.fadesOf`). Re-tapping the
+    ACTIVE tab is the phone's reload: back to the top, the pull-to-refresh
+    spinner shown programmatically, a polite "Odświeżanie Momentów…", and
+    no second read while one runs; `MomentsFeedView.refreshRequests` is the
+    same path for the host (the "Głos" format tab reselected). Pull-to-
+    refresh wraps the list AND every empty state. `MomentsFilter.recent` is
+    retired from the UI and shown as Discover (`momentsShownFilter`). At
+    ≥ 1100 the local panel carries the three filters, "Odśwież Momenty" and
+    "Utwórz". Keys: `voice-filter-tabs`, `moments-filter-<name>`,
+    `moments-feed-refresh`, `moments-discovery-refresh`.
+  - **Author circles**: `moments-author-circles`, ~110 px, "Nagraj" first
+    (the viewer's face and the 22 px gradient `+`, the existing record
+    flow), then one `MomentCircle` per author of the list shown; a named
+    group ("Momenty autorów"); the focus ring is a 2 px rounded RECTANGLE
+    around circle and name, never another circle beside the state ring.
+  - **Compact row**: collapsed min 76 px — 44 px avatar (no ring; opens the
+    chain), name 15 w700 + badges + real age + an unheard dot that scales
+    with the text and wears a canvas-coloured ring, a one-line caption
+    (omitted when empty or the "Voice Moment" fallback), the meta line
+    (duration · ♡ n · 💬 n · expiry, zero counts omitted, amber in the last
+    hour; each glyph + number is one inline unit so a wrap never parts them),
+    a 44 px outline play button in a 48 px target. Its 12 px secondary ink
+    is `textSecondary` on the page canvas (the backdrop photo below 1100)
+    and `textTertiary` on the desktop block's surface. The row is ONE
+    semantics node — a named button ("Otwórz Voice Moment: …, nowy" when
+    unheard; no "Voice Moment: Voice Moment" for an uncaptioned one) that
+    takes keyboard focus and carries its tap and three custom actions
+    (like/unlike, reply with voice, more options); the avatar, the play
+    control, the seek and the action line are buttons of their own. OPEN
+    while its Moment is the controller's current clip (one at a time; a
+    finished clip stays open at its end): three caption lines, the
+    availability line (the expiry never disappears), the R14 bead (it stays
+    enabled and says "Ładowanie…" while the grant resolves, so keyboard
+    focus never drops), the poured waveform under a transparent seek slider
+    (one-second steps; a 2 px `focus` ring on the strip), the clock, and the
+    action line — like (a toggle: "Lubię to, Polubienia: n"), comments,
+    "Odpowiedz głosem", share, ⋯ ("Więcej opcji"). The player and action
+    lines swallow taps, long presses and secondary clicks, so nothing there
+    opens the sheet or the menu over the playing clip.
+  - **⋯ menu** (`MomentOverflowMenu.showAt` / `entries` / `dispatch`):
+    "Zobacz profil", "Szczegóły", report, delete — opened by the ROW from a
+    long press or secondary click, from the open row's ⋯ (anchored on it),
+    or from the "More options" custom action. A popup menu is a transient
+    popup, not a new screen: the feed keeps playing, the open row stays
+    open, focus returns to ⋯ when it closes, and nothing reloads (only
+    dialogs, sheets and pages cover the feed).
+  - **Layout**: below 600 full-bleed rows on the canvas with hairline
+    dividers; 600–1099 one centred 640 px column; ≥ 1100 the local panel,
+    the rows as ONE R2 block (radius 20, `surface`, the hairline edge) under
+    the strip, and the calm panel. Scroll anchoring (`_AnchoredRows`) keeps
+    the row being pressed — or the first row in view — still while another
+    row above it opens or closes, through a same-frame
+    `scrollOffsetCorrection`; at the list's very top there is no offset to
+    give back.
+  - Contracts: `test/voice_feed_g4_test.dart`,
+    `test/moment_author_circles_test.dart`,
+    `test/moment_feed_card_redesign_test.dart`,
+    `test/moments_overview_*_test.dart`, `test/moments_board_test.dart`,
+    `test/refine_voice_bead_w3_test.dart`; frames through
+    `test/slim_moments_capture.dart` with `YO_CAPTURE_MATRIX=g4`.
 - **Inline voice clip = `VoicePlayerRow(status:, durationSeconds:,
   semanticsLabel:, onTap:, style:)`**
   (`lib/shared/widgets/voice/voice_player_row.dart`). One row for "an audio

@@ -49,11 +49,21 @@ final class MomentExpiryAnnouncer {
 /// A route below an opaque child route is still active, and cached tab bodies
 /// remain mounted inside [IndexedStack], [Visibility] or [Offstage]. None of
 /// those hidden surfaces may announce or reclaim keyboard focus.
-bool momentExpirySurfaceIsVisible(BuildContext context) {
+///
+/// [requireCurrentRoute] false leaves the route check to the caller: a
+/// surface that tracks for itself which routes cover it (the Głos feed,
+/// which stays the visible surface under a transient popup menu) asks only
+/// about the hidden-ancestor half.
+bool momentExpirySurfaceIsVisible(
+  BuildContext context, {
+  bool requireCurrentRoute = true,
+}) {
   if (!context.mounted) return false;
 
-  final route = ModalRoute.of(context);
-  if (route != null && !route.isCurrent) return false;
+  if (requireCurrentRoute) {
+    final route = ModalRoute.of(context);
+    if (route != null && !route.isCurrent) return false;
+  }
 
   var isVisible = !_widgetHidesExpirySurface(context.widget);
   context.visitAncestorElements((ancestor) {

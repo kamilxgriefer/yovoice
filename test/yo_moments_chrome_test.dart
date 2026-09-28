@@ -11,8 +11,9 @@ import 'package:yovoice/features/moments/presentation/widgets/yo_moments_chrome.
 import 'moments_overview_test_support.dart';
 
 /// The shared YO Moments chrome of board 06: one title, the two-level
-/// switch + filters, Utwórz, no search, 48-px targets, focus order, RTL,
-/// 200 % text.
+/// switch + filters (G4: three text tabs below 1100, three panel rows at
+/// 1100 and up — the retired Recent is gone from both), Utwórz, no search,
+/// 48-px targets, focus order, RTL, 200 % text.
 void main() {
   late VoidCallback restoreIdentity;
 
@@ -71,7 +72,6 @@ void main() {
     'moments-filter-discover',
     'moments-filter-following',
     'moments-filter-mostEngaged',
-    'moments-filter-recent',
   ];
 
   testWidgets('Voice uses the same compact two-level chrome as Yeels below '
@@ -90,11 +90,12 @@ void main() {
     expect(
       find.byKey(const ValueKey<String>('yo-moments-local-panel')),
       findsNothing,
-      reason: 'below 1100 the filters are chips, not a panel',
+      reason: 'below 1100 the filters are tabs, not a panel',
     );
     for (final key in voiceFilters) {
       expect(find.byKey(ValueKey<String>(key)), findsOneWidget);
     }
+    expect(find.byKey(const ValueKey('moments-filter-recent')), findsNothing);
 
     final semantics = tester.ensureSemantics();
     try {
@@ -155,8 +156,10 @@ void main() {
     },
   );
 
-  testWidgets('the English label is Voice and the four filters keep their '
-      'English copy', (tester) async {
+  testWidgets('the English label is Voice and the three filters keep their '
+      'English copy (Popular renames Most engaged; Recent is retired)', (
+    tester,
+  ) async {
     await pumpScreen(
       tester,
       size: const Size(390, 844),
@@ -165,11 +168,12 @@ void main() {
     expect(find.text('Voice'), findsOneWidget);
     expect(find.text('Discover'), findsOneWidget);
     expect(find.text('Following'), findsOneWidget);
-    expect(find.text('Most engaged'), findsOneWidget);
-    expect(find.text('Recent'), findsOneWidget);
+    expect(find.text('Popular'), findsOneWidget);
+    expect(find.text('Most engaged'), findsNothing);
+    expect(find.text('Recent'), findsNothing);
   });
 
-  testWidgets('at 1280 the four Voice filters are local-panel rows, the '
+  testWidgets('at 1280 the three Voice filters are local-panel rows, the '
       'panel has no title and Utwórz opens the create chooser', (tester) async {
     await pumpScreen(tester, size: const Size(1280, 900));
 
@@ -182,7 +186,17 @@ void main() {
       expect(find.descendant(of: panel, matching: row), findsOneWidget);
       expect(tester.getSize(row).height, greaterThanOrEqualTo(48));
     }
-    expect(find.text('Najbardziej angażujące'), findsOneWidget);
+    expect(find.text('Popularne'), findsOneWidget);
+    expect(find.text('Najbardziej angażujące'), findsNothing);
+    expect(find.text('Najnowsze'), findsNothing);
+    expect(
+      find.descendant(
+        of: panel,
+        matching: find.byKey(const ValueKey('moments-discovery-refresh')),
+      ),
+      findsOneWidget,
+      reason: 'the desktop keeps "Odśwież Momenty"',
+    );
 
     final create = find.byKey(const ValueKey<String>('moments-create-cta'));
     expect(find.descendant(of: panel, matching: create), findsOneWidget);
@@ -222,7 +236,7 @@ void main() {
       'yo-moments-format-reels',
       'moments-filter-discover',
       'moments-filter-following',
-      'moments-discovery-refresh',
+      'moments-filter-mostEngaged',
     ]) {
       final size = tester.getSize(find.byKey(ValueKey<String>(key)));
       expect(size.height, greaterThanOrEqualTo(48), reason: key);

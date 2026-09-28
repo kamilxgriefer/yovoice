@@ -322,7 +322,7 @@ void main() {
       expect(find.byKey(const ValueKey('moment-row-mine-1')), findsOneWidget);
       expect(find.text('caption mine-1'), findsOneWidget);
 
-      await tester.tap(find.byKey(const ValueKey('moment-row-menu-mine-1')));
+      await tester.longPress(find.byKey(const ValueKey('moment-row-mine-1')));
       await tester.pumpAndSettle();
       expect(
         find.byKey(const ValueKey('moment-row-report-mine-1')),
@@ -356,7 +356,7 @@ void main() {
       final moments = await seeded(const []);
       await pumpDiscover(tester, moments: moments, pool: [theirs]);
 
-      await tester.tap(find.byKey(const ValueKey('moment-row-menu-theirs')));
+      await tester.longPress(find.byKey(const ValueKey('moment-row-theirs')));
       await tester.pumpAndSettle();
 
       expect(
@@ -379,7 +379,7 @@ void main() {
       final moments = await seeded(const []);
       await pumpDiscover(tester, moments: moments, pool: [theirs]);
 
-      await tester.tap(find.byKey(const ValueKey('moment-row-menu-theirs')));
+      await tester.longPress(find.byKey(const ValueKey('moment-row-theirs')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('moment-row-details-theirs')));
       await tester.pumpAndSettle();
@@ -400,7 +400,7 @@ void main() {
       await pumpFollowing(tester, moments: moments);
 
       expect(find.byKey(const ValueKey('moment-row-mine-1')), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('moment-row-menu-mine-1')));
+      await tester.longPress(find.byKey(const ValueKey('moment-row-mine-1')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('moment-row-delete-mine-1')));
       await tester.pumpAndSettle();
@@ -426,7 +426,7 @@ void main() {
       moments.failDelete = true;
       await pumpFollowing(tester, moments: moments);
 
-      await tester.tap(find.byKey(const ValueKey('moment-row-menu-mine-1')));
+      await tester.longPress(find.byKey(const ValueKey('moment-row-mine-1')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('moment-row-delete-mine-1')));
       await tester.pumpAndSettle();
@@ -450,7 +450,7 @@ void main() {
         social: [_moment('theirs', author: 'friend', authorName: 'Ola')],
       );
 
-      await tester.tap(find.byKey(const ValueKey('moment-row-menu-theirs')));
+      await tester.longPress(find.byKey(const ValueKey('moment-row-theirs')));
       await tester.pumpAndSettle();
       expect(
         find.byKey(const ValueKey('moment-row-delete-theirs')),
@@ -512,14 +512,19 @@ void main() {
   });
 
   group('the detail route', () {
-    testWidgets('a row\'s title opens the detail page and Back returns to '
+    // G4: the compact row has no title target (its body opens the sheet);
+    // the detail page is the ⋯ menu's Details, on a long press or on the
+    // open row's action line.
+    testWidgets('a row\'s Details opens the detail page and Back returns to '
         'the feed', (tester) async {
       final moments = await seeded([
         _moment('mine-1', age: const Duration(hours: 1)),
       ]);
       await pumpFollowing(tester, moments: moments);
 
-      await tester.tap(find.byKey(const ValueKey('moment-row-title-mine-1')));
+      await tester.longPress(find.byKey(const ValueKey('moment-row-mine-1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('moment-row-details-mine-1')));
       await tester.pumpAndSettle();
 
       expect(find.byType(MomentDetailScreen), findsOneWidget);
@@ -539,7 +544,7 @@ void main() {
       ]);
       await pumpFollowing(tester, moments: moments);
 
-      await tester.tap(find.byKey(const ValueKey('moment-row-menu-mine-1')));
+      await tester.longPress(find.byKey(const ValueKey('moment-row-mine-1')));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Details'));
       await tester.pumpAndSettle();
@@ -559,7 +564,9 @@ void main() {
         onOpenDetail: (moment) => opened = moment,
       );
 
-      await tester.tap(find.byKey(const ValueKey('moment-row-title-mine-1')));
+      await tester.longPress(find.byKey(const ValueKey('moment-row-mine-1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('moment-row-details-mine-1')));
       await tester.pumpAndSettle();
 
       expect(opened?.id, 'mine-1');
@@ -582,8 +589,12 @@ void main() {
             'a null expiresAt is PERMANENT and must render '
             '(the ADR-101 amendment)',
       );
-      expect(find.text('Stays until deleted'), findsOneWidget);
-      expect(find.textContaining('Expires in'), findsNothing);
+      // The meta line continues a sentence: "… · stays until deleted".
+      expect(find.textContaining('stays until deleted'), findsOneWidget);
+      expect(
+        find.textContaining(RegExp('expires in', caseSensitive: false)),
+        findsNothing,
+      );
     });
 
     testWidgets('someone else\'s permanent Moment renders with NO expiry '
@@ -606,8 +617,16 @@ void main() {
         find.byKey(const ValueKey('moment-row-theirs-forever')),
         findsOneWidget,
       );
-      expect(find.text('Stays until deleted'), findsNothing);
-      expect(find.textContaining('Expires in'), findsNothing);
+      expect(
+        find.textContaining(
+          RegExp('stays until deleted', caseSensitive: false),
+        ),
+        findsNothing,
+      );
+      expect(
+        find.textContaining(RegExp('expires in', caseSensitive: false)),
+        findsNothing,
+      );
     });
 
     testWidgets('a timed own row still shows its real countdown', (
@@ -618,8 +637,13 @@ void main() {
       ]);
       await pumpFollowing(tester, moments: moments);
 
-      expect(find.textContaining('Expires in'), findsOneWidget);
-      expect(find.text('Stays until deleted'), findsNothing);
+      expect(find.textContaining('expires in'), findsOneWidget);
+      expect(
+        find.textContaining(
+          RegExp('stays until deleted', caseSensitive: false),
+        ),
+        findsNothing,
+      );
     });
   });
 }

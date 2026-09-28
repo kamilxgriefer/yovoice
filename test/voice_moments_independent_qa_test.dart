@@ -381,6 +381,15 @@ class _Harness {
   }
 }
 
+/// G4: the row's Details lives in its ⋯ menu (on the open row's action line
+/// here, since the row is playing), not on a caption target.
+Future<void> _openDetailFromMenu(WidgetTester tester, String id) async {
+  await tester.tap(find.byKey(ValueKey('moment-row-menu-$id')));
+  await tester.pumpAndSettle();
+  await tester.tap(find.byKey(ValueKey('moment-row-details-$id')));
+  await tester.pumpAndSettle();
+}
+
 Future<void> _tapPlay(WidgetTester tester, String id) async {
   final control = find.byKey(ValueKey('moment-row-play-$id'));
   await tester.ensureVisible(control);
@@ -789,8 +798,7 @@ void main() {
       await _tapPlay(tester, old.id);
       await tester.pumpAndSettle();
       h.first.disposeBarrier = (_) => released.future;
-      await tester.tap(find.byKey(ValueKey('moment-row-title-${old.id}')));
-      await tester.pump();
+      await _openDetailFromMenu(tester, old.id);
       expect(h.opened, isEmpty);
       final current = old.copyWith(
         caption: 'Current permitted caption',
@@ -916,8 +924,7 @@ void main() {
       await _tapPlay(tester, 'a');
       await tester.pumpAndSettle();
       h.first.disposeBarrier = (_) => released.future;
-      await tester.tap(find.byKey(const ValueKey('moment-row-title-a')));
-      await tester.pump();
+      await _openDetailFromMenu(tester, 'a');
       unawaited(
         h.navigator.currentState!.push<void>(
           MaterialPageRoute<void>(

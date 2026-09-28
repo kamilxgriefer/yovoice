@@ -4,7 +4,7 @@
 // stops, but the unheard stop was hardcoded as `AppGradients.primary` in the
 // tile's own disc and in the discover `MomentSeenAvatar`, so three places
 // could drift. Now every shape — the shared disc, the tile through it and
-// the capsule border — paints `MomentStoryTile.ringGradient`, and this file
+// the Głos author circle — paints `MomentStoryTile.ringGradient`, and this file
 // pins that: the gradient's angle and stops in both themes, the key
 // contract the tile test relies on, and the geometry the tile hands down.
 
@@ -15,6 +15,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_gradients.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_circles_strip.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_discover_tiles.dart'
     as discover;
 import 'package:yovoice/features/moments/presentation/widgets/moment_story_tile.dart';
@@ -184,25 +185,23 @@ void main() {
   );
 
   testWidgets(
-    'MomentAuthorCapsule\'s border is the same ringGradient, not a plain '
+    'the Głos author circle\'s ring is the same ringGradient, not a plain '
     'left-to-right LinearGradient',
     (tester) async {
       await tester.pumpWidget(
         _host(
-          MomentAuthorCapsule(
+          MomentCircle(
             name: 'Ola',
             seen: false,
-            semanticLabel: 'Play Voice Moment from Ola',
+            semanticLabel: 'Open the story chain by Ola',
             onTap: () {},
           ),
         ),
       );
-      final context = tester.element(find.byType(MomentAuthorCapsule));
-      final border = tester.widget<DecoratedBox>(
-        find.byKey(MomentAuthorCapsule.borderKey),
-      );
+      final context = tester.element(find.byType(MomentCircle));
+      final ring = tester.widget<Container>(find.byKey(MomentCircle.ringKey));
       final gradient =
-          (border.decoration as BoxDecoration).gradient! as LinearGradient;
+          (ring.decoration! as BoxDecoration).gradient! as LinearGradient;
       expect(gradient, MomentStoryTile.ringGradient(context, seen: false));
       expect(gradient.begin, AppGradients.primary.begin);
       expect(gradient.end, AppGradients.primary.end);

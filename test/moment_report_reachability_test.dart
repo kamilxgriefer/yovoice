@@ -220,7 +220,7 @@ void main() {
       final functions = _RecordingFunctions();
       await pumpFeed(tester, functions: functions);
 
-      await tester.tap(find.byKey(const ValueKey('moment-row-menu-v1')));
+      await tester.longPress(find.byKey(const ValueKey('moment-row-v1')));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Report'));
       await tester.pumpAndSettle();
@@ -247,7 +247,7 @@ void main() {
       expect(find.byKey(const ValueKey('moment-featured-v1')), findsNothing);
       expect(find.byKey(const ValueKey('moment-row-v1')), findsOneWidget);
       expect(find.text('caption'), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('moment-row-menu-v1')));
+      await tester.longPress(find.byKey(const ValueKey('moment-row-v1')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('moment-row-report-v1')));
       await tester.pumpAndSettle();
@@ -275,11 +275,13 @@ void main() {
         textScale: 2,
       );
 
-      final menu = find.byKey(const ValueKey('moment-row-menu-v1'));
-      expect(menu, findsOneWidget);
-      await tester.ensureVisible(menu);
+      // G4: a collapsed row carries its ⋯ menu on a long press (and on the
+      // open row's action line); both reach the same Report.
+      final row = find.byKey(const ValueKey('moment-row-v1'));
+      expect(row, findsOneWidget);
+      await tester.ensureVisible(row);
       await tester.pump();
-      await tester.tap(menu);
+      await tester.longPress(row);
       await tester.pumpAndSettle();
       expect(
         find.byKey(const ValueKey('moment-row-report-v1')),
@@ -313,7 +315,7 @@ void main() {
       await pumpFeed(tester, functions: functions, author: viewerUid);
 
       expect(find.byKey(const ValueKey('moment-row-v1')), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('moment-row-menu-v1')));
+      await tester.longPress(find.byKey(const ValueKey('moment-row-v1')));
       await tester.pumpAndSettle();
 
       expect(
@@ -401,7 +403,9 @@ void main() {
       await pumpFeed(tester, functions: functions, size: const Size(1440, 900));
 
       expect(find.byType(MomentDetailScreen), findsNothing);
-      await tester.tap(find.byKey(const ValueKey('moment-row-title-v1')));
+      await tester.longPress(find.byKey(const ValueKey('moment-row-v1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('moment-row-details-v1')));
       await tester.pumpAndSettle();
 
       expect(find.byType(MomentDetailScreen), findsOneWidget);

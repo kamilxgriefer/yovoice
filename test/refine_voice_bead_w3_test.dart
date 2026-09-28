@@ -4,7 +4,8 @@
 // only card 2, pausing drops it to rest, starting card 3 moves the light,
 // and a position tick never rebuilds a card body — plus the pieces the
 // batch introduced: the lit block's high-contrast and Reduce Motion forms,
-// the poured waveform, the expiry pill, the R8 chips, the author capsule,
+// the poured waveform, the expiry pill, the R8 chips, the author circle
+// (G4, which replaced the capsule; the lit card became the open Głos row),
 // the additive bead on the shared voice row and the create actions.
 //
 // These are widget tests: they prove structure and state, not pixels. The
@@ -24,7 +25,6 @@ import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_finish.dart';
 import 'package:yovoice/core/theme/app_gradients.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
-import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
@@ -32,6 +32,7 @@ import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/data/services/voice_moment_read_service.dart';
 import 'package:yovoice/features/moments/presentation/screens/moment_detail_screen.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_card.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_circles_strip.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_pill.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_story_tile.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_transport_controls.dart';
@@ -130,83 +131,89 @@ void main() {
       await tester.pump();
     }
 
-    Color edgeColor(WidgetTester tester, String id) =>
-        _edgeOf(tester, find.byKey(ValueKey('moment-row-edge-$id'))).top.color;
+    /// The row's tint alpha (0 at rest), read from its wash.
+    double tintOf(WidgetTester tester, String id) =>
+        ((tester
+                            .widget<DecoratedBox>(
+                              find.byKey(ValueKey('moment-row-lit-$id')),
+                            )
+                            .decoration
+                        as BoxDecoration)
+                    .gradient!
+                as LinearGradient)
+            .colors
+            .first
+            .a;
 
-    YoDiscEmphasis beadOf(WidgetTester tester, String id) => tester
-        .widget<YoGradientDisc>(
-          find.descendant(
-            of: find.byKey(ValueKey('moment-row-play-$id')),
-            matching: find.byType(YoGradientDisc),
-          ),
-        )
-        .emphasis;
+    /// The bead's light, or null while the row is collapsed (the play
+    /// button is then an outline, never a bead).
+    YoDiscEmphasis? beadOf(WidgetTester tester, String id) {
+      final bead = find.descendant(
+        of: find.byKey(ValueKey('moment-row-play-$id')),
+        matching: find.byType(YoGradientDisc),
+      );
+      if (bead.evaluate().isEmpty) return null;
+      return tester.widget<YoGradientDisc>(bead).emphasis;
+    }
 
-    /// The ids whose card is lit right now, among the mounted cards.
-    List<String> litCards(WidgetTester tester, AppPalette palette) => [
+    /// The ids whose row is lit right now, among the mounted rows.
+    List<String> litCards(WidgetTester tester) => [
       for (final id in const ['m4', 'm5', 'm1', 'm2', 'm3', 'm6'])
-        if (find.byKey(ValueKey('moment-row-edge-$id')).evaluate().isNotEmpty &&
-            edgeColor(tester, id) == VoiceLitBlock.litEdge(palette))
+        if (find.byKey(ValueKey('moment-row-lit-$id')).evaluate().isNotEmpty &&
+            tintOf(tester, id) > 0)
           id,
     ];
 
-    testWidgets('starting card 2 lights only card 2, pausing drops it to '
-        'rest, starting card 3 moves the light', (tester) async {
+    // G4: the lit card became the open row — the bead and the one tint
+    // follow the playing clip exactly as the lit block did.
+    testWidgets('starting row 2 lights only row 2, pausing drops it to '
+        'rest, starting row 3 moves the light', (tester) async {
       await pumpFeed(tester);
-      final palette = AppPalette.of(
-        tester.element(find.byKey(const ValueKey('moment-row-m4'))),
-      );
-      expect(litCards(tester, palette), isEmpty, reason: 'nothing plays');
+      expect(litCards(tester), isEmpty, reason: 'nothing plays');
 
-      // Newest first: m4, m5 (card 2), m1 (card 3).
+      // Newest first: m4, m5 (row 2), m1 (row 3).
       await tapPlay(tester, 'm5');
       expect(players, hasLength(1));
-      expect(litCards(tester, palette), ['m5']);
+      expect(litCards(tester), ['m5']);
       expect(beadOf(tester, 'm5'), YoDiscEmphasis.lit);
-      expect(beadOf(tester, 'm4'), YoDiscEmphasis.rest);
-      expect(edgeColor(tester, 'm4'), palette.hairline);
+      expect(beadOf(tester, 'm4'), isNull, reason: 'a collapsed outline');
+      expect(tintOf(tester, 'm4'), 0);
 
       await tapPlay(tester, 'm5');
-      expect(litCards(tester, palette), isEmpty, reason: 'paused = rest');
+      expect(litCards(tester), isEmpty, reason: 'paused = rest');
       expect(beadOf(tester, 'm5'), YoDiscEmphasis.rest);
-      expect(edgeColor(tester, 'm5'), palette.hairline);
+      expect(tintOf(tester, 'm5'), 0);
 
       await tapPlay(tester, 'm1');
-      expect(litCards(tester, palette), ['m1']);
+      expect(litCards(tester), ['m1']);
       expect(beadOf(tester, 'm1'), YoDiscEmphasis.lit);
-      expect(beadOf(tester, 'm5'), YoDiscEmphasis.rest);
+      expect(beadOf(tester, 'm5'), isNull, reason: 'm5 closed again');
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());
       await tester.pump(const Duration(milliseconds: 20));
     });
 
-    testWidgets('position ticks never rebuild the card body or its lit '
-        'shell; lighting rebuilds the shell only', (tester) async {
+    testWidgets('position ticks never rebuild the row body or its tint; '
+        'only the transport moves', (tester) async {
       await pumpFeed(tester);
       final card = find.byKey(const ValueKey('moment-row-m5'));
-      final title = find.byKey(const ValueKey('moment-row-title-m5'));
-      final shell = find.descendant(
-        of: card,
-        matching: find.byType(VoiceLitBlock),
-      );
-      final titleAtRest = tester.widget(title);
+      final name = find.byKey(const ValueKey('moment-row-name-m5'));
+      final wash = find.byKey(const ValueKey('moment-row-lit-m5'));
 
       await tapPlay(tester, 'm5');
-      expect(
-        identical(tester.widget(title), titleAtRest),
-        isTrue,
-        reason: 'lighting the card hands the same content to the lit shell',
-      );
-      final litShell = tester.widget(shell);
-      final litTitle = tester.widget(title);
+      final openName = tester.widget(name);
+      final caption = find.byKey(const ValueKey('moment-row-caption-m5'));
+      final openCaption = tester.widget(caption);
+      final litWash = tester.widget(wash);
 
       for (final seconds in const [2, 4, 6, 8]) {
         players.single.emitPosition(Duration(seconds: seconds));
         await tester.pump();
       }
-      expect(identical(tester.widget(title), litTitle), isTrue);
+      expect(identical(tester.widget(name), openName), isTrue);
+      expect(identical(tester.widget(caption), openCaption), isTrue);
       expect(
-        identical(tester.widget(shell), litShell),
+        identical(tester.widget(wash), litWash),
         isTrue,
         reason: 'the energy notifier does not change on a position tick',
       );
@@ -226,22 +233,16 @@ void main() {
       await tester.pump(const Duration(milliseconds: 20));
     });
 
-    testWidgets('the corner tint lives only in the lit card', (tester) async {
+    testWidgets('the tint lives only in the lit row', (tester) async {
       await pumpFeed(tester);
-      double tint(String id) => tester
-          .widget<Opacity>(
-            find.descendant(
-              of: find.byKey(ValueKey('moment-row-$id')),
-              matching: find.byKey(VoiceLitBlock.tintKey),
-            ),
-          )
-          .opacity;
-
-      expect(tint('m5'), 0);
+      final palette = AppPalette.of(
+        tester.element(find.byKey(const ValueKey('moment-row-m4'))),
+      );
+      expect(tintOf(tester, 'm5'), 0);
       await tapPlay(tester, 'm5');
-      expect(tint('m5'), 1);
+      expect(tintOf(tester, 'm5'), closeTo(palette.tintAlpha, 1e-6));
       for (final other in const ['m4', 'm1', 'm2']) {
-        expect(tint(other), 0, reason: 'one lit card per feed');
+        expect(tintOf(tester, other), 0, reason: 'one lit row per feed');
       }
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());
@@ -598,13 +599,13 @@ void main() {
     });
   });
 
-  group('the author capsule', () {
-    testWidgets('a 38 px ring in a hairline pill; the name carries the heard '
-        'state', (tester) async {
+  group('the author circle', () {
+    testWidgets('a 64 px ring with no pill around it; the name carries the '
+        'heard state', (tester) async {
       for (final seen in [false, true]) {
         await tester.pumpWidget(
           _themed(
-            MomentAuthorCapsule(
+            MomentCircle(
               name: 'Maja',
               seen: seen,
               semanticLabel: 'Open the story chain by Maja',
@@ -614,25 +615,26 @@ void main() {
         );
         final palette = AppPalette.dark;
         expect(
-          tester.getSize(find.byKey(MomentAuthorCapsule.borderKey)),
-          const Size.square(MomentAuthorCapsule.avatarDiameter),
+          tester.getSize(find.byKey(MomentCircle.ringKey)),
+          const Size.square(MomentCircle.circle),
         );
         final name = tester.widget<Text>(find.text('Maja')).style!;
         expect(name.fontWeight, seen ? FontWeight.w600 : FontWeight.w700);
-        expect(name.color, seen ? palette.textSecondary : palette.textPrimary);
-        final pill =
-            tester
-                    .widget<AnimatedContainer>(
-                      find.descendant(
-                        of: find.byType(MomentAuthorCapsule),
-                        matching: find.byType(AnimatedContainer),
-                      ),
-                    )
-                    .decoration!
-                as BoxDecoration;
-        expect(pill.gradient, palette.blockGradient);
-        expect((pill.border! as Border).top.color, palette.hairline);
-        expect(pill.boxShadow, isEmpty, reason: 'chip-like: no lift');
+        expect(name.color, seen ? palette.textTertiary : palette.textPrimary);
+        // No block behind the circle: no fill, no edge, no lift.
+        expect(
+          find.descendant(
+            of: find.byType(MomentCircle),
+            matching: find.byWidgetPredicate(
+              (widget) =>
+                  widget is AnimatedContainer ||
+                  (widget is Container &&
+                      (widget.decoration as BoxDecoration?)?.gradient ==
+                          palette.blockGradient),
+            ),
+          ),
+          findsNothing,
+        );
       }
     });
   });
@@ -808,10 +810,8 @@ void main() {
     setUp(() => restoreIdentity = installIdentityStub());
     tearDown(() => restoreIdentity());
 
-    testWidgets('Tab reaches a card and the lit block paints the 2 px focus '
-        'ring; a focused control inside the card does not ring it', (
-      tester,
-    ) async {
+    testWidgets('Tab reaches a row and the row paints its 2 px focus ring; a '
+        'focused control inside the row does not ring it', (tester) async {
       const size = Size(768, 2600);
       useSurface(tester, size);
       final auth = authAs();
@@ -833,26 +833,15 @@ void main() {
       );
       await settleOverview(tester);
       final palette = AppPalette.dark;
-      // Newest first: m4 is the first card.
+      // Newest first: m4 is the first row.
       final card = find.byKey(const ValueKey('moment-row-m4'));
       final ink = tester.widget<InkWell>(
-        find.descendant(
-          of: card,
-          matching: find.byWidgetPredicate(
-            (widget) =>
-                widget is InkWell &&
-                widget.excludeFromSemantics &&
-                widget.borderRadius == AppRadius.block,
-          ),
-        ),
+        find.byKey(const ValueKey('moment-row-body-m4')),
       );
       Border ring() =>
           (tester
                           .widget<DecoratedBox>(
-                            find.descendant(
-                              of: card,
-                              matching: find.byKey(VoiceLitBlock.focusRingKey),
-                            ),
+                            find.byKey(const ValueKey('moment-row-focus-m4')),
                           )
                           .decoration
                       as BoxDecoration)
@@ -869,33 +858,33 @@ void main() {
       expect(
         ink.focusNode!.hasPrimaryFocus,
         isTrue,
-        reason: 'the card is a Tab stop',
+        reason: 'the row is a Tab stop',
       );
       expect(ring().top.color, palette.focus);
-      expect(ring().top.width, VoiceLitBlock.focusRingWidth);
+      expect(ring().top.width, 2);
       // The ring is a foreground: focusing moved nothing.
       final cardRect = tester.getRect(card);
 
-      // The bead inside the card takes focus: the bead draws its own ring
-      // and the card's goes, although the card's node still HAS focus.
-      final bead = find.byKey(const ValueKey('moment-row-play-m4'));
+      // The play button inside the row takes focus: it draws its own ring
+      // and the row's goes, although the row's node still HAS focus.
+      final play = find.byKey(const ValueKey('moment-row-play-m4'));
       Focus.of(
-        tester.element(
-          find.descendant(of: bead, matching: find.byType(YoGradientDisc)),
-        ),
+        tester.element(find.descendant(of: play, matching: find.byType(Icon))),
       ).requestFocus();
       await tester.pump();
       await tester.pump();
       expect(ink.focusNode!.hasFocus, isTrue);
       expect(ring().top.color, Colors.transparent);
-      expect(
-        tester
-            .widget<YoGradientDisc>(
-              find.descendant(of: bead, matching: find.byType(YoGradientDisc)),
-            )
-            .focused,
-        isTrue,
-      );
+      final rings = tester
+          .widgetList<DecoratedBox>(
+            find.descendant(of: play, matching: find.byType(DecoratedBox)),
+          )
+          .map((box) => box.decoration)
+          .whereType<BoxDecoration>()
+          .map((decoration) => decoration.border)
+          .whereType<Border>()
+          .where((border) => border.top.color == palette.focus);
+      expect(rings, hasLength(1), reason: 'the play button rings itself');
       expect(tester.getRect(card), cardRect);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());
@@ -1196,7 +1185,7 @@ void main() {
     });
   });
 
-  group('R2 ink on the capsule and the record card', () {
+  group('R2 ink on the Głos row and the record card', () {
     testWidgets(
       'InkSparkle on Android, no ripple anywhere else',
       (tester) async {
@@ -1207,29 +1196,30 @@ void main() {
             : NoSplash.splashFactory;
         expect(momentBlockSplashFactory, expected);
 
+        final auth = authAs();
         await tester.pumpWidget(
-          _themed(
-            MomentAuthorCapsule(
-              name: 'Maja',
-              seen: false,
-              semanticLabel: 'Open the story chain by Maja',
-              onTap: () {},
+          overviewHost(
+            Scaffold(
+              body: MomentsFeedView(
+                auth: auth,
+                onRecord: () {},
+                discoveryService: StaticDiscovery(populatedPool()),
+                feedService: QuietFeed(firestore: fakeFirestore(), auth: auth),
+                viewsService: StaticViews(const <String>{}),
+                playerFactory: () => FakePreviewAudioPlayer(),
+              ),
             ),
+            size: const Size(390, 844),
           ),
         );
+        await settleOverview(tester);
         expect(
           tester
-              .widget<InkWell>(
-                find.descendant(
-                  of: find.byType(MomentAuthorCapsule),
-                  matching: find.byType(InkWell),
-                ),
-              )
+              .widget<InkWell>(find.byKey(const ValueKey('moment-row-body-m4')))
               .splashFactory,
           expected,
         );
 
-        final auth = authAs();
         await tester.pumpWidget(
           overviewHost(
             Scaffold(
@@ -1509,17 +1499,20 @@ void main() {
     });
   });
 
-  group('the Głos refresh circle', () {
+  group('the Głos phone refresh (G4)', () {
     late VoidCallback restoreIdentity;
 
     setUp(() => restoreIdentity = installIdentityStub());
     tearDown(() => restoreIdentity());
 
-    testWidgets('hover fills the 40 px circle and leaves the 48 px plate '
-        'clear: one circle, never two', (tester) async {
+    testWidgets('row 2 draws no refresh circle and no plate: the active tab '
+        'is the refresh, and a pointer brightens a resting tab', (
+      tester,
+    ) async {
       const size = Size(390, 844);
       useSurface(tester, size);
       final auth = authAs();
+      final discovery = StaticDiscovery(populatedPool());
       await tester.pumpWidget(
         overviewHost(
           Scaffold(
@@ -1527,7 +1520,7 @@ void main() {
               auth: auth,
               onRecord: () {},
               immersiveHeader: const ImmersiveFeedHeaderSlots(),
-              discoveryService: StaticDiscovery(populatedPool()),
+              discoveryService: discovery,
               feedService: QuietFeed(firestore: fakeFirestore(), auth: auth),
               viewsService: StaticViews(const <String>{}),
               momentService: StubMomentService(),
@@ -1539,59 +1532,59 @@ void main() {
       );
       await settleOverview(tester);
       final palette = AppPalette.dark;
-      final circle = find.byKey(
-        const ValueKey('moments-discovery-refresh-ring'),
+      expect(
+        find.byKey(const ValueKey('moments-discovery-refresh-ring')),
+        findsNothing,
       );
-      BoxDecoration ring() =>
-          tester.widget<AnimatedContainer>(circle).decoration! as BoxDecoration;
-      Color? plate() =>
-          (tester
-                      .widget<AnimatedContainer>(
-                        find.descendant(
-                          of: find.descendant(
-                            of: find.byKey(
-                              const ValueKey('moments-discovery-refresh'),
-                            ),
-                            matching: find.byType(OverlayPlate),
-                          ),
-                          matching: find.byType(AnimatedContainer),
-                        ),
-                      )
-                      .decoration!
-                  as BoxDecoration)
-              .color;
+      expect(
+        find.byKey(const ValueKey('moments-discovery-refresh')),
+        findsNothing,
+      );
+      expect(find.byType(OverlayPlate), findsNothing);
 
-      expect(tester.getSize(circle), const Size.square(40));
-      expect(ring().color, Colors.transparent);
-      expect((ring().border! as Border).top.color, palette.hairlineControl);
-
+      Color ink(String name) => tester
+          .widget<Text>(
+            find.descendant(
+              of: find.byKey(ValueKey('moments-filter-$name')),
+              matching: find.byType(Text),
+            ),
+          )
+          .style!
+          .color!;
+      expect(ink('following'), palette.textTertiary);
       final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
       await mouse.addPointer(location: Offset.zero);
       addTearDown(mouse.removePointer);
-      await mouse.moveTo(tester.getCenter(circle));
+      await mouse.moveTo(
+        tester.getCenter(
+          find.byKey(const ValueKey('moments-filter-following')),
+        ),
+      );
       await tester.pump();
+      expect(ink('following'), palette.textSecondary);
+
+      await tester.tap(find.byKey(const ValueKey('moments-filter-discover')));
+      await tester.pump();
+      // The read starts once the pull-to-refresh spinner has snapped in.
       await tester.pump(const Duration(milliseconds: 200));
-      expect(ring().color, AppFinish.glass(palette, hovered: true));
-      expect((ring().border! as Border).top.color, palette.hairlineHover);
-      expect(plate(), Colors.transparent, reason: 'no second, 48 px circle');
+      expect(discovery.loadCalls, 2, reason: 'the active tab reloads');
+      await tester.pump(const Duration(seconds: 1));
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());
       await tester.pump(const Duration(milliseconds: 20));
     });
   });
 
-  group('the share action at a large text size', () {
+  group('the action line at a large text size', () {
     late VoidCallback restoreIdentity;
 
     setUp(() => restoreIdentity = installIdentityStub());
     tearDown(() => restoreIdentity());
 
-    testWidgets('where the reply leaves too little room the share label '
-        'gives way to the icon instead of breaking inside the word', (
-      tester,
-    ) async {
+    testWidgets('share is always the icon with its tooltip, and where the '
+        'reply does not fit the line it takes its own, whole', (tester) async {
       await loadInterFont();
-      const size = Size(560, 3200);
+      const size = Size(390, 3200);
       useSurface(tester, size);
       final auth = authAs();
       await tester.pumpWidget(
@@ -1613,45 +1606,31 @@ void main() {
         ),
       );
       await settleOverview(tester);
-      final shares = find.byWidgetPredicate(
-        (widget) =>
-            widget.key is ValueKey<String> &&
-            (widget.key! as ValueKey<String>).value.startsWith(
-              'moment-row-share-',
-            ),
+      final play = find.byKey(const ValueKey('moment-row-play-m4'));
+      await tester.tap(play);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.pump();
+      final share = find.byKey(const ValueKey('moment-row-share-m4'));
+      expect(tester.widget(share), isA<IconButton>());
+      expect(tester.widget<IconButton>(share).tooltip, 'Udostępnij');
+      final reply = find.descendant(
+        of: find.byKey(const ValueKey('moment-row-reply-voice-m4')),
+        matching: find.text('Odpowiedz głosem'),
       );
-      expect(shares, findsWidgets);
-      var iconOnly = 0;
-      for (final element in shares.evaluate()) {
-        final key = element.widget.key!;
-        final label = find.descendant(
-          of: find.byKey(key),
-          matching: find.text('Udostępnij'),
-        );
-        if (label.evaluate().isEmpty) {
-          iconOnly++;
-          expect(element.widget, isA<IconButton>());
-          continue;
-        }
-        // A labelled share is one line: exactly as tall as the like
-        // count beside it, which is the same label style.
-        final id = (key as ValueKey<String>).value.substring(
-          'moment-row-share-'.length,
-        );
-        final count = find.descendant(
-          of: find.byKey(ValueKey('moment-row-like-$id')),
-          matching: find.byType(Text),
-        );
-        expect(
-          tester.getSize(label).height,
-          tester.getSize(count).height,
-          reason: 'the word never breaks',
-        );
-      }
+      final count = find.descendant(
+        of: find.byKey(const ValueKey('moment-row-like-m4')),
+        matching: find.byType(Text),
+      );
       expect(
-        iconOnly,
-        greaterThan(0),
-        reason: 'this width leaves too little room for the word',
+        tester.getSize(reply).height,
+        tester.getSize(count).height,
+        reason: 'the words never break: one line of their own',
+      );
+      expect(
+        tester.getTopLeft(reply).dy,
+        greaterThan(tester.getBottomLeft(count).dy),
+        reason: 'the reply dropped under the counters',
       );
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());

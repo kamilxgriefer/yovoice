@@ -342,6 +342,16 @@ Future<void> _play(WidgetTester tester, String id) async {
   await tester.pump();
 }
 
+/// G4: Details lives in the row's ⋯ menu — on the open row's action line
+/// (the row is playing in these cases) — instead of on a caption target.
+Future<void> _details(WidgetTester tester, String id) async {
+  await tester.tap(find.byKey(ValueKey('moment-row-menu-$id')));
+  await tester.pumpAndSettle();
+  await tester.tap(find.byKey(ValueKey('moment-row-details-$id')));
+  await tester.pump();
+  await tester.pump();
+}
+
 Future<void> _filter(WidgetTester tester, MomentsFilter filter) async {
   final control = find.byKey(ValueKey('moments-filter-${filter.name}'));
   await tester.ensureVisible(control);
@@ -418,8 +428,7 @@ void main() {
         await _filter(tester, MomentsFilter.following);
         await _play(tester, 'a');
         await tester.pumpAndSettle();
-        await tester.tap(find.byKey(const ValueKey('moment-row-title-a')));
-        await tester.pump();
+        await _details(tester, 'a');
         fixture.feed.events.add([
           _moment('a').copyWith(caption: 'Current projection'),
         ]);
@@ -597,10 +606,17 @@ void main() {
     );
     await fixture.pump(tester, size: const Size(390, 844));
     try {
-      final scroll = tester.widget<ListView>(
-        find.byKey(const ValueKey('moments-feed-scroll')),
+      // The rows' sliver (the author strip's own horizontal list comes
+      // first in the tree).
+      final rows = tester.widget<SliverList>(
+        find
+            .descendant(
+              of: find.byKey(const ValueKey('moments-feed-scroll')),
+              matching: find.byType(SliverList),
+            )
+            .last,
       );
-      expect(scroll.childrenDelegate, isA<SliverChildBuilderDelegate>());
+      expect(rows.delegate, isA<SliverChildBuilderDelegate>());
       expect(find.byType(MomentStoryStrip), findsNothing);
       expect(find.byType(MomentDetailPanel), findsNothing);
       expect(find.byKey(const ValueKey('moment-row-item_79')), findsNothing);
@@ -954,9 +970,14 @@ void main() {
       try {
         await _play(tester, 'a');
         await tester.pumpAndSettle();
-        await tester.tap(find.byKey(const ValueKey('moment-row-title-a')));
+        await _details(tester, 'a');
+        // A second request while the first waits on the release (the row
+        // has closed, so its menu comes from a long press).
+        await tester.longPress(find.byKey(const ValueKey('moment-row-a')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey('moment-row-details-a')));
         await tester.pump();
-        await tester.tap(find.byKey(const ValueKey('moment-row-title-a')));
+        await tester.pump();
         expect(fixture.details, isEmpty);
         released.complete();
         await tester.pumpAndSettle();
@@ -995,6 +1016,9 @@ void main() {
           tester.getTopLeft(find.byKey(const ValueKey('moment-row-a'))).dy,
           before,
         );
+        // The like control lives on the open row (G4).
+        await _play(tester, 'a');
+        await tester.pumpAndSettle();
         await tester.tap(find.byKey(const ValueKey('moment-row-like-a')));
         await tester.pump();
         await tester.tap(find.byKey(const ValueKey('moment-row-like-a')));
@@ -1019,7 +1043,7 @@ void main() {
                 ),
               )
               .semanticsLabel,
-          'Likes: 3',
+          'Like, Likes: 3',
         );
         expect(find.textContaining('secret backend'), findsNothing);
         expect(

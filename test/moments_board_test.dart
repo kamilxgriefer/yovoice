@@ -53,6 +53,9 @@ import 'package:yovoice/features/moments/presentation/widgets/moment_story_viewe
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
 
 import 'voice_moment_test_doubles.dart';
+import 'moments_overview_test_support.dart'
+    as support
+    show momentMetaLine, momentMetaVisible;
 
 const _me = 'me';
 
@@ -141,6 +144,14 @@ Future<double> _rowContentTop(WidgetTester tester, String id) async {
 /// the control's spoken name. Both halves are read here, so a regression in
 /// either one — a word back in the row, or a count with no phrase behind it —
 /// fails rather than passing quietly.
+/// A collapsed G4 row's counters live on its meta line: the glyphs and the
+/// bare numbers drawn, the phrases spoken. Both halves, as [countOf] pins
+/// them for a control.
+({String visible, String spoken}) metaOf(WidgetTester tester, String id) => (
+  visible: support.momentMetaVisible(tester, id),
+  spoken: support.momentMetaLine(tester, id).semanticsLabel ?? '',
+);
+
 ({String visible, String spoken}) countOf(WidgetTester tester, String key) {
   final label = tester.widget<Text>(
     find.descendant(
@@ -319,13 +330,11 @@ void main() {
       await tester.pump(const Duration(milliseconds: 50));
 
       final loudTop = await _rowContentTop(tester, 'loud');
-      // The real count travels with the actual action, not decorative copy.
-      // Since the S1 fix the ROW draws the number and the control SPEAKS the
-      // phrase, so both halves are asserted here.
-      expect(countOf(tester, 'moment-row-like-loud'), (
-        visible: '40',
-        spoken: 'Likes: 40',
-      ));
+      // The real count travels with the row, not decorative copy: the
+      // collapsed row DRAWS the number and SPEAKS the phrase, so both halves
+      // are asserted here.
+      expect(metaOf(tester, 'loud').visible, contains(' 40'));
+      expect(metaOf(tester, 'loud').spoken, contains('Likes: 40'));
       final talkedTop = await _rowContentTop(tester, 'talked');
       final quietTop = await _rowContentTop(tester, 'quiet');
       expect(
@@ -542,18 +551,12 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
 
-      final like = find.byKey(const ValueKey('moment-row-like-solo'));
-      final comments = find.byKey(const ValueKey('moment-row-comments-solo'));
+      final meta = find.byKey(const ValueKey('moment-row-meta-solo'));
       // First paint already shows the real loaded count...
-      expect(countOf(tester, 'moment-row-like-solo'), (
-        visible: '1',
-        spoken: 'Likes: 1',
-      ));
-      // ...and zero comments have an honest action name, no invented count.
-      expect(countOf(tester, 'moment-row-comments-solo'), (
-        visible: '0',
-        spoken: 'Comments',
-      ));
+      expect(metaOf(tester, 'solo').visible, contains(' 1'));
+      expect(metaOf(tester, 'solo').spoken, contains('Likes: 1'));
+      // ...and zero comments invent nothing: no number, no phrase.
+      expect(metaOf(tester, 'solo').spoken, isNot(contains('Comments')));
       expect(discovery.loads, 1);
 
       // A like landing afterwards arrives without any reload.
@@ -563,17 +566,12 @@ void main() {
       await tester.pump();
       await tester.pump();
 
-      expect(countOf(tester, 'moment-row-like-solo'), (
-        visible: '7',
-        spoken: 'Likes: 7',
-      ));
-      expect(countOf(tester, 'moment-row-comments-solo'), (
-        visible: '3',
-        spoken: 'Comments: 3',
-      ));
-      // `like` and `comments` are the controls those counts belong to.
-      expect(like, findsOneWidget);
-      expect(comments, findsOneWidget);
+      expect(metaOf(tester, 'solo').visible, contains(' 7'));
+      expect(metaOf(tester, 'solo').spoken, contains('Likes: 7'));
+      expect(metaOf(tester, 'solo').visible, contains(' 3'));
+      expect(metaOf(tester, 'solo').spoken, contains('Comments: 3'));
+      // The row those counts belong to.
+      expect(meta, findsOneWidget);
       expect(
         discovery.loads,
         1,
@@ -605,10 +603,8 @@ void main() {
 
       final row = find.byKey(const ValueKey('moment-row-solo'));
       expect(row, findsOneWidget);
-      expect(countOf(tester, 'moment-row-like-solo'), (
-        visible: '4',
-        spoken: 'Likes: 4',
-      ));
+      expect(metaOf(tester, 'solo').spoken, contains('Likes: 4'));
+      expect(metaOf(tester, 'solo').visible, contains(' 4'));
       expect(tester.takeException(), isNull);
     });
 
@@ -637,10 +633,13 @@ void main() {
       await tester.pump(const Duration(milliseconds: 50));
       expect(discovery.loads, 1);
 
-      await tester.tap(find.byKey(const ValueKey('moments-discovery-refresh')));
+      // G4: the phone's reload is the active tab tapped again; the read
+      // starts once the pull-to-refresh spinner has snapped in.
+      await tester.tap(find.byKey(const ValueKey('moments-filter-discover')));
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
+      await tester.pump(const Duration(milliseconds: 200));
       expect(discovery.loads, 2);
+      await tester.pump(const Duration(seconds: 1));
     });
 
     for (final width in <double>[390, 768, 1100, 1440]) {
@@ -720,12 +719,13 @@ void main() {
           await tester.pump();
           expect(play.hitTestable(), findsOneWidget);
           expect(tester.getSize(play).shortestSide, greaterThanOrEqualTo(44));
+          // Collapsed: no player until a play; the caption is there.
           expect(
             find.byKey(const ValueKey('moment-row-progress-m0')),
-            findsOneWidget,
+            findsNothing,
           );
           expect(
-            find.byKey(const ValueKey('moment-row-title-m0')),
+            find.byKey(const ValueKey('moment-row-caption-m0')),
             findsOneWidget,
           );
           expect(tester.takeException(), isNull);
@@ -1199,21 +1199,16 @@ void main() {
       await tester.pump(const Duration(milliseconds: 200));
       expect(at('pool-liked').dy, lessThan(at('pool-new').dy));
 
-      // Recent: back to createdAt descending.
-      final recentFilter = find.byKey(const ValueKey('moments-filter-recent'));
-      final filterScroller = find.ancestor(
-        of: recentFilter,
-        matching: find.byWidgetPredicate(
-          (widget) =>
-              widget is SingleChildScrollView &&
-              widget.scrollDirection == Axis.horizontal,
-        ),
+      // Recent is retired (G4: it was Discover's list): Discover itself
+      // brings back createdAt descending.
+      expect(find.byKey(const ValueKey('moments-filter-recent')), findsNothing);
+      final discoverFilter = find.byKey(
+        const ValueKey('moments-filter-discover'),
       );
-      expect(filterScroller, findsOneWidget);
-      await tester.drag(filterScroller, const Offset(-800, 0));
+      await tester.ensureVisible(discoverFilter);
       await tester.pump();
-      expect(recentFilter.hitTestable(), findsOneWidget);
-      await tester.tap(recentFilter);
+      expect(discoverFilter.hitTestable(), findsOneWidget);
+      await tester.tap(discoverFilter);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 200));
       expect(at('pool-new').dy, lessThan(at('pool-liked').dy));
@@ -1222,7 +1217,7 @@ void main() {
       final followingFilter = find.byKey(
         const ValueKey('moments-filter-following'),
       );
-      await tester.drag(filterScroller, const Offset(800, 0));
+      await tester.ensureVisible(followingFilter);
       await tester.pump();
       expect(followingFilter.hitTestable(), findsOneWidget);
       await tester.tap(followingFilter);
@@ -1305,7 +1300,7 @@ void main() {
 
       // My own row: Delete offered, Report absent.
       await _revealFeedRow(tester, 'mine-1');
-      await tester.tap(find.byKey(const ValueKey('moment-row-menu-mine-1')));
+      await tester.longPress(find.byKey(const ValueKey('moment-row-mine-1')));
       await tester.pumpAndSettle();
       expect(
         find.byKey(const ValueKey('moment-row-delete-mine-1')),
@@ -1326,9 +1321,9 @@ void main() {
 
       // Someone else's row: Report offered, Delete absent.
       await tester.ensureVisible(
-        find.byKey(const ValueKey('moment-row-menu-theirs')),
+        find.byKey(const ValueKey('moment-row-theirs')),
       );
-      await tester.tap(find.byKey(const ValueKey('moment-row-menu-theirs')));
+      await tester.longPress(find.byKey(const ValueKey('moment-row-theirs')));
       await tester.pumpAndSettle();
       expect(
         find.byKey(const ValueKey('moment-row-report-theirs')),

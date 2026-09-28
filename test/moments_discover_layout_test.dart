@@ -13,6 +13,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/moment_discovery_service.dart';
 import 'package:yovoice/features/moments/data/services/moment_views_service.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_circles_strip.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_discover_tiles.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_story_tile.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moments_feed_view.dart';
@@ -190,8 +191,14 @@ double _listWidth(Size size) => math.min(
 );
 
 double _listLeft(Size size) =>
-    _panelInset(size) +
-    (size.width - _panelInset(size) - _listWidth(size)) / 2;
+    _panelInset(size) + (size.width - _panelInset(size) - _listWidth(size)) / 2;
+
+/// G4: below 1100 the rows are full-bleed in the column (their content
+/// keeps the gutter); from 1100 they sit in one R2 block inside the gutter,
+/// their content 20 in from its edge.
+double _rowInset(Size size) => size.width >= 1100 ? _gutter(size) : 0;
+
+double _contentInset(Size size) => size.width >= 1100 ? 20 : _gutter(size);
 
 void _expectSingleColumn(WidgetTester tester, Size size) {
   final list = tester.getRect(
@@ -201,8 +208,8 @@ void _expectSingleColumn(WidgetTester tester, Size size) {
   expect(list.left, _listLeft(size));
   final a = tester.getRect(find.byKey(const ValueKey('moment-row-a')));
   final b = tester.getRect(find.byKey(const ValueKey('moment-row-b')));
-  expect(a.left, list.left + _gutter(size));
-  expect(a.width, list.width - 2 * _gutter(size));
+  expect(a.left, list.left + _rowInset(size));
+  expect(a.width, list.width - 2 * _rowInset(size));
   expect(b.left, a.left);
   expect(b.width, a.width);
   expect(a.bottom, lessThanOrEqualTo(b.top));
@@ -229,39 +236,54 @@ Future<void> _expectReadableCard(
     find.descendant(of: card, matching: find.text(moment.caption)),
     findsOneWidget,
   );
+  // The exact duration opens the collapsed row's meta line.
   expect(
-    find.descendant(of: card, matching: find.text('1:03')),
+    find.descendant(of: card, matching: find.textContaining('1:03')),
     findsOneWidget,
   );
-  final progress = tester.widget<Slider>(
-    find.byKey(ValueKey('moment-row-progress-$id')),
-  );
-  expect(progress.max, 63000);
-  expect(progress.value, 0);
   expect(
-    progress.onChanged,
-    isNull,
-    reason: 'No implicit playback or seeking.',
+    find.byKey(ValueKey('moment-row-progress-$id')),
+    findsNothing,
+    reason: 'No implicit playback or seeking: no row is open.',
   );
-  for (final control in ['chain', 'menu', 'play']) {
+  // The ⋯ menu of a collapsed row is a long press away.
+  await tester.longPress(card);
+  await tester.pumpAndSettle();
+  expect(find.byKey(ValueKey('moment-row-details-$id')), findsOneWidget);
+  await tester.tapAt(const Offset(2, 2));
+  await tester.pumpAndSettle();
+  for (final control in ['chain', 'play']) {
     final finder = find.byKey(ValueKey('moment-row-$control-$id'));
     await tester.ensureVisible(finder);
     await tester.pump();
     expect(finder.hitTestable(), findsOneWidget);
     final target = tester.getRect(finder);
     final rect = tester.getRect(card);
-    expect(target.width, greaterThanOrEqualTo(44));
-    expect(target.height, greaterThanOrEqualTo(44));
+    // (a sub-pixel of layout noise after a fractional scroll is not a
+    // smaller target)
+    expect(target.width, greaterThanOrEqualTo(44 - 1e-6));
+    expect(target.height, greaterThanOrEqualTo(44 - 1e-6));
     expect(rect.contains(target.topLeft), isTrue);
     expect(rect.contains(target.bottomRight), isTrue);
-    expect(rect.width, _listWidth(size) - 2 * _gutter(size));
-    expect(rect.left, _listLeft(size) + _gutter(size));
+    expect(rect.width, _listWidth(size) - 2 * _rowInset(size));
+    expect(rect.left, _listLeft(size) + _rowInset(size));
   }
-  final play = tester.widget<IconButton>(
-    find.byKey(ValueKey('moment-row-play-$id')),
+  expect(
+    tester.getTopLeft(find.byKey(ValueKey('moment-row-chain-$id'))).dx,
+    tester.getRect(card).left + _contentInset(size),
   );
+  final playFinder = find.byKey(ValueKey('moment-row-play-$id'));
+  final play = tester.widget<IconButton>(playFinder);
   expect(play.onPressed, isNotNull);
-  expect(play.tooltip, 'Play');
+  // The short word is the visible tooltip; the spoken name adds the length.
+  expect(
+    tester
+        .widget<Tooltip>(
+          find.ancestor(of: playFinder, matching: find.byType(Tooltip)).first,
+        )
+        .message,
+    'Play',
+  );
   expect(tester.takeException(), isNull);
 }
 
@@ -368,41 +390,75 @@ void main() {
   group(
     'heard reads as heard in Discover, in the story tiles\' vocabulary',
     () {
-      MomentSeenAvatar avatarIn(WidgetTester tester, Key key) =>
-          tester.widget<MomentSeenAvatar>(
-            find
-                .descendant(
-                  of: find.byKey(key),
-                  matching: find.byType(MomentSeenAvatar),
-                )
-                .first,
-          );
+      // G4: the row's avatar has no ring; the heard/unheard fact is the
+      // row's dot (and its chain entry's spoken state), and the author
+      // circle's ring above the list.
+      Finder dot(String id) => find.byKey(ValueKey('moment-row-unheard-$id'));
+      BoxDecoration ringOf(WidgetTester tester, String author) =>
+          tester
+                  .widget<Container>(
+                    find.descendant(
+                      of: find.byKey(ValueKey('moments-circle-$author')),
+                      matching: find.byKey(MomentCircle.ringKey),
+                    ),
+                  )
+                  .decoration!
+              as BoxDecoration;
 
-      testWidgets('a heard Moment dims on its single-card chain entry; '
-          'an unheard one does not', (tester) async {
+      testWidgets('a heard Moment loses its dot and its author circle goes '
+          'quiet; an unheard one keeps both', (tester) async {
         await _pumpFeed(tester, size: const Size(390, 844), viewed: {'a'});
 
+        expect(dot('a'), findsNothing);
+        expect(dot('b'), findsOneWidget);
+        // The circle is the shared seen-avatar (ADR-155): heard is the
+        // quiet `border` stops and a dimmed face, unheard the brand stops.
+        final context = tester.element(find.byType(MomentsFeedView));
         expect(
-          avatarIn(tester, const ValueKey('moment-row-chain-a')).seen,
-          isTrue,
+          (ringOf(tester, 'p1').gradient! as LinearGradient).colors,
+          MomentStoryTile.ringColors(context, seen: true),
         );
-        expect(avatarIn(tester, const ValueKey('moment-row-a')).seen, isTrue);
         expect(
-          avatarIn(tester, const ValueKey('moment-row-chain-b')).seen,
-          isFalse,
+          (ringOf(tester, 'p2').gradient! as LinearGradient).colors,
+          MomentStoryTile.ringColors(context, seen: false),
         );
-        expect(avatarIn(tester, const ValueKey('moment-row-b')).seen, isFalse);
+        Opacity faceOf(String author) => tester.widget<Opacity>(
+          find.descendant(
+            of: find.byKey(ValueKey('moments-circle-$author')),
+            matching: find.byType(Opacity),
+          ),
+        );
+        expect(faceOf('p1').opacity, lessThan(1));
+        expect(faceOf('p2').opacity, 1);
+        final semantics = tester.ensureSemantics();
+        try {
+          expect(
+            tester
+                .getSemantics(find.byKey(const ValueKey('moment-row-chain-a')))
+                .getSemanticsData()
+                .label,
+            endsWith('already heard'),
+          );
+          expect(
+            tester
+                .getSemantics(find.byKey(const ValueKey('moment-row-chain-b')))
+                .getSemanticsData()
+                .label,
+            endsWith('not heard yet'),
+          );
+        } finally {
+          semantics.dispose();
+        }
       });
 
       testWidgets('unknown viewed state stays unheard: nothing is greyed out '
           'before the momentViews listener has said anything', (tester) async {
         await _pumpFeed(tester, size: const Size(390, 844), viewed: null);
         for (final id in ['a', 'b']) {
-          expect(
-            avatarIn(tester, ValueKey('moment-row-chain-$id')).seen,
-            isFalse,
-          );
-          expect(avatarIn(tester, ValueKey('moment-row-$id')).seen, isFalse);
+          expect(dot(id), findsOneWidget);
+        }
+        for (final author in ['p1', 'p2']) {
+          expect(ringOf(tester, author).gradient, isNotNull);
         }
       });
 
@@ -423,6 +479,10 @@ void main() {
           MomentStoryTile.ringColors(context, seen: false).first,
           isNot(MomentStoryTile.ringColors(context, seen: false).last),
           reason: 'the unheard ring is the brand gradient',
+        );
+        expect(
+          (ringOf(tester, 'p2').gradient! as LinearGradient).colors,
+          MomentStoryTile.ringColors(context, seen: false),
         );
       });
     },

@@ -1,6 +1,10 @@
 /// Copy introduced by the YO Moments overview (board 06): the local filter
 /// panel, the canvas chrome, the author capsules, the Voice card's reply
-/// action and the calm "friends you do not follow yet" panel.
+/// action and the calm "friends you do not follow yet" panel — and by the
+/// Głos G4 list: the "Popularne" tab, the author circles (their group, the
+/// viewer's own chain, the heard/unheard state), the compact rows' spoken
+/// names and actions ("new", "Play, 12 seconds", the loading state, "More
+/// options", like/unlike, "View profile") and the requested reload.
 ///
 /// Short words that carry a different meaning elsewhere in the product
 /// ("Create", "Follow", "Following") are keyed by context so the switch and
@@ -25,6 +29,24 @@ const momentsOverviewTranslationKeys = <String>[
   'Could not update follow. Try again.',
   'Open profile of {name}',
   'Open Voice Moment: {caption}, {author}, {age}',
+  'yoMoments.popular',
+  'View profile',
+  'Like this Moment',
+  'Unlike this Moment',
+  'Reload Moments',
+  'Reloading Moments…',
+  'Loading…',
+  'More options',
+  "Authors' Moments",
+  'yoMoments.unheardRowState',
+  'Play, {duration}',
+  'Open Voice Moment by {author}, {age}',
+  'Open your story chain',
+  'Open your story chain, {count} Moments',
+  'Open the story chain by {name}',
+  'Open the story chain by {name}, {count} Moments',
+  'already heard',
+  'not heard yet',
 ];
 
 const momentsOverviewTranslations = <String, Map<String, String>>{
@@ -48,6 +70,27 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Open profile of {name}': 'Profil von {name} öffnen',
     'Open Voice Moment: {caption}, {author}, {age}':
         'Voice Moment öffnen: {caption}, {author}, {age}',
+    'yoMoments.popular': 'Beliebt',
+    'View profile': 'Profil ansehen',
+    'Like this Moment': 'Diesen Moment liken',
+    'Unlike this Moment': 'Like für diesen Moment entfernen',
+    'Reload Moments': 'Momente neu laden',
+    'Reloading Moments…': 'Momente werden neu geladen…',
+    'Loading…': 'Wird geladen…',
+    'More options': 'Weitere Optionen',
+    "Authors' Moments": 'Momente der Autoren',
+    'yoMoments.unheardRowState': 'neu',
+    'Play, {duration}': 'Abspielen, {duration}',
+    'Open Voice Moment by {author}, {age}':
+        'Voice Moment von {author} öffnen, {age}',
+    'Open your story chain': 'Deine Story öffnen',
+    'Open your story chain, {count} Moments':
+        'Deine Story öffnen, {count} Momente',
+    'Open the story chain by {name}': 'Story von {name} öffnen',
+    'Open the story chain by {name}, {count} Moments':
+        'Story von {name} öffnen, {count} Momente',
+    'already heard': 'bereits gehört',
+    'not heard yet': 'noch nicht gehört',
   },
   'es': {
     'yoMoments.create': 'Crear',
@@ -69,6 +112,27 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Open profile of {name}': 'Abrir el perfil de {name}',
     'Open Voice Moment: {caption}, {author}, {age}':
         'Abrir Voice Moment: {caption}, {author}, {age}',
+    'yoMoments.popular': 'Popular',
+    'View profile': 'Ver perfil',
+    'Like this Moment': 'Dar me gusta a este Moment',
+    'Unlike this Moment': 'Quitar me gusta de este Moment',
+    'Reload Moments': 'Recargar Momentos',
+    'Reloading Moments…': 'Recargando Momentos…',
+    'Loading…': 'Cargando…',
+    'More options': 'Más opciones',
+    "Authors' Moments": 'Momentos de los autores',
+    'yoMoments.unheardRowState': 'nuevo',
+    'Play, {duration}': 'Reproducir, {duration}',
+    'Open Voice Moment by {author}, {age}':
+        'Abrir Voice Moment de {author}, {age}',
+    'Open your story chain': 'Abrir tu historia',
+    'Open your story chain, {count} Moments':
+        'Abrir tu historia, {count} Momentos',
+    'Open the story chain by {name}': 'Abrir la historia de {name}',
+    'Open the story chain by {name}, {count} Moments':
+        'Abrir la historia de {name}, {count} Momentos',
+    'already heard': 'ya escuchado',
+    'not heard yet': 'sin escuchar',
   },
   'pt': {
     'yoMoments.create': 'Criar',
@@ -90,6 +154,27 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Open profile of {name}': 'Abrir o perfil de {name}',
     'Open Voice Moment: {caption}, {author}, {age}':
         'Abrir Voice Moment: {caption}, {author}, {age}',
+    'yoMoments.popular': 'Populares',
+    'View profile': 'Ver perfil',
+    'Like this Moment': 'Gostar deste Moment',
+    'Unlike this Moment': 'Deixar de gostar deste Moment',
+    'Reload Moments': 'Recarregar Momentos',
+    'Reloading Moments…': 'A recarregar Momentos…',
+    'Loading…': 'A carregar…',
+    'More options': 'Mais opções',
+    "Authors' Moments": 'Momentos dos autores',
+    'yoMoments.unheardRowState': 'novo',
+    'Play, {duration}': 'Reproduzir, {duration}',
+    'Open Voice Moment by {author}, {age}':
+        'Abrir Voice Moment de {author}, {age}',
+    'Open your story chain': 'Abrir a tua história',
+    'Open your story chain, {count} Moments':
+        'Abrir a tua história, {count} Momentos',
+    'Open the story chain by {name}': 'Abrir a história de {name}',
+    'Open the story chain by {name}, {count} Moments':
+        'Abrir a história de {name}, {count} Momentos',
+    'already heard': 'já ouvido',
+    'not heard yet': 'ainda não ouvido',
   },
   'pt_BR': {
     'yoMoments.create': 'Criar',
@@ -111,6 +196,27 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Open profile of {name}': 'Abrir o perfil de {name}',
     'Open Voice Moment: {caption}, {author}, {age}':
         'Abrir Voice Moment: {caption}, {author}, {age}',
+    'yoMoments.popular': 'Populares',
+    'View profile': 'Ver perfil',
+    'Like this Moment': 'Curtir este Moment',
+    'Unlike this Moment': 'Descurtir este Moment',
+    'Reload Moments': 'Recarregar Momentos',
+    'Reloading Moments…': 'Recarregando Momentos…',
+    'Loading…': 'Carregando…',
+    'More options': 'Mais opções',
+    "Authors' Moments": 'Momentos dos autores',
+    'yoMoments.unheardRowState': 'novo',
+    'Play, {duration}': 'Reproduzir, {duration}',
+    'Open Voice Moment by {author}, {age}':
+        'Abrir Voice Moment de {author}, {age}',
+    'Open your story chain': 'Abrir sua história',
+    'Open your story chain, {count} Moments':
+        'Abrir sua história, {count} Momentos',
+    'Open the story chain by {name}': 'Abrir a história de {name}',
+    'Open the story chain by {name}, {count} Moments':
+        'Abrir a história de {name}, {count} Momentos',
+    'already heard': 'já ouvido',
+    'not heard yet': 'ainda não ouvido',
   },
   'fr': {
     'yoMoments.create': 'Créer',
@@ -132,6 +238,27 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Open profile of {name}': 'Ouvrir le profil de {name}',
     'Open Voice Moment: {caption}, {author}, {age}':
         'Ouvrir le Voice Moment : {caption}, {author}, {age}',
+    'yoMoments.popular': 'Populaires',
+    'View profile': 'Voir le profil',
+    'Like this Moment': 'Aimer ce Moment',
+    'Unlike this Moment': 'Ne plus aimer ce Moment',
+    'Reload Moments': 'Recharger les Moments',
+    'Reloading Moments…': 'Rechargement des Moments…',
+    'Loading…': 'Chargement…',
+    'More options': 'Plus d’options',
+    "Authors' Moments": 'Moments des auteurs',
+    'yoMoments.unheardRowState': 'nouveau',
+    'Play, {duration}': 'Lire, {duration}',
+    'Open Voice Moment by {author}, {age}':
+        'Ouvrir le Voice Moment de {author}, {age}',
+    'Open your story chain': 'Ouvrir votre story',
+    'Open your story chain, {count} Moments':
+        'Ouvrir votre story, {count} Moments',
+    'Open the story chain by {name}': 'Ouvrir la story de {name}',
+    'Open the story chain by {name}, {count} Moments':
+        'Ouvrir la story de {name}, {count} Moments',
+    'already heard': 'déjà écouté',
+    'not heard yet': 'pas encore écouté',
   },
   'it': {
     'yoMoments.create': 'Crea',
@@ -153,6 +280,27 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Open profile of {name}': 'Apri il profilo di {name}',
     'Open Voice Moment: {caption}, {author}, {age}':
         'Apri il Voice Moment: {caption}, {author}, {age}',
+    'yoMoments.popular': 'Popolari',
+    'View profile': 'Vedi profilo',
+    'Like this Moment': 'Metti Mi piace a questo Moment',
+    'Unlike this Moment': 'Togli Mi piace a questo Moment',
+    'Reload Moments': 'Ricarica i Momenti',
+    'Reloading Moments…': 'Ricaricamento dei Momenti…',
+    'Loading…': 'Caricamento…',
+    'More options': 'Altre opzioni',
+    "Authors' Moments": 'Momenti degli autori',
+    'yoMoments.unheardRowState': 'nuovo',
+    'Play, {duration}': 'Riproduci, {duration}',
+    'Open Voice Moment by {author}, {age}':
+        'Apri il Voice Moment di {author}, {age}',
+    'Open your story chain': 'Apri la tua storia',
+    'Open your story chain, {count} Moments':
+        'Apri la tua storia, {count} Momenti',
+    'Open the story chain by {name}': 'Apri la storia di {name}',
+    'Open the story chain by {name}, {count} Moments':
+        'Apri la storia di {name}, {count} Momenti',
+    'already heard': 'già ascoltato',
+    'not heard yet': 'non ancora ascoltato',
   },
   'uk': {
     'yoMoments.create': 'Створити',
@@ -174,6 +322,27 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Open profile of {name}': 'Відкрити профіль {name}',
     'Open Voice Moment: {caption}, {author}, {age}':
         'Відкрити Voice Moment: {caption}, {author}, {age}',
+    'yoMoments.popular': 'Популярне',
+    'View profile': 'Переглянути профіль',
+    'Like this Moment': 'Вподобати цей Moment',
+    'Unlike this Moment': 'Прибрати вподобання з цього Moment',
+    'Reload Moments': 'Оновити Моменти',
+    'Reloading Moments…': 'Оновлення Моментів…',
+    'Loading…': 'Завантаження…',
+    'More options': 'Більше опцій',
+    "Authors' Moments": 'Моменти авторів',
+    'yoMoments.unheardRowState': 'новий',
+    'Play, {duration}': 'Відтворити, {duration}',
+    'Open Voice Moment by {author}, {age}':
+        'Відкрити Voice Moment від {author}, {age}',
+    'Open your story chain': 'Відкрити свою історію',
+    'Open your story chain, {count} Moments':
+        'Відкрити свою історію, Моментів: {count}',
+    'Open the story chain by {name}': 'Відкрити історію користувача {name}',
+    'Open the story chain by {name}, {count} Moments':
+        'Відкрити історію користувача {name}, Моментів: {count}',
+    'already heard': 'уже прослухано',
+    'not heard yet': 'ще не прослухано',
   },
   'ru': {
     'yoMoments.create': 'Создать',
@@ -195,6 +364,27 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Open profile of {name}': 'Открыть профиль {name}',
     'Open Voice Moment: {caption}, {author}, {age}':
         'Открыть Voice Moment: {caption}, {author}, {age}',
+    'yoMoments.popular': 'Популярное',
+    'View profile': 'Открыть профиль',
+    'Like this Moment': 'Поставить «Нравится» этому Moment',
+    'Unlike this Moment': 'Убрать «Нравится» с этого Moment',
+    'Reload Moments': 'Обновить Моменты',
+    'Reloading Moments…': 'Обновление Моментов…',
+    'Loading…': 'Загрузка…',
+    'More options': 'Другие параметры',
+    "Authors' Moments": 'Моменты авторов',
+    'yoMoments.unheardRowState': 'новый',
+    'Play, {duration}': 'Воспроизвести, {duration}',
+    'Open Voice Moment by {author}, {age}':
+        'Открыть Voice Moment от {author}, {age}',
+    'Open your story chain': 'Открыть свою историю',
+    'Open your story chain, {count} Moments':
+        'Открыть свою историю, Моментов: {count}',
+    'Open the story chain by {name}': 'Открыть историю пользователя {name}',
+    'Open the story chain by {name}, {count} Moments':
+        'Открыть историю пользователя {name}, Моментов: {count}',
+    'already heard': 'уже прослушано',
+    'not heard yet': 'ещё не прослушано',
   },
   'cs': {
     'yoMoments.create': 'Vytvořit',
@@ -216,6 +406,27 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Open profile of {name}': 'Otevřít profil {name}',
     'Open Voice Moment: {caption}, {author}, {age}':
         'Otevřít Voice Moment: {caption}, {author}, {age}',
+    'yoMoments.popular': 'Populární',
+    'View profile': 'Zobrazit profil',
+    'Like this Moment': 'Označit Moment jako To se mi líbí',
+    'Unlike this Moment': 'Zrušit To se mi líbí u tohoto Momentu',
+    'Reload Moments': 'Znovu načíst Momenty',
+    'Reloading Moments…': 'Momenty se znovu načítají…',
+    'Loading…': 'Načítání…',
+    'More options': 'Další možnosti',
+    "Authors' Moments": 'Momenty autorů',
+    'yoMoments.unheardRowState': 'nový',
+    'Play, {duration}': 'Přehrát, {duration}',
+    'Open Voice Moment by {author}, {age}':
+        'Otevřít Voice Moment od {author}, {age}',
+    'Open your story chain': 'Otevřít svůj příběh',
+    'Open your story chain, {count} Moments':
+        'Otevřít svůj příběh, Momenty: {count}',
+    'Open the story chain by {name}': 'Otevřít příběh uživatele {name}',
+    'Open the story chain by {name}, {count} Moments':
+        'Otevřít příběh uživatele {name}, Momenty: {count}',
+    'already heard': 'už poslechnuto',
+    'not heard yet': 'zatím neposlechnuto',
   },
   'sk': {
     'yoMoments.create': 'Vytvoriť',
@@ -237,6 +448,27 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Open profile of {name}': 'Otvoriť profil {name}',
     'Open Voice Moment: {caption}, {author}, {age}':
         'Otvoriť Voice Moment: {caption}, {author}, {age}',
+    'yoMoments.popular': 'Populárne',
+    'View profile': 'Zobraziť profil',
+    'Like this Moment': 'Označiť Moment ako Páči sa mi',
+    'Unlike this Moment': 'Zrušiť Páči sa mi pri tomto Momente',
+    'Reload Moments': 'Znova načítať Momenty',
+    'Reloading Moments…': 'Momenty sa znova načítavajú…',
+    'Loading…': 'Načítava sa…',
+    'More options': 'Ďalšie možnosti',
+    "Authors' Moments": 'Momenty autorov',
+    'yoMoments.unheardRowState': 'nový',
+    'Play, {duration}': 'Prehrať, {duration}',
+    'Open Voice Moment by {author}, {age}':
+        'Otvoriť Voice Moment od {author}, {age}',
+    'Open your story chain': 'Otvoriť svoj príbeh',
+    'Open your story chain, {count} Moments':
+        'Otvoriť svoj príbeh, Momenty: {count}',
+    'Open the story chain by {name}': 'Otvoriť príbeh používateľa {name}',
+    'Open the story chain by {name}, {count} Moments':
+        'Otvoriť príbeh používateľa {name}, Momenty: {count}',
+    'already heard': 'už vypočuté',
+    'not heard yet': 'zatiaľ nevypočuté',
   },
   'bg': {
     'yoMoments.create': 'Създай',
@@ -258,6 +490,27 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Open profile of {name}': 'Отвори профила на {name}',
     'Open Voice Moment: {caption}, {author}, {age}':
         'Отваряне на Voice Moment: {caption}, {author}, {age}',
+    'yoMoments.popular': 'Популярни',
+    'View profile': 'Преглед на профила',
+    'Like this Moment': 'Харесване на този Moment',
+    'Unlike this Moment': 'Премахване на харесването от този Moment',
+    'Reload Moments': 'Презареждане на Моментите',
+    'Reloading Moments…': 'Моментите се презареждат…',
+    'Loading…': 'Зареждане…',
+    'More options': 'Още опции',
+    "Authors' Moments": 'Моменти на авторите',
+    'yoMoments.unheardRowState': 'нов',
+    'Play, {duration}': 'Пусни, {duration}',
+    'Open Voice Moment by {author}, {age}':
+        'Отваряне на Voice Moment от {author}, {age}',
+    'Open your story chain': 'Отваряне на твоята история',
+    'Open your story chain, {count} Moments':
+        'Отваряне на твоята история, Моменти: {count}',
+    'Open the story chain by {name}': 'Отваряне на историята на {name}',
+    'Open the story chain by {name}, {count} Moments':
+        'Отваряне на историята на {name}, Моменти: {count}',
+    'already heard': 'вече изслушано',
+    'not heard yet': 'още неизслушано',
   },
   'nl': {
     'yoMoments.create': 'Maken',
@@ -279,6 +532,27 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Open profile of {name}': 'Profiel van {name} openen',
     'Open Voice Moment: {caption}, {author}, {age}':
         'Voice Moment openen: {caption}, {author}, {age}',
+    'yoMoments.popular': 'Populair',
+    'View profile': 'Profiel bekijken',
+    'Like this Moment': 'Deze Moment leuk vinden',
+    'Unlike this Moment': 'Deze Moment niet meer leuk vinden',
+    'Reload Moments': 'Momenten opnieuw laden',
+    'Reloading Moments…': 'Momenten worden opnieuw geladen…',
+    'Loading…': 'Laden…',
+    'More options': 'Meer opties',
+    "Authors' Moments": 'Momenten van makers',
+    'yoMoments.unheardRowState': 'nieuw',
+    'Play, {duration}': 'Afspelen, {duration}',
+    'Open Voice Moment by {author}, {age}':
+        'Voice Moment van {author} openen, {age}',
+    'Open your story chain': 'Je eigen verhaal openen',
+    'Open your story chain, {count} Moments':
+        'Je eigen verhaal openen, {count} Momenten',
+    'Open the story chain by {name}': 'Verhaal van {name} openen',
+    'Open the story chain by {name}, {count} Moments':
+        'Verhaal van {name} openen, {count} Momenten',
+    'already heard': 'al beluisterd',
+    'not heard yet': 'nog niet beluisterd',
   },
   'ro': {
     'yoMoments.create': 'Creează',
@@ -300,6 +574,27 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Open profile of {name}': 'Deschide profilul lui {name}',
     'Open Voice Moment: {caption}, {author}, {age}':
         'Deschide Voice Moment: {caption}, {author}, {age}',
+    'yoMoments.popular': 'Populare',
+    'View profile': 'Vezi profilul',
+    'Like this Moment': 'Apreciază acest Moment',
+    'Unlike this Moment': 'Retrage aprecierea pentru acest Moment',
+    'Reload Moments': 'Reîncarcă Momentele',
+    'Reloading Moments…': 'Se reîncarcă Momentele…',
+    'Loading…': 'Se încarcă…',
+    'More options': 'Mai multe opțiuni',
+    "Authors' Moments": 'Momentele autorilor',
+    'yoMoments.unheardRowState': 'nou',
+    'Play, {duration}': 'Redă, {duration}',
+    'Open Voice Moment by {author}, {age}':
+        'Deschide Voice Moment de la {author}, {age}',
+    'Open your story chain': 'Deschide povestea ta',
+    'Open your story chain, {count} Moments':
+        'Deschide povestea ta, Momente: {count}',
+    'Open the story chain by {name}': 'Deschide povestea lui {name}',
+    'Open the story chain by {name}, {count} Moments':
+        'Deschide povestea lui {name}, Momente: {count}',
+    'already heard': 'deja ascultat',
+    'not heard yet': 'neascultat încă',
   },
   'tr': {
     'yoMoments.create': 'Oluştur',
@@ -321,6 +616,26 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Open profile of {name}': '{name} profilini aç',
     'Open Voice Moment: {caption}, {author}, {age}':
         'Voice Moment’ı aç: {caption}, {author}, {age}',
+    'yoMoments.popular': 'Popüler',
+    'View profile': 'Profili görüntüle',
+    'Like this Moment': 'Bu Moment’ı beğen',
+    'Unlike this Moment': 'Bu Moment’ın beğenisini geri al',
+    'Reload Moments': 'Anları yeniden yükle',
+    'Reloading Moments…': 'Anlar yeniden yükleniyor…',
+    'Loading…': 'Yükleniyor…',
+    'More options': 'Diğer seçenekler',
+    "Authors' Moments": 'Yazarların Anları',
+    'yoMoments.unheardRowState': 'yeni',
+    'Play, {duration}': 'Oynat, {duration}',
+    'Open Voice Moment by {author}, {age}':
+        '{author} tarafından Voice Moment’ı aç, {age}',
+    'Open your story chain': 'Kendi hikâyeni aç',
+    'Open your story chain, {count} Moments': 'Kendi hikâyeni aç, {count} An',
+    'Open the story chain by {name}': '{name} adlı kişinin hikâyesini aç',
+    'Open the story chain by {name}, {count} Moments':
+        '{name} adlı kişinin hikâyesini aç, {count} An',
+    'already heard': 'dinlendi',
+    'not heard yet': 'henüz dinlenmedi',
   },
   'el': {
     'yoMoments.create': 'Δημιουργία',
@@ -342,6 +657,27 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Open profile of {name}': 'Άνοιγμα προφίλ {name}',
     'Open Voice Moment: {caption}, {author}, {age}':
         'Άνοιγμα Voice Moment: {caption}, {author}, {age}',
+    'yoMoments.popular': 'Δημοφιλή',
+    'View profile': 'Προβολή προφίλ',
+    'Like this Moment': 'Μου αρέσει αυτό το Moment',
+    'Unlike this Moment': 'Αναίρεση «Μου αρέσει» για αυτό το Moment',
+    'Reload Moments': 'Επαναφόρτωση Στιγμών',
+    'Reloading Moments…': 'Γίνεται επαναφόρτωση Στιγμών…',
+    'Loading…': 'Φόρτωση…',
+    'More options': 'Περισσότερες επιλογές',
+    "Authors' Moments": 'Στιγμές δημιουργών',
+    'yoMoments.unheardRowState': 'νέο',
+    'Play, {duration}': 'Αναπαραγωγή, {duration}',
+    'Open Voice Moment by {author}, {age}':
+        'Άνοιγμα Voice Moment από {author}, {age}',
+    'Open your story chain': 'Άνοιγμα της ιστορίας σου',
+    'Open your story chain, {count} Moments':
+        'Άνοιγμα της ιστορίας σου, {count} Στιγμές',
+    'Open the story chain by {name}': 'Άνοιγμα ιστορίας του χρήστη {name}',
+    'Open the story chain by {name}, {count} Moments':
+        'Άνοιγμα ιστορίας του χρήστη {name}, {count} Στιγμές',
+    'already heard': 'ήδη ακούστηκε',
+    'not heard yet': 'δεν ακούστηκε ακόμη',
   },
   'hu': {
     'yoMoments.create': 'Létrehozás',
@@ -363,6 +699,27 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Open profile of {name}': '{name} profiljának megnyitása',
     'Open Voice Moment: {caption}, {author}, {age}':
         'Voice Moment megnyitása: {caption}, {author}, {age}',
+    'yoMoments.popular': 'Népszerű',
+    'View profile': 'Profil megtekintése',
+    'Like this Moment': 'Tetszik ez a Moment',
+    'Unlike this Moment': 'Tetszés visszavonása ennél a Momentnél',
+    'Reload Moments': 'Pillanatok újratöltése',
+    'Reloading Moments…': 'Pillanatok újratöltése folyamatban…',
+    'Loading…': 'Betöltés…',
+    'More options': 'További lehetőségek',
+    "Authors' Moments": 'Szerzők Pillanatai',
+    'yoMoments.unheardRowState': 'új',
+    'Play, {duration}': 'Lejátszás, {duration}',
+    'Open Voice Moment by {author}, {age}':
+        '{author} Voice Momentjének megnyitása, {age}',
+    'Open your story chain': 'Saját történet megnyitása',
+    'Open your story chain, {count} Moments':
+        'Saját történet megnyitása, {count} Pillanat',
+    'Open the story chain by {name}': '{name} történetének megnyitása',
+    'Open the story chain by {name}, {count} Moments':
+        '{name} történetének megnyitása, {count} Pillanat',
+    'already heard': 'már meghallgatva',
+    'not heard yet': 'még nincs meghallgatva',
   },
   'hr': {
     'yoMoments.create': 'Stvori',
@@ -384,6 +741,27 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Open profile of {name}': 'Otvori profil {name}',
     'Open Voice Moment: {caption}, {author}, {age}':
         'Otvori Voice Moment: {caption}, {author}, {age}',
+    'yoMoments.popular': 'Popularno',
+    'View profile': 'Prikaži profil',
+    'Like this Moment': 'Označi da ti se sviđa ovaj Moment',
+    'Unlike this Moment': 'Poništi sviđanje ovog Momenta',
+    'Reload Moments': 'Ponovno učitaj Momente',
+    'Reloading Moments…': 'Ponovno učitavanje Momenata…',
+    'Loading…': 'Učitavanje…',
+    'More options': 'Više opcija',
+    "Authors' Moments": 'Momenti autora',
+    'yoMoments.unheardRowState': 'novo',
+    'Play, {duration}': 'Reproduciraj, {duration}',
+    'Open Voice Moment by {author}, {age}':
+        'Otvori Voice Moment korisnika {author}, {age}',
+    'Open your story chain': 'Otvori svoju priču',
+    'Open your story chain, {count} Moments':
+        'Otvori svoju priču, Momenata: {count}',
+    'Open the story chain by {name}': 'Otvori priču korisnika {name}',
+    'Open the story chain by {name}, {count} Moments':
+        'Otvori priču korisnika {name}, Momenata: {count}',
+    'already heard': 'već preslušano',
+    'not heard yet': 'još nije preslušano',
   },
   'sr': {
     'yoMoments.create': 'Направи',
@@ -405,6 +783,27 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Open profile of {name}': 'Отвори профил {name}',
     'Open Voice Moment: {caption}, {author}, {age}':
         'Otvori Voice Moment: {caption}, {author}, {age}',
+    'yoMoments.popular': 'Популарно',
+    'View profile': 'Прикажи профил',
+    'Like this Moment': 'Означи да ти се свиђа овај Moment',
+    'Unlike this Moment': 'Поништи свиђање овог Moment-а',
+    'Reload Moments': 'Поново учитај Моменте',
+    'Reloading Moments…': 'Поновно учитавање Момената…',
+    'Loading…': 'Учитавање…',
+    'More options': 'Још опција',
+    "Authors' Moments": 'Моменти аутора',
+    'yoMoments.unheardRowState': 'ново',
+    'Play, {duration}': 'Пусти, {duration}',
+    'Open Voice Moment by {author}, {age}':
+        'Отвори Voice Moment корисника {author}, {age}',
+    'Open your story chain': 'Отвори своју причу',
+    'Open your story chain, {count} Moments':
+        'Отвори своју причу, Момената: {count}',
+    'Open the story chain by {name}': 'Отвори причу корисника {name}',
+    'Open the story chain by {name}, {count} Moments':
+        'Отвори причу корисника {name}, Момената: {count}',
+    'already heard': 'већ преслушано',
+    'not heard yet': 'још није преслушано',
   },
   'sv': {
     'yoMoments.create': 'Skapa',
@@ -426,6 +825,26 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Open profile of {name}': 'Öppna profilen för {name}',
     'Open Voice Moment: {caption}, {author}, {age}':
         'Öppna Voice Moment: {caption}, {author}, {age}',
+    'yoMoments.popular': 'Populärt',
+    'View profile': 'Visa profil',
+    'Like this Moment': 'Gilla detta Moment',
+    'Unlike this Moment': 'Sluta gilla detta Moment',
+    'Reload Moments': 'Läs in Moment igen',
+    'Reloading Moments…': 'Läser in Moment igen…',
+    'Loading…': 'Läser in…',
+    'More options': 'Fler alternativ',
+    "Authors' Moments": 'Skaparnas Moment',
+    'yoMoments.unheardRowState': 'ny',
+    'Play, {duration}': 'Spela upp, {duration}',
+    'Open Voice Moment by {author}, {age}':
+        'Öppna Voice Moment från {author}, {age}',
+    'Open your story chain': 'Öppna din story',
+    'Open your story chain, {count} Moments': 'Öppna din story, {count} Moment',
+    'Open the story chain by {name}': 'Öppna storyn från {name}',
+    'Open the story chain by {name}, {count} Moments':
+        'Öppna storyn från {name}, {count} Moment',
+    'already heard': 'redan lyssnat',
+    'not heard yet': 'inte lyssnat än',
   },
   'da': {
     'yoMoments.create': 'Opret',
@@ -447,6 +866,26 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Open profile of {name}': 'Åbn profilen for {name}',
     'Open Voice Moment: {caption}, {author}, {age}':
         'Åbn Voice Moment: {caption}, {author}, {age}',
+    'yoMoments.popular': 'Populære',
+    'View profile': 'Se profil',
+    'Like this Moment': 'Synes godt om dette Moment',
+    'Unlike this Moment': 'Fjern synes godt om fra dette Moment',
+    'Reload Moments': 'Genindlæs Moments',
+    'Reloading Moments…': 'Genindlæser Moments…',
+    'Loading…': 'Indlæser…',
+    'More options': 'Flere muligheder',
+    "Authors' Moments": 'Skabernes Moments',
+    'yoMoments.unheardRowState': 'ny',
+    'Play, {duration}': 'Afspil, {duration}',
+    'Open Voice Moment by {author}, {age}':
+        'Åbn Voice Moment fra {author}, {age}',
+    'Open your story chain': 'Åbn din story',
+    'Open your story chain, {count} Moments': 'Åbn din story, {count} Moments',
+    'Open the story chain by {name}': 'Åbn story fra {name}',
+    'Open the story chain by {name}, {count} Moments':
+        'Åbn story fra {name}, {count} Moments',
+    'already heard': 'allerede hørt',
+    'not heard yet': 'ikke hørt endnu',
   },
   'nb': {
     'yoMoments.create': 'Opprett',
@@ -468,6 +907,26 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Open profile of {name}': 'Åpne profilen til {name}',
     'Open Voice Moment: {caption}, {author}, {age}':
         'Åpne Voice Moment: {caption}, {author}, {age}',
+    'yoMoments.popular': 'Populære',
+    'View profile': 'Se profil',
+    'Like this Moment': 'Lik dette Moment',
+    'Unlike this Moment': 'Fjern liker fra dette Moment',
+    'Reload Moments': 'Last inn Moments på nytt',
+    'Reloading Moments…': 'Laster inn Moments på nytt…',
+    'Loading…': 'Laster inn…',
+    'More options': 'Flere alternativer',
+    "Authors' Moments": 'Skapernes Moments',
+    'yoMoments.unheardRowState': 'ny',
+    'Play, {duration}': 'Spill av, {duration}',
+    'Open Voice Moment by {author}, {age}':
+        'Åpne Voice Moment fra {author}, {age}',
+    'Open your story chain': 'Åpne din story',
+    'Open your story chain, {count} Moments': 'Åpne din story, {count} Moments',
+    'Open the story chain by {name}': 'Åpne story fra {name}',
+    'Open the story chain by {name}, {count} Moments':
+        'Åpne story fra {name}, {count} Moments',
+    'already heard': 'allerede hørt',
+    'not heard yet': 'ikke hørt ennå',
   },
   'fi': {
     'yoMoments.create': 'Luo',
@@ -489,6 +948,27 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Open profile of {name}': 'Avaa profiili: {name}',
     'Open Voice Moment: {caption}, {author}, {age}':
         'Avaa Voice Moment: {caption}, {author}, {age}',
+    'yoMoments.popular': 'Suositut',
+    'View profile': 'Näytä profiili',
+    'Like this Moment': 'Tykkää tästä Momentista',
+    'Unlike this Moment': 'Poista tykkäys tästä Momentista',
+    'Reload Moments': 'Lataa Hetket uudelleen',
+    'Reloading Moments…': 'Hetkiä ladataan uudelleen…',
+    'Loading…': 'Ladataan…',
+    'More options': 'Lisää vaihtoehtoja',
+    "Authors' Moments": 'Tekijöiden Hetket',
+    'yoMoments.unheardRowState': 'uusi',
+    'Play, {duration}': 'Toista, {duration}',
+    'Open Voice Moment by {author}, {age}':
+        'Avaa käyttäjän {author} Voice Moment, {age}',
+    'Open your story chain': 'Avaa oma tarinasi',
+    'Open your story chain, {count} Moments':
+        'Avaa oma tarinasi, Hetkiä: {count}',
+    'Open the story chain by {name}': 'Avaa käyttäjän {name} tarina',
+    'Open the story chain by {name}, {count} Moments':
+        'Avaa käyttäjän {name} tarina, Hetkiä: {count}',
+    'already heard': 'jo kuunneltu',
+    'not heard yet': 'ei vielä kuunneltu',
   },
   'lt': {
     'yoMoments.create': 'Kurti',
@@ -510,6 +990,27 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Open profile of {name}': 'Atidaryti {name} profilį',
     'Open Voice Moment: {caption}, {author}, {age}':
         'Atidaryti „Voice Moment“: {caption}, {author}, {age}',
+    'yoMoments.popular': 'Populiaru',
+    'View profile': 'Peržiūrėti profilį',
+    'Like this Moment': 'Pažymėti, kad šis Moment patinka',
+    'Unlike this Moment': 'Atšaukti „Patinka“ šiam Moment',
+    'Reload Moments': 'Iš naujo įkelti Akimirkas',
+    'Reloading Moments…': 'Akimirkos įkeliamos iš naujo…',
+    'Loading…': 'Įkeliama…',
+    'More options': 'Daugiau parinkčių',
+    "Authors' Moments": 'Autorių Akimirkos',
+    'yoMoments.unheardRowState': 'nauja',
+    'Play, {duration}': 'Leisti, {duration}',
+    'Open Voice Moment by {author}, {age}':
+        'Atidaryti {author} „Voice Moment“, {age}',
+    'Open your story chain': 'Atidaryti savo istoriją',
+    'Open your story chain, {count} Moments':
+        'Atidaryti savo istoriją, Akimirkų: {count}',
+    'Open the story chain by {name}': 'Atidaryti {name} istoriją',
+    'Open the story chain by {name}, {count} Moments':
+        'Atidaryti {name} istoriją, Akimirkų: {count}',
+    'already heard': 'jau išklausyta',
+    'not heard yet': 'dar neišklausyta',
   },
   'lv': {
     'yoMoments.create': 'Izveidot',
@@ -531,6 +1032,27 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Open profile of {name}': 'Atvērt {name} profilu',
     'Open Voice Moment: {caption}, {author}, {age}':
         'Atvērt Voice Moment: {caption}, {author}, {age}',
+    'yoMoments.popular': 'Populāri',
+    'View profile': 'Skatīt profilu',
+    'Like this Moment': 'Atzīmēt, ka šis Moment patīk',
+    'Unlike this Moment': 'Noņemt atzīmi “Patīk” no šī Moment',
+    'Reload Moments': 'Pārlādēt Mirkļus',
+    'Reloading Moments…': 'Mirkļi tiek pārlādēti…',
+    'Loading…': 'Ielādē…',
+    'More options': 'Citas opcijas',
+    "Authors' Moments": 'Autoru Mirkļi',
+    'yoMoments.unheardRowState': 'jauns',
+    'Play, {duration}': 'Atskaņot, {duration}',
+    'Open Voice Moment by {author}, {age}':
+        'Atvērt {author} Voice Moment, {age}',
+    'Open your story chain': 'Atvērt savu stāstu',
+    'Open your story chain, {count} Moments':
+        'Atvērt savu stāstu, Mirkļi: {count}',
+    'Open the story chain by {name}': 'Atvērt lietotāja {name} stāstu',
+    'Open the story chain by {name}, {count} Moments':
+        'Atvērt lietotāja {name} stāstu, Mirkļi: {count}',
+    'already heard': 'jau noklausīts',
+    'not heard yet': 'vēl nav noklausīts',
   },
   'et': {
     'yoMoments.create': 'Loo',
@@ -552,6 +1074,26 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Open profile of {name}': 'Ava profiil: {name}',
     'Open Voice Moment: {caption}, {author}, {age}':
         'Ava Voice Moment: {caption}, {author}, {age}',
+    'yoMoments.popular': 'Populaarsed',
+    'View profile': 'Vaata profiili',
+    'Like this Moment': 'Märgi see Moment meeldivaks',
+    'Unlike this Moment': 'Eemalda selle Momenti meeldimine',
+    'Reload Moments': 'Laadi Hetked uuesti',
+    'Reloading Moments…': 'Hetki laaditakse uuesti…',
+    'Loading…': 'Laadimine…',
+    'More options': 'Rohkem valikuid',
+    "Authors' Moments": 'Autorite Hetked',
+    'yoMoments.unheardRowState': 'uus',
+    'Play, {duration}': 'Esita, {duration}',
+    'Open Voice Moment by {author}, {age}':
+        'Ava kasutaja {author} Voice Moment, {age}',
+    'Open your story chain': 'Ava oma lugu',
+    'Open your story chain, {count} Moments': 'Ava oma lugu, Hetki: {count}',
+    'Open the story chain by {name}': 'Ava kasutaja {name} lugu',
+    'Open the story chain by {name}, {count} Moments':
+        'Ava kasutaja {name} lugu, Hetki: {count}',
+    'already heard': 'juba kuulatud',
+    'not heard yet': 'veel kuulamata',
   },
   'id': {
     'yoMoments.create': 'Buat',
@@ -573,6 +1115,26 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Open profile of {name}': 'Buka profil {name}',
     'Open Voice Moment: {caption}, {author}, {age}':
         'Buka Voice Moment: {caption}, {author}, {age}',
+    'yoMoments.popular': 'Populer',
+    'View profile': 'Lihat profil',
+    'Like this Moment': 'Sukai Moment ini',
+    'Unlike this Moment': 'Batal sukai Moment ini',
+    'Reload Moments': 'Muat ulang Momen',
+    'Reloading Moments…': 'Memuat ulang Momen…',
+    'Loading…': 'Memuat…',
+    'More options': 'Opsi lainnya',
+    "Authors' Moments": 'Momen para kreator',
+    'yoMoments.unheardRowState': 'baru',
+    'Play, {duration}': 'Putar, {duration}',
+    'Open Voice Moment by {author}, {age}':
+        'Buka Voice Moment dari {author}, {age}',
+    'Open your story chain': 'Buka cerita kamu',
+    'Open your story chain, {count} Moments': 'Buka cerita kamu, {count} Momen',
+    'Open the story chain by {name}': 'Buka cerita {name}',
+    'Open the story chain by {name}, {count} Moments':
+        'Buka cerita {name}, {count} Momen',
+    'already heard': 'sudah didengar',
+    'not heard yet': 'belum didengar',
   },
   'vi': {
     'yoMoments.create': 'Tạo',
@@ -594,6 +1156,27 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Open profile of {name}': 'Mở hồ sơ của {name}',
     'Open Voice Moment: {caption}, {author}, {age}':
         'Mở Voice Moment: {caption}, {author}, {age}',
+    'yoMoments.popular': 'Phổ biến',
+    'View profile': 'Xem hồ sơ',
+    'Like this Moment': 'Thích Moment này',
+    'Unlike this Moment': 'Bỏ thích Moment này',
+    'Reload Moments': 'Tải lại Khoảnh khắc',
+    'Reloading Moments…': 'Đang tải lại Khoảnh khắc…',
+    'Loading…': 'Đang tải…',
+    'More options': 'Tùy chọn khác',
+    "Authors' Moments": 'Khoảnh khắc của tác giả',
+    'yoMoments.unheardRowState': 'mới',
+    'Play, {duration}': 'Phát, {duration}',
+    'Open Voice Moment by {author}, {age}':
+        'Mở Voice Moment của {author}, {age}',
+    'Open your story chain': 'Mở tin của bạn',
+    'Open your story chain, {count} Moments':
+        'Mở tin của bạn, {count} Khoảnh khắc',
+    'Open the story chain by {name}': 'Mở tin của {name}',
+    'Open the story chain by {name}, {count} Moments':
+        'Mở tin của {name}, {count} Khoảnh khắc',
+    'already heard': 'đã nghe',
+    'not heard yet': 'chưa nghe',
   },
   'zh_CN': {
     'yoMoments.create': '创建',
@@ -614,6 +1197,25 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Open profile of {name}': '打开 {name} 的个人资料',
     'Open Voice Moment: {caption}, {author}, {age}':
         '打开 Voice Moment：{caption}，{author}，{age}',
+    'yoMoments.popular': '热门',
+    'View profile': '查看个人资料',
+    'Like this Moment': '赞这条 Moment',
+    'Unlike this Moment': '取消赞这条 Moment',
+    'Reload Moments': '重新加载动态',
+    'Reloading Moments…': '正在重新加载动态…',
+    'Loading…': '正在加载…',
+    'More options': '更多选项',
+    "Authors' Moments": '作者的动态',
+    'yoMoments.unheardRowState': '新',
+    'Play, {duration}': '播放，{duration}',
+    'Open Voice Moment by {author}, {age}': '打开 {author} 的 Voice Moment，{age}',
+    'Open your story chain': '打开你的故事',
+    'Open your story chain, {count} Moments': '打开你的故事，{count} 条动态',
+    'Open the story chain by {name}': '打开 {name} 的故事',
+    'Open the story chain by {name}, {count} Moments':
+        '打开 {name} 的故事，{count} 条动态',
+    'already heard': '已收听',
+    'not heard yet': '未收听',
   },
   'zh_TW': {
     'yoMoments.create': '建立',
@@ -634,6 +1236,25 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Open profile of {name}': '開啟 {name} 的個人檔案',
     'Open Voice Moment: {caption}, {author}, {age}':
         '開啟 Voice Moment：{caption}，{author}，{age}',
+    'yoMoments.popular': '熱門',
+    'View profile': '查看個人檔案',
+    'Like this Moment': '對這則 Moment 按讚',
+    'Unlike this Moment': '收回對這則 Moment 的讚',
+    'Reload Moments': '重新載入動態',
+    'Reloading Moments…': '正在重新載入動態…',
+    'Loading…': '正在載入…',
+    'More options': '更多選項',
+    "Authors' Moments": '作者的動態',
+    'yoMoments.unheardRowState': '新',
+    'Play, {duration}': '播放，{duration}',
+    'Open Voice Moment by {author}, {age}': '開啟 {author} 的 Voice Moment，{age}',
+    'Open your story chain': '開啟您的故事',
+    'Open your story chain, {count} Moments': '開啟您的故事，{count} 則動態',
+    'Open the story chain by {name}': '開啟 {name} 的故事',
+    'Open the story chain by {name}, {count} Moments':
+        '開啟 {name} 的故事，{count} 則動態',
+    'already heard': '已收聽',
+    'not heard yet': '未收聽',
   },
   'ja': {
     'yoMoments.create': '作成',
@@ -654,6 +1275,25 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Open profile of {name}': '{name} のプロフィールを開く',
     'Open Voice Moment: {caption}, {author}, {age}':
         'Voice Moment を開く: {caption}、{author}、{age}',
+    'yoMoments.popular': '人気',
+    'View profile': 'プロフィールを見る',
+    'Like this Moment': 'この Moment にいいね',
+    'Unlike this Moment': 'この Moment のいいねを取り消す',
+    'Reload Moments': 'モーメントを再読み込み',
+    'Reloading Moments…': 'モーメントを再読み込みしています…',
+    'Loading…': '読み込み中…',
+    'More options': 'その他のオプション',
+    "Authors' Moments": '作成者のモーメント',
+    'yoMoments.unheardRowState': '新着',
+    'Play, {duration}': '再生、{duration}',
+    'Open Voice Moment by {author}, {age}': '{author} の Voice Moment を開く、{age}',
+    'Open your story chain': '自分のストーリーを開く',
+    'Open your story chain, {count} Moments': '自分のストーリーを開く、{count} 件のモーメント',
+    'Open the story chain by {name}': '{name} のストーリーを開く',
+    'Open the story chain by {name}, {count} Moments':
+        '{name} のストーリーを開く、{count} 件のモーメント',
+    'already heard': '再生済み',
+    'not heard yet': '未再生',
   },
   'ko': {
     'yoMoments.create': '만들기',
@@ -674,6 +1314,25 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Open profile of {name}': '{name}님의 프로필 열기',
     'Open Voice Moment: {caption}, {author}, {age}':
         'Voice Moment 열기: {caption}, {author}, {age}',
+    'yoMoments.popular': '인기',
+    'View profile': '프로필 보기',
+    'Like this Moment': '이 Moment 좋아요',
+    'Unlike this Moment': '이 Moment 좋아요 취소',
+    'Reload Moments': '모먼트 새로고침',
+    'Reloading Moments…': '모먼트를 새로고침하는 중…',
+    'Loading…': '불러오는 중…',
+    'More options': '옵션 더보기',
+    "Authors' Moments": '작성자 모먼트',
+    'yoMoments.unheardRowState': '새 모먼트',
+    'Play, {duration}': '재생, {duration}',
+    'Open Voice Moment by {author}, {age}': '{author}님의 Voice Moment 열기, {age}',
+    'Open your story chain': '내 스토리 열기',
+    'Open your story chain, {count} Moments': '내 스토리 열기, 모먼트 {count}개',
+    'Open the story chain by {name}': '{name}님의 스토리 열기',
+    'Open the story chain by {name}, {count} Moments':
+        '{name}님의 스토리 열기, 모먼트 {count}개',
+    'already heard': '이미 들음',
+    'not heard yet': '아직 듣지 않음',
   },
   'ar': {
     'yoMoments.create': 'إنشاء',
@@ -695,6 +1354,26 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Open profile of {name}': 'فتح الملف الشخصي لـ {name}',
     'Open Voice Moment: {caption}, {author}, {age}':
         'فتح Voice Moment: {caption}، {author}، {age}',
+    'yoMoments.popular': 'رائج',
+    'View profile': 'عرض الملف الشخصي',
+    'Like this Moment': 'الإعجاب بهذا الـ Moment',
+    'Unlike this Moment': 'إلغاء الإعجاب بهذا الـ Moment',
+    'Reload Moments': 'إعادة تحميل اللحظات',
+    'Reloading Moments…': 'جارٍ إعادة تحميل اللحظات…',
+    'Loading…': 'جارٍ التحميل…',
+    'More options': 'خيارات إضافية',
+    "Authors' Moments": 'لحظات المؤلفين',
+    'yoMoments.unheardRowState': 'جديد',
+    'Play, {duration}': 'تشغيل، {duration}',
+    'Open Voice Moment by {author}, {age}':
+        'فتح Voice Moment من {author}، {age}',
+    'Open your story chain': 'فتح قصتك',
+    'Open your story chain, {count} Moments': 'فتح قصتك، اللحظات: {count}',
+    'Open the story chain by {name}': 'فتح قصة {name}',
+    'Open the story chain by {name}, {count} Moments':
+        'فتح قصة {name}، اللحظات: {count}',
+    'already heard': 'تم الاستماع إليه',
+    'not heard yet': 'لم يُستمع إليه بعد',
   },
   'hi': {
     'yoMoments.create': 'बनाएँ',
@@ -716,6 +1395,27 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Open profile of {name}': '{name} की प्रोफ़ाइल खोलें',
     'Open Voice Moment: {caption}, {author}, {age}':
         'Voice Moment खोलें: {caption}, {author}, {age}',
+    'yoMoments.popular': 'लोकप्रिय',
+    'View profile': 'प्रोफ़ाइल देखें',
+    'Like this Moment': 'इस Moment को पसंद करें',
+    'Unlike this Moment': 'इस Moment की पसंद हटाएँ',
+    'Reload Moments': 'मोमेंट्स फिर से लोड करें',
+    'Reloading Moments…': 'मोमेंट्स फिर से लोड हो रहे हैं…',
+    'Loading…': 'लोड हो रहा है…',
+    'More options': 'और विकल्प',
+    "Authors' Moments": 'लेखकों के मोमेंट्स',
+    'yoMoments.unheardRowState': 'नया',
+    'Play, {duration}': 'चलाएँ, {duration}',
+    'Open Voice Moment by {author}, {age}':
+        '{author} का Voice Moment खोलें, {age}',
+    'Open your story chain': 'अपनी स्टोरी खोलें',
+    'Open your story chain, {count} Moments':
+        'अपनी स्टोरी खोलें, {count} मोमेंट्स',
+    'Open the story chain by {name}': '{name} की स्टोरी खोलें',
+    'Open the story chain by {name}, {count} Moments':
+        '{name} की स्टोरी खोलें, {count} मोमेंट्स',
+    'already heard': 'पहले ही सुना गया',
+    'not heard yet': 'अभी तक नहीं सुना गया',
   },
   'bn': {
     'yoMoments.create': 'তৈরি করুন',
@@ -737,6 +1437,27 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Open profile of {name}': '{name}-এর প্রোফাইল খুলুন',
     'Open Voice Moment: {caption}, {author}, {age}':
         'Voice Moment খুলুন: {caption}, {author}, {age}',
+    'yoMoments.popular': 'জনপ্রিয়',
+    'View profile': 'প্রোফাইল দেখুন',
+    'Like this Moment': 'এই Moment পছন্দ করুন',
+    'Unlike this Moment': 'এই Moment থেকে পছন্দ সরান',
+    'Reload Moments': 'মোমেন্টস আবার লোড করুন',
+    'Reloading Moments…': 'মোমেন্টস আবার লোড হচ্ছে…',
+    'Loading…': 'লোড হচ্ছে…',
+    'More options': 'আরও বিকল্প',
+    "Authors' Moments": 'লেখকদের মোমেন্টস',
+    'yoMoments.unheardRowState': 'নতুন',
+    'Play, {duration}': 'চালান, {duration}',
+    'Open Voice Moment by {author}, {age}':
+        '{author}-এর Voice Moment খুলুন, {age}',
+    'Open your story chain': 'আপনার স্টোরি খুলুন',
+    'Open your story chain, {count} Moments':
+        'আপনার স্টোরি খুলুন, {count}টি মোমেন্ট',
+    'Open the story chain by {name}': '{name}-এর স্টোরি খুলুন',
+    'Open the story chain by {name}, {count} Moments':
+        '{name}-এর স্টোরি খুলুন, {count}টি মোমেন্ট',
+    'already heard': 'ইতিমধ্যে শোনা হয়েছে',
+    'not heard yet': 'এখনও শোনা হয়নি',
   },
   'ur': {
     'yoMoments.create': 'بنائیں',
@@ -758,6 +1479,27 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Open profile of {name}': '{name} کا پروفائل کھولیں',
     'Open Voice Moment: {caption}, {author}, {age}':
         'Voice Moment کھولیں: {caption}، {author}، {age}',
+    'yoMoments.popular': 'مقبول',
+    'View profile': 'پروفائل دیکھیں',
+    'Like this Moment': 'اس Moment کو پسند کریں',
+    'Unlike this Moment': 'اس Moment کی پسند ہٹائیں',
+    'Reload Moments': 'لمحات دوبارہ لوڈ کریں',
+    'Reloading Moments…': 'لمحات دوبارہ لوڈ ہو رہے ہیں…',
+    'Loading…': 'لوڈ ہو رہا ہے…',
+    'More options': 'مزید اختیارات',
+    "Authors' Moments": 'مصنفین کے لمحات',
+    'yoMoments.unheardRowState': 'نیا',
+    'Play, {duration}': 'چلائیں، {duration}',
+    'Open Voice Moment by {author}, {age}':
+        '{author} کا Voice Moment کھولیں، {age}',
+    'Open your story chain': 'اپنی کہانی کھولیں',
+    'Open your story chain, {count} Moments':
+        'اپنی کہانی کھولیں، لمحات: {count}',
+    'Open the story chain by {name}': '{name} کی کہانی کھولیں',
+    'Open the story chain by {name}, {count} Moments':
+        '{name} کی کہانی کھولیں، لمحات: {count}',
+    'already heard': 'پہلے ہی سنا جا چکا',
+    'not heard yet': 'ابھی تک نہیں سنا گیا',
   },
   'th': {
     'yoMoments.create': 'สร้าง',
@@ -779,6 +1521,27 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Open profile of {name}': 'เปิดโปรไฟล์ของ {name}',
     'Open Voice Moment: {caption}, {author}, {age}':
         'เปิด Voice Moment: {caption}, {author}, {age}',
+    'yoMoments.popular': 'ยอดนิยม',
+    'View profile': 'ดูโปรไฟล์',
+    'Like this Moment': 'ถูกใจ Moment นี้',
+    'Unlike this Moment': 'เลิกถูกใจ Moment นี้',
+    'Reload Moments': 'โหลดโมเมนต์ใหม่',
+    'Reloading Moments…': 'กำลังโหลดโมเมนต์ใหม่…',
+    'Loading…': 'กำลังโหลด…',
+    'More options': 'ตัวเลือกเพิ่มเติม',
+    "Authors' Moments": 'โมเมนต์ของผู้สร้าง',
+    'yoMoments.unheardRowState': 'ใหม่',
+    'Play, {duration}': 'เล่น, {duration}',
+    'Open Voice Moment by {author}, {age}':
+        'เปิด Voice Moment ของ {author}, {age}',
+    'Open your story chain': 'เปิดสตอรี่ของคุณ',
+    'Open your story chain, {count} Moments':
+        'เปิดสตอรี่ของคุณ, {count} โมเมนต์',
+    'Open the story chain by {name}': 'เปิดสตอรี่ของ {name}',
+    'Open the story chain by {name}, {count} Moments':
+        'เปิดสตอรี่ของ {name}, {count} โมเมนต์',
+    'already heard': 'ฟังแล้ว',
+    'not heard yet': 'ยังไม่ได้ฟัง',
   },
   'ms': {
     'yoMoments.create': 'Cipta',
@@ -800,6 +1563,26 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Open profile of {name}': 'Buka profil {name}',
     'Open Voice Moment: {caption}, {author}, {age}':
         'Buka Voice Moment: {caption}, {author}, {age}',
+    'yoMoments.popular': 'Popular',
+    'View profile': 'Lihat profil',
+    'Like this Moment': 'Suka Moment ini',
+    'Unlike this Moment': 'Nyahsuka Moment ini',
+    'Reload Moments': 'Muat semula Momen',
+    'Reloading Moments…': 'Memuatkan semula Momen…',
+    'Loading…': 'Memuatkan…',
+    'More options': 'Lagi pilihan',
+    "Authors' Moments": 'Momen pengarang',
+    'yoMoments.unheardRowState': 'baharu',
+    'Play, {duration}': 'Mainkan, {duration}',
+    'Open Voice Moment by {author}, {age}':
+        'Buka Voice Moment daripada {author}, {age}',
+    'Open your story chain': 'Buka cerita anda',
+    'Open your story chain, {count} Moments': 'Buka cerita anda, {count} Momen',
+    'Open the story chain by {name}': 'Buka cerita {name}',
+    'Open the story chain by {name}, {count} Moments':
+        'Buka cerita {name}, {count} Momen',
+    'already heard': 'sudah didengar',
+    'not heard yet': 'belum didengar',
   },
   'fil': {
     'yoMoments.create': 'Gumawa',
@@ -821,6 +1604,27 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Open profile of {name}': 'Buksan ang profile ni {name}',
     'Open Voice Moment: {caption}, {author}, {age}':
         'Buksan ang Voice Moment: {caption}, {author}, {age}',
+    'yoMoments.popular': 'Sikat',
+    'View profile': 'Tingnan ang profile',
+    'Like this Moment': 'I-like ang Moment na ito',
+    'Unlike this Moment': 'I-unlike ang Moment na ito',
+    'Reload Moments': 'I-reload ang mga Moment',
+    'Reloading Moments…': 'Nire-reload ang mga Moment…',
+    'Loading…': 'Naglo-load…',
+    'More options': 'Higit pang opsyon',
+    "Authors' Moments": 'Mga Moment ng mga creator',
+    'yoMoments.unheardRowState': 'bago',
+    'Play, {duration}': 'I-play, {duration}',
+    'Open Voice Moment by {author}, {age}':
+        'Buksan ang Voice Moment ni {author}, {age}',
+    'Open your story chain': 'Buksan ang iyong story',
+    'Open your story chain, {count} Moments':
+        'Buksan ang iyong story, {count} Moment',
+    'Open the story chain by {name}': 'Buksan ang story ni {name}',
+    'Open the story chain by {name}, {count} Moments':
+        'Buksan ang story ni {name}, {count} Moment',
+    'already heard': 'napakinggan na',
+    'not heard yet': 'hindi pa napapakinggan',
   },
   'he': {
     'yoMoments.create': 'יצירה',
@@ -842,6 +1646,26 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Open profile of {name}': 'פתיחת הפרופיל של {name}',
     'Open Voice Moment: {caption}, {author}, {age}':
         'פתיחת Voice Moment: {caption}, {author}, {age}',
+    'yoMoments.popular': 'פופולרי',
+    'View profile': 'הצגת פרופיל',
+    'Like this Moment': 'סימון אהבתי ל-Moment הזה',
+    'Unlike this Moment': 'ביטול אהבתי ל-Moment הזה',
+    'Reload Moments': 'טעינה מחדש של הרגעים',
+    'Reloading Moments…': 'טוען מחדש את הרגעים…',
+    'Loading…': 'טוען…',
+    'More options': 'אפשרויות נוספות',
+    "Authors' Moments": 'רגעים של היוצרים',
+    'yoMoments.unheardRowState': 'חדש',
+    'Play, {duration}': 'הפעלה, {duration}',
+    'Open Voice Moment by {author}, {age}':
+        'פתיחת Voice Moment של {author}, {age}',
+    'Open your story chain': 'פתיחת הסטורי שלך',
+    'Open your story chain, {count} Moments': 'פתיחת הסטורי שלך, {count} רגעים',
+    'Open the story chain by {name}': 'פתיחת הסטורי של {name}',
+    'Open the story chain by {name}, {count} Moments':
+        'פתיחת הסטורי של {name}, {count} רגעים',
+    'already heard': 'כבר הושמע',
+    'not heard yet': 'טרם הושמע',
   },
   'fa': {
     'yoMoments.create': 'ایجاد',
@@ -863,6 +1687,27 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Open profile of {name}': 'باز کردن نمایه {name}',
     'Open Voice Moment: {caption}, {author}, {age}':
         'باز کردن Voice Moment: {caption}، {author}، {age}',
+    'yoMoments.popular': 'محبوب',
+    'View profile': 'مشاهده نمایه',
+    'Like this Moment': 'پسندیدن این Moment',
+    'Unlike this Moment': 'لغو پسند این Moment',
+    'Reload Moments': 'بارگذاری دوبارهٔ لحظه‌ها',
+    'Reloading Moments…': 'در حال بارگذاری دوبارهٔ لحظه‌ها…',
+    'Loading…': 'در حال بارگذاری…',
+    'More options': 'گزینه‌های بیشتر',
+    "Authors' Moments": 'لحظه‌های نویسندگان',
+    'yoMoments.unheardRowState': 'جدید',
+    'Play, {duration}': 'پخش، {duration}',
+    'Open Voice Moment by {author}, {age}':
+        'باز کردن Voice Moment از {author}، {age}',
+    'Open your story chain': 'باز کردن داستان خودتان',
+    'Open your story chain, {count} Moments':
+        'باز کردن داستان خودتان، لحظه‌ها: {count}',
+    'Open the story chain by {name}': 'باز کردن داستان {name}',
+    'Open the story chain by {name}, {count} Moments':
+        'باز کردن داستان {name}، لحظه‌ها: {count}',
+    'already heard': 'قبلاً شنیده شده',
+    'not heard yet': 'هنوز شنیده نشده',
   },
   'sw': {
     'yoMoments.create': 'Unda',
@@ -884,5 +1729,26 @@ const momentsOverviewTranslations = <String, Map<String, String>>{
     'Open profile of {name}': 'Fungua wasifu wa {name}',
     'Open Voice Moment: {caption}, {author}, {age}':
         'Fungua Voice Moment: {caption}, {author}, {age}',
+    'yoMoments.popular': 'Maarufu',
+    'View profile': 'Tazama wasifu',
+    'Like this Moment': 'Penda Moment hii',
+    'Unlike this Moment': 'Acha kupenda Moment hii',
+    'Reload Moments': 'Pakia upya Matukio',
+    'Reloading Moments…': 'Inapakia upya Matukio…',
+    'Loading…': 'Inapakia…',
+    'More options': 'Chaguo zaidi',
+    "Authors' Moments": 'Matukio ya waandishi',
+    'yoMoments.unheardRowState': 'mpya',
+    'Play, {duration}': 'Cheza, {duration}',
+    'Open Voice Moment by {author}, {age}':
+        'Fungua Voice Moment ya {author}, {age}',
+    'Open your story chain': 'Fungua hadithi yako',
+    'Open your story chain, {count} Moments':
+        'Fungua hadithi yako, Matukio {count}',
+    'Open the story chain by {name}': 'Fungua hadithi ya {name}',
+    'Open the story chain by {name}, {count} Moments':
+        'Fungua hadithi ya {name}, Matukio {count}',
+    'already heard': 'tayari imesikilizwa',
+    'not heard yet': 'bado haijasikilizwa',
   },
 };

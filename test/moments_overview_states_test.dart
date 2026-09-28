@@ -65,7 +65,7 @@ void main() {
     await settleOverview(tester);
   }
 
-  testWidgets('loading shows three card silhouettes and NO capsules, NO calm '
+  testWidgets('loading shows row silhouettes and NO author circles, NO calm '
       'panel — then the real page replaces them', (tester) async {
     final gate = Completer<void>();
     await pumpFeed(
@@ -75,7 +75,7 @@ void main() {
     );
     final loading = find.byKey(const ValueKey('moments-discovery-loading'));
     expect(loading, findsOneWidget);
-    expect(find.byKey(const ValueKey('moments-author-capsules')), findsNothing);
+    expect(find.byKey(const ValueKey('moments-author-circles')), findsNothing);
     expect(find.byKey(const ValueKey('moments-follow-panel')), findsNothing);
     expect(
       find.byKey(const ValueKey<String>('yo-moments-local-panel')),
@@ -92,12 +92,12 @@ void main() {
     gate.complete();
     await settleOverview(tester);
     expect(loading, findsNothing);
-    expect(find.byKey(const ValueKey('moments-author-capsules')), findsOneWidget);
+    expect(find.byKey(const ValueKey('moments-author-circles')), findsOneWidget);
     expect(find.byKey(const ValueKey('moments-follow-panel')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('Discover empty: honest copy, the recorder offered, no capsules',
+  testWidgets('Discover empty: honest copy, the recorder offered, no circles',
       (tester) async {
     var records = 0;
     await pumpFeed(
@@ -108,7 +108,7 @@ void main() {
     );
     expect(find.byKey(const ValueKey('moments-discovery-empty')), findsOneWidget);
     expect(find.text('No Voice Moments yet'), findsOneWidget);
-    expect(find.byKey(const ValueKey('moments-author-capsules')), findsNothing);
+    expect(find.byKey(const ValueKey('moments-author-circles')), findsNothing);
     await tester.tap(find.text('Record a Moment'));
     await tester.pump();
     expect(records, 1);
@@ -150,7 +150,7 @@ void main() {
     final error = find.byKey(const ValueKey('moments-discovery-error'));
     expect(error, findsOneWidget);
     expect(find.text('Moments could not load'), findsOneWidget);
-    expect(find.byKey(const ValueKey('moments-author-capsules')), findsNothing);
+    expect(find.byKey(const ValueKey('moments-author-circles')), findsNothing);
     expect(discovery.loadCalls, 1);
     await tester.tap(find.text('Try again'));
     await settleOverview(tester);
@@ -164,7 +164,8 @@ void main() {
     await pumpFeed(tester, size: const Size(390, 844), discovery: discovery);
     expect(find.byKey(const ValueKey('moment-row-m4')), findsOneWidget);
 
-    await tester.tap(find.byKey(const ValueKey('moments-discovery-refresh')));
+    // The phone's refresh: the active tab tapped again (G4).
+    await tester.tap(find.byKey(const ValueKey('moments-filter-discover')));
     await settleOverview(tester);
     expect(discovery.loadCalls, 2);
     expect(find.byKey(const ValueKey('moment-row-m4')), findsOneWidget);
@@ -184,8 +185,12 @@ void main() {
     final card = find.byKey(const ValueKey('moment-row-m4'));
     final palette = AppPalette.of(tester.element(card));
     expect(palette, AppPalette.light);
-    // Refine-look R2: the card paints the light palette's block gradient
-    // (blockTop → surface), not a flat surface — and no dark stop.
+    // G4: the rows sit in ONE R2 block at this width, painted from the
+    // light palette's surface behind the lazy list — no dark stop anywhere.
+    final block = tester.widget<DecoratedSliver>(
+      find.byKey(const ValueKey('moments-feed-block')),
+    );
+    expect((block.decoration as BoxDecoration).color, AppPalette.light.surface);
     final fills = tester
         .widgetList<DecoratedBox>(
           find.descendant(of: card, matching: find.byType(DecoratedBox)),
@@ -195,7 +200,6 @@ void main() {
         .map((decoration) => decoration.gradient)
         .whereType<LinearGradient>()
         .toList();
-    expect(fills, contains(AppPalette.light.blockGradient));
     for (final dark in <Color>[
       AppPalette.dark.surface,
       AppPalette.dark.surfaceRaised,

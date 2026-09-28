@@ -1541,7 +1541,8 @@ void main() {
   });
 
   testWidgets(
-    'compact unified Voice recovers expiry focus to its immersive refresh',
+    'compact unified Voice recovers expiry focus to its active tab (the '
+    'refresh that replaced the refresh button)',
     (tester) async {
       await tester.binding.setSurfaceSize(const Size(390, 844));
       addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -1574,7 +1575,9 @@ void main() {
 
       final row = find.byKey(const ValueKey('moment-row-compact'));
       final play = find.byKey(const ValueKey('moment-row-play-compact'));
-      final refresh = find.byKey(const ValueKey('moments-discovery-refresh'));
+      // G4: the phone's refresh is the active tab (tap it again), and it is
+      // the focus-recovery target the refresh button used to be.
+      final refresh = find.byKey(const ValueKey('moments-filter-discover'));
       expect(row, findsOneWidget);
       expect(
         find.byKey(const ValueKey<String>('voice-immersive-chrome')),

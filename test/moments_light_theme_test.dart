@@ -203,18 +203,35 @@ void main() {
         find.byKey(ValueKey('moment-featured-${moment.id}')),
         findsNothing,
       );
-      // The 06 Voice card paints the palette's R2 block gradient (refine-look:
-      // blockTop → `surface`, the board's card tone); `surfaceRaised` stays
-      // the mini-player disc and composer fill.
-      final fills = tester
+      // The G4 row is one layer on the canvas: no card fill of its own —
+      // no dark block leaks into Pearl (or a Pearl one into Dark) — and its
+      // divider is the palette's hairline.
+      final decorations = tester
           .widgetList<DecoratedBox>(
             find.descendant(of: card, matching: find.byType(DecoratedBox)),
           )
           .map((box) => box.decoration)
-          .whereType<BoxDecoration>()
-          .map((decoration) => decoration.gradient)
+          .whereType<BoxDecoration>();
+      final palette = _palette(brightness);
+      final other = _palette(
+        brightness == Brightness.dark ? Brightness.light : Brightness.dark,
+      );
+      final fills = decorations.map((d) => d.color).whereType<Color>();
+      for (final card in <Color>[
+        palette.surface,
+        palette.surfaceRaised,
+        palette.blockTop,
+        other.surface,
+        other.surfaceRaised,
+        other.background,
+      ]) {
+        expect(fills, isNot(contains(card)));
+      }
+      final gradients = decorations
+          .map((d) => d.gradient)
           .whereType<LinearGradient>();
-      expect(fills, contains(_palette(brightness).blockGradient));
+      expect(gradients, isNot(contains(palette.blockGradient)));
+      expect(gradients, isNot(contains(other.blockGradient)));
       final author = tester.widget<Text>(
         find.descendant(of: card, matching: find.text(moment.authorName)),
       );

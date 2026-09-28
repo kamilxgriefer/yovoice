@@ -60,13 +60,14 @@ enum MomentsTab {
 
 /// The Voice Moments destination — a stories-style audio feed.
 ///
-/// One surface, four filters (Discover / Following / Most engaged /
-/// Recent), a story strip of per-author chains with real viewed state,
-/// and a right detail panel on wide layouts. Chains open in the story
-/// viewer; every surfaced Moment is live — inside its chosen availability
-/// window (`expiresAt > now`) or permanent (no `expiresAt`, the author's
-/// "keep until deleted" choice) — because expired audio is enforced dead
-/// server-side and filtered client-side.
+/// One surface, three filters (Discover / Following / Popular — a request
+/// for the retired Recent lands on Discover, the same list), a strip of
+/// per-author circles with real viewed state and compact rows that open
+/// into the player. Chains open in the story viewer; every surfaced Moment
+/// is live — inside its chosen availability window (`expiresAt > now`) or
+/// permanent (no `expiresAt`, the author's "keep until deleted" choice) —
+/// because expired audio is enforced dead server-side and filtered
+/// client-side.
 class MomentsScreen extends StatefulWidget {
   const MomentsScreen({
     this.momentService,
@@ -131,7 +132,8 @@ class MomentsScreen extends StatefulWidget {
   /// Legacy entry seam; [initialFilter] wins when both are provided.
   final MomentsTab initialTab;
 
-  /// Which filter chip starts selected.
+  /// Which filter tab starts selected (`MomentsFilter.recent` shows as
+  /// Discover).
   final MomentsFilter? initialFilter;
 
   /// How a Moment's full detail page opens. The shell passes a route that
@@ -178,6 +180,10 @@ class _MomentsScreenState extends State<MomentsScreen> with RouteAware {
   /// Rings when the already selected "Yeels" tab is activated again: the
   /// Yeels feed's one-row chrome keeps its refresh on that tab.
   final _RefreshSignal _reelsRefreshRequests = _RefreshSignal();
+
+  /// The same for "Głos": re-activating the selected format tab reloads the
+  /// Voice feed exactly as re-tapping its active filter tab does.
+  final _RefreshSignal _voiceRefreshRequests = _RefreshSignal();
 
   /// The Yeels pool the viewer last chose. The feed is re-created after the
   /// composer closes (so a new Yeel appears); it opens on this pool again
@@ -240,6 +246,7 @@ class _MomentsScreenState extends State<MomentsScreen> with RouteAware {
     _voiceVisible.dispose();
     _reelsVisible.dispose();
     _reelsRefreshRequests.dispose();
+    _voiceRefreshRequests.dispose();
     super.dispose();
   }
 
@@ -254,15 +261,15 @@ class _MomentsScreenState extends State<MomentsScreen> with RouteAware {
   }
 
   /// The selected format's tab activated again: that format reads what it is
-  /// showing again. Yeels refreshes its current pool; the Voice feed has no
-  /// refresh hook here, so its tab is not wired to this callback.
+  /// showing again. Yeels refreshes its current pool; Głos reloads its active
+  /// filter (the same path as re-tapping that filter's tab).
   void _reselectFormat(YoMomentsFormat format) {
     if (format != _format) return;
     switch (format) {
       case YoMomentsFormat.reels:
         _reelsRefreshRequests.ring();
       case YoMomentsFormat.voice:
-        break;
+        _voiceRefreshRequests.ring();
     }
   }
 
@@ -437,9 +444,11 @@ class _MomentsScreenState extends State<MomentsScreen> with RouteAware {
                               showBack: showBack,
                               selectedFormat: _format,
                               onFormatSelected: _selectFormat,
+                              onFormatReselected: _reselectFormat,
                               onCreate: () => unawaited(_showCreateChooser()),
                               onCanvas: true,
                             ),
+                            refreshRequests: _voiceRefreshRequests,
                           )
                         else
                           const SizedBox.shrink(

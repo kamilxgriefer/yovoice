@@ -37,6 +37,9 @@ import 'package:yovoice/features/moments/presentation/widgets/moments_feed_view.
 import 'package:yovoice/features/reels/data/services/reel_service.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
 import 'support/material_icons_font.dart';
+import 'moments_overview_test_support.dart'
+    as support
+    show momentMetaLine, momentMetaVisible;
 
 final _time = DateTime.utc(2026, 9, 12, 14);
 const _dockKey = ValueKey<String>('voice-independent-retained-dock');
@@ -519,6 +522,19 @@ Future<void> _tapPlay(WidgetTester tester, String id) async {
 
 Finder _card(String id) => find.byKey(ValueKey<String>('moment-row-$id'));
 
+/// G4: the action line lives in the OPEN row — the controller's current
+/// clip — so a case that operates it plays the row first.
+Future<void> _openRow(WidgetTester tester, String id) async {
+  await _tapPlay(tester, id);
+  await tester.pumpAndSettle();
+}
+
+/// The collapsed row's meta line: what it draws and what it says.
+({String visible, String spoken}) _metaOf(WidgetTester tester, String id) => (
+  visible: support.momentMetaVisible(tester, id),
+  spoken: support.momentMetaLine(tester, id).semanticsLabel ?? '',
+);
+
 /// Both halves of one counter on the card's action row.
 ///
 /// Since the board-06 action row the ROW draws the glyph and the bare
@@ -760,18 +776,21 @@ void main() {
     });
     await tester.pumpAndSettle();
 
+    // G4: a collapsed row carries its counters on the meta line — the
+    // bare numbers drawn, the phrases spoken.
+    final meta = _metaOf(tester, 'a');
     expect(
-      _countOf(tester, 'moment-row-like-a'),
-      (visible: '99', spoken: 'Likes: 99'),
-      reason:
-          'the live counter must reach the rendered number, and the name '
-          'the control is spoken by',
+      meta.visible,
+      contains(' 99'),
+      reason: 'the live counter must reach the rendered number',
     );
+    expect(meta.spoken, contains('Likes: 99'));
     expect(
-      _countOf(tester, 'moment-row-comments-a'),
-      (visible: '42', spoken: 'Comments: 42'),
+      meta.visible,
+      contains(' 42'),
       reason: 'the live comment counter must reach both halves too',
     );
+    expect(meta.spoken, contains('Comments: 42'));
     expect(
       tester.getTopLeft(_card('b')).dy,
       lessThan(tester.getTopLeft(_card('a')).dy),
@@ -791,6 +810,7 @@ void main() {
     final gate = Completer<void>();
     harness.feed.likeGate = gate;
     await harness.mount(tester);
+    await _openRow(tester, 'a');
 
     final like = find.byKey(const ValueKey<String>('moment-row-like-a'));
     await tester.ensureVisible(like);
@@ -799,7 +819,7 @@ void main() {
 
     expect(
       _countOf(tester, 'moment-row-like-a'),
-      (visible: '4', spoken: 'Likes: 4'),
+      (visible: '4', spoken: 'Like, Likes: 4'),
       reason: 'the optimistic count is shown while the write is in flight',
     );
 
@@ -821,7 +841,7 @@ void main() {
 
     expect(
       _countOf(tester, 'moment-row-like-a'),
-      (visible: '3', spoken: 'Likes: 3'),
+      (visible: '3', spoken: 'Like, Likes: 3'),
       reason: 'a refused like must revert the optimistic count',
     );
     expect(
@@ -862,9 +882,7 @@ void main() {
     await harness.mount(tester);
 
     // Somebody else's Moment: Report, never Delete.
-    await tester.tap(
-      find.byKey(const ValueKey<String>('moment-row-menu-other')),
-    );
+    await tester.longPress(_card('other'));
     await tester.pumpAndSettle();
     expect(
       find.byKey(const ValueKey<String>('moment-row-report-other')),
@@ -891,9 +909,7 @@ void main() {
     await tester.pumpAndSettle();
 
     // Your own Moment: Delete, never Report.
-    await tester.tap(
-      find.byKey(const ValueKey<String>('moment-row-menu-mine')),
-    );
+    await tester.longPress(_card('mine'));
     await tester.pumpAndSettle();
     expect(
       find.byKey(const ValueKey<String>('moment-row-delete-mine')),
@@ -924,9 +940,7 @@ void main() {
       reason: 'cancelling must not delete',
     );
 
-    await tester.tap(
-      find.byKey(const ValueKey<String>('moment-row-menu-mine')),
-    );
+    await tester.longPress(_card('mine'));
     await tester.pumpAndSettle();
     await tester.tap(
       find.byKey(const ValueKey<String>('moment-row-delete-mine')),
@@ -973,15 +987,20 @@ void main() {
       reason: 'the caption must stay inside the viewport width',
     );
 
-    // Clamped text is only acceptable because the whole caption is reachable.
-    final title = find.byKey(const ValueKey<String>('moment-row-title-a'));
-    await tester.ensureVisible(title);
+    // Clamped text is only acceptable because the whole caption is
+    // reachable: the row's Details (G4: the ⋯ menu, here on a long press)
+    // opens the page that holds all of it.
+    await tester.ensureVisible(_card('a'));
     expect(
-      title.hitTestable(),
+      _card('a').hitTestable(),
       findsOneWidget,
-      reason: 'the caption must remain tappable to reach the full text',
+      reason: 'the row must remain reachable to get to the full text',
     );
-    await tester.tap(title);
+    await tester.longPress(_card('a'));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey<String>('moment-row-details-a')),
+    );
     await tester.pumpAndSettle();
     expect(
       harness.opened.map((moment) => moment.id),
@@ -1068,6 +1087,7 @@ void main() {
       final views = _Views();
       final auth = _Auth();
       final visible = ValueNotifier<bool>(true);
+      final driver = _NativeDriver();
       // The fixtures in this file are anchored to `_time`, not to the wall
       // clock, so the screen has to read that same clock. Without it the
       // production clock applies, every fixture is already past its
@@ -1108,11 +1128,15 @@ void main() {
               momentService: moments,
               viewsService: views,
               isVisible: visible,
+              // The action line lives in the open row (G4): a native double
+              // lets the row open without a platform channel.
+              playerFactory: () => driver.makePlayer()..allocated = true,
             ),
           ),
         ),
       );
       await tester.pumpAndSettle();
+      await _openRow(tester, 'a');
 
       final dockTop = tester.getRect(find.byKey(_dockKey)).top;
       for (final key in <String>[

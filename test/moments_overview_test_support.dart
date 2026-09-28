@@ -215,6 +215,9 @@ class QuietFeed extends HomeFeedService {
   final List<VoiceMoment> social;
   final List<String> likeWrites = <String>[];
 
+  /// When set, a like write stays in flight until it completes.
+  Completer<void>? likeGate;
+
   @override
   Stream<List<VoiceMoment>> watchSocialMoments({int limit = 40}) =>
       Stream<List<VoiceMoment>>.value(social);
@@ -222,6 +225,8 @@ class QuietFeed extends HomeFeedService {
   @override
   Future<void> setLike(String momentId, {required bool liked}) async {
     likeWrites.add('$momentId:$liked');
+    final gate = likeGate;
+    if (gate != null) await gate.future;
   }
 }
 
@@ -316,6 +321,7 @@ Widget overviewHost(
   double textScale = 1,
   Size? size,
   GlobalKey<NavigatorState>? navigatorKey,
+  bool observeRoutes = true,
 }) => MaterialApp(
   navigatorKey: navigatorKey,
   debugShowCheckedModeBanner: false,
@@ -328,7 +334,9 @@ Widget overviewHost(
     GlobalWidgetsLocalizations.delegate,
     GlobalCupertinoLocalizations.delegate,
   ],
-  navigatorObservers: <NavigatorObserver>[appRouteObserver],
+  // The app's own observer; a test can leave it out to prove a surface
+  // behaves the same under a host that registers none.
+  navigatorObservers: <NavigatorObserver>[if (observeRoutes) appRouteObserver],
   builder: (context, child) {
     final media = MediaQuery.of(context);
     return MediaQuery(
@@ -372,4 +380,38 @@ Future<void> loadInterFont() async {
   final loader = FontLoader('Inter')
     ..addFont(rootBundle.load('assets/fonts/InterVariable.ttf'));
   await loader.load();
+}
+
+/// The meta line of a collapsed Głos row: the one Text that carries the
+/// line and its spoken phrases (the counters' own numbers are Texts inside
+/// it and come after it in the tree).
+Text momentMetaLine(WidgetTester tester, String id) => tester.widget<Text>(
+  find
+      .descendant(
+        of: find.byKey(ValueKey<String>('moment-row-meta-$id')),
+        matching: find.byType(Text),
+      )
+      .first,
+);
+
+/// The meta line as drawn. Each counter is one inline unit (the glyph and
+/// its number together, so a wrap never parts them), which the line's own
+/// text holds as a single placeholder; this writes each one back as
+/// `"￼ <number>"` — e.g. `0:45 · ￼ 24 · ￼ 6 · wygasa za 21 godz.`.
+String momentMetaVisible(WidgetTester tester, String id) {
+  final texts = find
+      .descendant(
+        of: find.byKey(ValueKey<String>('moment-row-meta-$id')),
+        matching: find.byType(Text),
+      )
+      .evaluate()
+      .map((element) => element.widget as Text)
+      .toList();
+  if (texts.isEmpty) return '';
+  final counts = texts.skip(1).map((text) => text.data ?? '').iterator;
+  final line = texts.first.textSpan?.toPlainText() ?? '';
+  return line.replaceAllMapped(
+    '￼',
+    (_) => counts.moveNext() ? '￼ ${counts.current}' : '￼',
+  );
 }

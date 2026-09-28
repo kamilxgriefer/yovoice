@@ -18,6 +18,7 @@ import 'package:yovoice/features/moments/presentation/widgets/moments_feed_view.
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
 
 import 'moments_overview_test_support.dart';
+import 'voice_moment_test_doubles.dart';
 
 /// The rendered semantics tree, flattened. `tester.getSemantics` walks UP
 /// from a widget's render object, so a node produced by a `Semantics` INSIDE
@@ -87,6 +88,7 @@ void main() {
               friends: [friend('ola'), friend('bartek')],
             ),
             followService: FollowService(firestore: firestore, auth: auth),
+            momentService: StubMomentService(),
             playerFactory: SilentPlayer.new,
           ),
         ),
@@ -95,6 +97,15 @@ void main() {
       ),
     );
     await settleOverview(tester);
+  }
+
+  /// G4: the transport and the action line live in the OPEN row — the
+  /// controller's current clip — so these cases play it first.
+  Future<void> openRow(WidgetTester tester, String id) async {
+    await tester.tap(find.byKey(ValueKey<String>('moment-row-play-$id')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.pump();
   }
 
   testWidgets('the card body is a named button, not the leftovers of the '
@@ -129,6 +140,7 @@ void main() {
   ) async {
     final handle = tester.ensureSemantics();
     await pumpFeed(tester, slot: 1200);
+    await openRow(tester, 'm4');
 
     expect(
       find.byKey(const ValueKey<String>('moment-row-progress-m4')),
@@ -161,23 +173,31 @@ void main() {
       'total', (tester) async {
     final handle = tester.ensureSemantics();
     await pumpFeed(tester, slot: 1200);
+    // Collapsed, the exact total is spoken by the meta line.
+    _nodeWhere(
+      tester,
+      (node) => node.label.contains('Likes: 3'),
+      'speaks the collapsed row\'s like total as a phrase',
+    );
+    await openRow(tester, 'm4');
 
     final like = find.byKey(const ValueKey<String>('moment-row-like-m4'));
     expect(like, findsOneWidget);
+    // An action with its exact total: "Like, Likes: 3".
     final data = _nodeWhere(
       tester,
       (node) =>
           node.flagsCollection.isButton &&
-          (node.label == 'Like' || node.label.startsWith('Likes: ')),
+          (node.label == 'Like' || node.label == 'Like, Likes: 3'),
       'names the like control with the exact total',
     );
 
     expect(
-      data.flagsCollection.isSelected,
+      data.flagsCollection.isToggled,
       isNot(Tristate.none),
       reason:
-          'the glyph swap alone never announced the liked state; Yeels has '
-          'carried it since board 08',
+          'the glyph swap alone never announced the liked state; the like '
+          'is a toggle, so its state is spoken as on / off',
     );
     // The row itself draws the number, which is what the board shows.
     expect(

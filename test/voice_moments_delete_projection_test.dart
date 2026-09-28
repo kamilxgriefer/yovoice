@@ -201,7 +201,8 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
-        await tester.tap(find.byKey(const ValueKey('moment-row-menu-own')));
+        // G4: a collapsed row opens its ⋯ menu on a long press.
+        await tester.longPress(find.byKey(const ValueKey('moment-row-own')));
         await tester.pumpAndSettle();
         await tester.tap(find.byKey(const ValueKey('moment-row-delete-own')));
         await tester.pumpAndSettle();
