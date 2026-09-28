@@ -444,6 +444,18 @@ The script writes the exact document with `set()` (no merge), bumps
 (for example write wider than read) and fails unless the read-back matches.
 Opening to everyone later is `--read all --write all --testers "" --lapse true`.
 
+**Testers mode ON 2026-09-28 21:39:18 UTC (after build 40 reached web,
+TestFlight internal and Play internal; alerts first, step 6):**
+`appConfig/pagesV1` = read `testers`, write `testers`, 15 `testerUids`
+(the 14 canonical tester VIP grants plus Kamil's own account, whose
+canonical grant — source `admin`, `expiresAt: null`, `grantedBy:
+owner-decision-2026-09-28` — was created the same evening with a guarded
+create-only script; census 15/15 canonical), `lapseEnabled: true`,
+revision 0 → 1; the script's read-back matched. No Pages ERROR or warning
+logs in the following minutes. Evidence:
+yovoice-evidence/2026-09-28/pages-activation/. The controlled-account
+read-backs and the B5 operator smoke below are still to do with a tester.
+
 B5 operator smoke in testers mode (spec §7 step 6): a controlled tester
 reports a post of another controlled Page → `pages_moderation.js list`,
 `show`, `show --media --apply` (audit rows appear), `hold` then `restore`
@@ -747,6 +759,14 @@ validator reads back what was requested. `--server-messages true` is the
 owner answer (2026-09-28); the Server list carries the recorded
 reaction-map oracle.
 
+**Activated 2026-09-28 22:09:56 UTC** (Apple approved build 39's external
+beta at 21:50 UTC, so 39 was on every platform; owner decision: no extra
+wait): dry run `{content:false, serverMessages:false}` →
+`{true, true}`, applied, `appConfig/likersV1` read back `{schemaVersion: 1,
+enabled: true, serverMessagesEnabled: true}`; no `severity>=ERROR` in the
+following minutes. The tester smoke below is still to do. Evidence:
+yovoice-evidence/2026-09-29/likers-activation/.
+
 Smoke: a VIP tester lists each target (Voice Moment, Voice comment, Yeel,
 Yeel comment, Server message); a free account gets
 `likersAccessRequired`; an account that turns Hide my likes on disappears
@@ -813,6 +833,32 @@ day, lists switched off). Built on Kamil's Mac from a clean worktree.
   (`set_likers_activation.js --enabled true --server-messages true --apply`,
   owner decision: no extra wait).
 
+
+## Build 40 release round — web, TestFlight and Play internal (2026-09-28)
+
+Source: `main` at `ec4607bb` (`pubspec.yaml` `3.5.0+40`): Premium Pages
+(ADR-231..233; backend deployed the same day switched off), the owner-review
+fixes and desktop create step 2 (variant C). Built on Kamil's Mac from a
+clean worktree (`tmp/deploy-40`).
+
+- **Web:** CI (`Deploy YO Voice to Firebase Hosting`) verifies and builds but
+  SKIPS its `deploy_hosting` job, so the web went out by hand as for 39:
+  `flutter build web --release` with CI's dart-defines, `firebase deploy
+  --only hosting` at ~21:37 UTC; `version.json` reads `3.5.0` / `40` on
+  app.yovoice.app and yovoice-ec54a.web.app, and the live `main.dart.js`
+  is byte-identical to the build (sha256 `3c68822f…`).
+- **iOS:** IPA sha256 `8950299b…`, `altool` upload 21:16 UTC, ASC build
+  `e014d95d-2bf9-49c5-9b2d-d666eb58703a` VALID at 21:21; internal group
+  IN_BETA_TESTING; What to Test (en-US) stored and read back; external group
+  attached and beta review submitted (WAITING_FOR_BETA_REVIEW). Build 39's
+  external review was APPROVED at 21:50 UTC.
+- **Android:** AAB sha256 `0304bc5a…`, signed with the registered upload key;
+  Play internal testing "40 (3.5.0)", 39 not included, devices unchanged
+  (phones 12 334, tablets 6 735); published 23:21 CEST, read back
+  "Dostępna dla testerów wewnętrznych". Same Accessibility route as 39.
+- Evidence: `yovoice-evidence/2026-09-28/release-40/`.
+- **After release:** Pages testers mode switched on at 21:39 UTC and the
+  "See who liked" lists at 22:09 UTC (records under each section).
 ## Build 37 release round — web, TestFlight and Play internal (2026-09-27)
 
 Source: `main` at `2064419fd83463322a7b1087b150f0d5091bc0f8` (`pubspec.yaml`

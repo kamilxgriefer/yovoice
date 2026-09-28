@@ -309,7 +309,9 @@ overlay while leaving any real paid entitlement untouched.
 The subscription plumbing is ready for verified grants, but real App
 Store/Google Play purchase adapters and an IAP client are not configured.
 `verifyPurchase` therefore declines today; only the guarded
-`adminSetPremiumEntitlements` admin path can issue a working grant.
+`adminSetPremiumEntitlements` admin path can issue a working grant (plus
+one documented operator grant for the protected owner, ADR-053 amendment
+2026-09-29).
 
 **One exception (ADR-230, source only):** "See who liked" is unlocked by paid
 Premium, the staff preview above, **or** a canonical owner-granted

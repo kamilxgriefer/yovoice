@@ -3458,6 +3458,22 @@ run has **not yet been observed in Console → Functions → Logs** — until it
 is, treat Premium expiry as fixed-in-principle rather than proven. See
 [ADR-055](#adr-055-the-2026-08-16-production-cutover--order-the-deploy-by-what-fails-closed-and-verify-by-fingerprinting-served-bytes).
 
+
+### Amendment, 2026-09-29 — one operator grant for the protected owner
+
+Kamil asked for permanent Premium on his own account (the protected owner,
+superAdmin; ADR-119 gives superAdmin no staff preview). The guarded callable
+clamps a grant to 400 days, so an operator script
+(`yovoice-evidence/2026-09-29/premium-owner/grant_owner_premium.js`) wrote the
+document through the same single writer — `buildEntitlements` +
+`applyEntitlementsInTransaction` from `premium/entitlements.js`, in one
+transaction with an immutable `adminAuditLogs` row (action
+`operator_set_premium_entitlements`) — as plan `yearly`, status `active`,
+source `admin`, `currentPeriodEnd` 2099-12-31T12:00Z. It is still
+server-authored, time-validated and never a client write, so ADR-024's and
+this ADR's guarantees hold; "only the callable" below now has this one
+documented exception. A later /admin Grant or "None" on that account would
+merge-replace the end date with at most 400 days; re-run the script instead.
 ## ADR-054: Private account records are split from exact server-owned public profiles
 
 **Status**: Accepted
