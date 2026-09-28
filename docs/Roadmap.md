@@ -2766,7 +2766,7 @@ their separate production-deployment gates.
 
 ## In Progress
 
-### Premium Pages ("Treści") client — branch `pages/client`, source only, not landed, NOTHING DEPLOYED
+### Premium Pages ("Treści") — landed on `main` 2026-09-28, backend DEPLOYED switched off, app hidden until switched on
 
 The Flutter side of spec `yovoice-evidence/2026-09-28/premium-pages/spec.md`
 (provisional ADR-231 to ADR-233, renumbered when it lands). Everything stays
@@ -2783,11 +2783,21 @@ parallel.
   post likers target, the `pagePostComment` / `pageModeration` / `pageLapse`
   notification arms, the `PremiumUpsellContext.pages` upsell (R11), and all
   Pages copy in 43 languages with CLDR plurals.
-- **Open before landing:** the owner's look at the frames without a render
-  (desktop two-column post detail at ≥ 1000 px, the composer's voice idle and
-  recording states); device, simulator and real-browser verification; the
-  backend callables deployed and the emulator contract run; then the launch
-  order in spec §7.
+- **Owner review (2026-09-28, spec §12-§13):** Kamil signed off the
+  built-vs-render deviation sheet and chose: the header rosette keeps its
+  44 px target without growing the header (`NameWithVipMark.headerRoom`),
+  comments oldest first with "Earlier comments" above, Send stays grey when
+  empty, the likes row is only its 44 px target, and desktop create step 2
+  is two columns (variant C, all three steps in one 1040 px frame). He
+  accepted the frames without a render (desktop/tablet post detail, the
+  composer's voice states). Fixed on the way: the VIP sheet stopped above
+  the dock inside Treści; the composer title was scrolled half away at
+  200 % text.
+- **Backend:** deployed switched off on 2026-09-28
+  ([record](DEPLOYMENT.md#premium-pages-adr-231233--packages-b1--b2--b3--b4--b5-backend-deployed-2026-09-28-switched-off)).
+- **Open:** the controlled-account read-backs, alerts (runbook step 6),
+  then testers mode on Kamil's go (his account needs a canonical VIP grant);
+  device, simulator and real-browser verification of the Pages screens.
 
 ### Store builds from GitHub Actions — source written 2026-09-25, not configured, never run
 

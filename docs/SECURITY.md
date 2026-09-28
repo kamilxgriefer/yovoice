@@ -1206,7 +1206,7 @@ generation prevents a stale publisher transaction from restoring removed data.
 Existing conversation access is intentionally independent and reveals only the
 participant label already stored on that authorised conversation.
 
-## "See who liked" and Hide my likes (2026-09-28, ADR-230, source only, NOT deployed)
+## "See who liked" and Hide my likes (2026-09-28, ADR-230, backend deployed 2026-09-28, lists switched off)
 
 [ADR-230](Decisions.md#adr-230-see-who-liked-is-a-premium-or-vip-capability-behind-an-activation-switch-comment-likes-live-in-a-flat-server-only-store)
 adds an **enumeration surface**: a caller can page through the people who
@@ -1291,7 +1291,7 @@ liked something. Everything below is what bounds it.
    `likeCount: 0` (`HIDDEN_COMMENT_LIKE_COUNT`), never the fresh count
    (`comment_likes.test.js` pins both). Once per held edge only.
 
-## Premium Pages (2026-09-28, ADR-233, packages B1 + B2 + B3 + B4 + B5, source only, NOT deployed)
+## Premium Pages (2026-09-28, ADR-233, packages B1 + B2 + B3 + B4 + B5, deployed 2026-09-28, switched off)
 
 [ADR-233](Decisions.md#adr-233-premium-pages--account-as-page-server-only-posts-fan-out-on-read-lapse-without-deletion)
 turns an account into a public one-to-many publishing profile. Package B1
@@ -2079,7 +2079,7 @@ wrong rather than when it goes right.
   the honest retained set and for the four categories that currently survive a
   deletion; they are tracked in [Bugs.md](Bugs.md) and are not claimed by any
   user-facing copy.
-- **Premium Pages (ADR-233, package B5, source only).** The `content` stage
+- **Premium Pages (ADR-233, package B5, deployed 2026-09-28, switched off).** The `content` stage
   deletes `pages/{uid}` with its `pageVisibility/v1` entry, the account's
   posts and the comments it wrote; a post with an OPEN report is kept as a
   tombstone with its bytes for at most 90 days (`pageEvidenceRetention`,

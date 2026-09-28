@@ -17194,7 +17194,7 @@ likes" true for Voice Moment likes; no supported build loses anything.
   for the GDPR reviewer.
 - Deploy order, activation preconditions and rollback:
   [DEPLOYMENT.md](DEPLOYMENT.md#see-who-liked-adr-230--source-only-nothing-deployed).
-  Security surface: [SECURITY.md](SECURITY.md#see-who-liked-and-hide-my-likes-2026-09-28-adr-230-source-only-not-deployed).
+  Security surface: [SECURITY.md](SECURITY.md#see-who-liked-and-hide-my-likes-2026-09-28-adr-230-backend-deployed-2026-09-28-lists-switched-off).
 
 ## ADR-231: Servers stay the only shared space; a Premium Page is a one-to-many publishing profile
 
@@ -17764,5 +17764,16 @@ safety action unconditional.
     refusal in v1.
 - **B5 `pageEvidenceRetention/{postId}`** and the `lapseSweep` cursor are
   additive server-only documents not in the spec's §1.9 table.
-- Deploy and activation: [DEPLOYMENT.md](DEPLOYMENT.md#premium-pages-adr-231233--packages-b1--b2--b3--b4--b5-source-only-nothing-deployed);
-  security surface: [SECURITY.md](SECURITY.md#premium-pages-2026-09-28-adr-233-packages-b1--b2--b3--b4--b5-source-only-not-deployed).
+- Deploy and activation: [DEPLOYMENT.md](DEPLOYMENT.md#premium-pages-adr-231233--packages-b1--b2--b3--b4--b5-backend-deployed-2026-09-28-switched-off);
+  security surface: [SECURITY.md](SECURITY.md#premium-pages-2026-09-28-adr-233-packages-b1--b2--b3--b4--b5-deployed-2026-09-28-switched-off).
+- **Amendment (2026-09-28, owner review of the built screens, spec §13).**
+  A header's 44 px tap target shares the header's own gaps instead of
+  adding height: `NameWithVipMark.headerRoom` lifts the rosette's target
+  into the gap above the name, so the Page header matches profile B and
+  future header targets should follow the same pattern rather than grow
+  their row. Comments read oldest first while the server keeps paging
+  newest first (the thread reverses the loaded pages; "Earlier comments"
+  loads above). The likes row is exactly its 44 px target. Desktop create
+  step 2 is two columns with sticky previews (variant C), and all three
+  steps share one 1040 px frame. Backend deployed switched off the same
+  day ([record](DEPLOYMENT.md#premium-pages-adr-231233--packages-b1--b2--b3--b4--b5-backend-deployed-2026-09-28-switched-off)).

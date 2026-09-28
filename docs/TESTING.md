@@ -4,7 +4,7 @@ An honest picture of what's actually verified in this project, and how —
 deliberately not aspirational. Several separate, unequal layers of coverage
 exist; know which one you're relying on before trusting it.
 
-## Premium Pages backend — 2026-09-28 (ADR-231..233, packages B1-B5 + the audit round, source only, NOT deployed)
+## Premium Pages backend — 2026-09-28 (ADR-231..233, packages B1-B5 + the audit round, deployed 2026-09-28, switched off)
 
 Every command ran through the machine lock (`tmp/lk.sh`) on the
 `pages/backend` worktree, after the security + QA audit fixes.

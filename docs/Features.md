@@ -343,7 +343,7 @@ The client's check is a UX pre-gate; the list callables decide.
   operator writes `appConfig/likersV1` (`enabled`, and `serverMessagesEnabled`
   for the Server list), which happens only after the privacy policy and the
   Hide-my-likes build are out on every platform for 7 days
-  ([DEPLOYMENT.md](DEPLOYMENT.md#see-who-liked-adr-230--source-only-nothing-deployed)).
+  ([DEPLOYMENT.md](DEPLOYMENT.md#see-who-liked-adr-230--backend-deployed-2026-09-28-lists-switched-off)).
 - **Hide my likes.** `setMyLikesHiddenV1 {hidden}` stores the private
   `users/{uid}.likesHidden`; it removes you from every YO Voice likers list
   and from Top reactions at once, and works before the lists are switched on.
@@ -389,7 +389,7 @@ until an operator enables the server-only switch `appConfig/likersV1`.
   (`translations_vip_likers.dart`, `test/vip_likers_localization_test.dart`);
   the upsell's count line uses each language's plural forms.
 
-## Premium Pages (ADR-231..233) — backend (B1-B5), source only, NOT deployed
+## Premium Pages (ADR-231..233) — backend (B1-B5) deployed 2026-09-28 switched off; app hidden until switched on
 
 A VIP account can turn itself into a Page of type Business or Community
 (one Page per account, only the owner posts). Backend packages B1-B5 and the app

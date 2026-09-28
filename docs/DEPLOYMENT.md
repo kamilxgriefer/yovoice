@@ -4,12 +4,14 @@ What deploys automatically, what's manual, and exactly how — for both
 deployables described in
 [ADR-014](Decisions.md#adr-014-two-deployables-one-firebase-project).
 
-## Premium Pages (ADR-231..233) — packages B1 + B2 + B3 + B4 + B5, source only, NOTHING DEPLOYED
+## Premium Pages (ADR-231..233) — packages B1 + B2 + B3 + B4 + B5, backend DEPLOYED 2026-09-28, switched OFF
+
+**Deploy record (2026-09-28, from `9e262d10`; the backend is byte-identical at `29a5c5e5`, which only added client commits during the rollout):** gates green on the merged commit (functions 2984/2984, rules 592 + 4 + 6 + 11, Storage 76 + 2 + 6, server message media 9, Servers 73); VIP grant census 14/14 canonical, zero non-canonical. Indexes deployed 19:32 UTC, 53 → **63** composites, all READY at 19:37, none deleted, the six TTLs unchanged; the step 3a smoke failed 14 shapes with "index is currently building" right after READY and passed **22/22** at 19:38 (again at 20:07). Rules released 19:39 UTC, both read back byte-identical: Firestore `52375563-…` (previous `a45c488b-…`), Storage `69efc934-…` (previous `b828b3a9-…`), saved in yovoice-evidence/2026-09-28/pages-deploy/pre-*.rules. Functions in the 16 batches 2a-2n, 19:39-20:04 UTC, each on its first attempt, no quota error, no `--force`: 293 functions, all ACTIVE (16 created, 17 updated; the 2j/2l/2n repeats redeployed identical code); export map 296 (the three Reel voice-comment exports stay undeployed). The 12 new callables answer an unauthenticated `{"data":{}}` POST with 401 (an empty `{}` body gets 400); `firebase-schedule-pagesMaintenance-europe-west1` is ENABLED (every 10 minutes, Etc/UTC) and its first run (20:05) logged every slice `processed: 0`, orphans `ran: true, listed: 0`, `evidenceRetention.processed: 0` and `lapse.ran: true, transitions: 0`; no `severity>=ERROR` from the 33 services through 20:12. Badge backfill (step 4): dry run 14 `toUpdate` (only the `page` key; the fifteenth badge had already been synced by the new trigger), 0 conflicts, 0 deletes, no `isVip` change; applied 14 writes; the second dry run is 61/61 `upToDate`, and all 15 badges carry `page: null` with the 14 VIP bits unchanged. `appConfig/pagesV1` is absent, so every Pages op answers `pagesNotEnabled`. Not yet done: the controlled-account read-backs (steps 3.2-3.4 and the B3-B5 callable answers in 3.6-3.9) need a signed-in tester; steps 4a, 5 (testers mode, Kamil's go) and 6 (alerts, before testers mode). Rollback: the switch is already absent; functions from `5085dd9c` for the 17 updated names (revisions in `pre.log`), rules from the saved `pre-*.rules`; leave the indexes.
 
 Source: branch `pages/backend` from `main` 3.4.0+39 (`f99cb1d1`). What it
 is: [ADR-233](Decisions.md#adr-233-premium-pages--account-as-page-server-only-posts-fan-out-on-read-lapse-without-deletion)
 (with ADR-231 and ADR-232); security surface:
-[SECURITY.md](SECURITY.md#premium-pages-2026-09-28-adr-233-packages-b1--b2--b3--b4--b5-source-only-not-deployed).
+[SECURITY.md](SECURITY.md#premium-pages-2026-09-28-adr-233-packages-b1--b2--b3--b4--b5-deployed-2026-09-28-switched-off).
 Spec: `yovoice-evidence/2026-09-28/premium-pages/spec.md` §7. This section
 covers package **B1** (gate, `pages` record, lifecycle, hooks, visibility
 index, badge `page`, rules) and package **B3** (follows, D13 in direct
@@ -217,7 +219,9 @@ deleted account, Page or not. Deploying `onAccountDeletionOutboxCreated` /
 createdAt, __name__)`, `pagePostComments (authorId, createdAt, __name__)`
 and `pagePostMediaDeletionJobs (heldBy, storagePath)` are READY makes those
 stages fail with `FAILED_PRECONDITION` and back off toward dead-letter.
-Run the step 3a smoke (all 21 shapes PASS) before step 2m.
+Run the step 3a smoke (all 22 shapes PASS) before step 2m. Right after
+READY a shape can still answer "index is currently building" for a minute;
+re-run the smoke before treating that as a failure.
 
 ### 1. Rules
 
@@ -541,7 +545,7 @@ signed-in tester; steps 4-7 below.
 Source: branch `vip/likers` on `main` 3.3.0+38 (`b492ca0c`). What it is:
 [ADR-230](Decisions.md#adr-230-see-who-liked-is-a-premium-or-vip-capability-behind-an-activation-switch-comment-likes-live-in-a-flat-server-only-store);
 security surface:
-[SECURITY.md](SECURITY.md#see-who-liked-and-hide-my-likes-2026-09-28-adr-230-source-only-not-deployed).
+[SECURITY.md](SECURITY.md#see-who-liked-and-hide-my-likes-2026-09-28-adr-230-backend-deployed-2026-09-28-lists-switched-off).
 The lists are **switched, not deployed**: after every step below they answer
 `likersNotEnabled` until step 7 writes `appConfig/likersV1`. Comment likes and
 Hide my likes are not behind that switch and work as soon as they deploy.
