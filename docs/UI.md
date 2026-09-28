@@ -713,6 +713,28 @@ Everything above still holds.
   themes; on the page canvas it uses `ImmersiveFeedChrome(onCanvas: true)`
   with palette roles. Yeels progress is 2 px directly above the dock. Głos
   and Yeels keep separate filters and keys.
+  - **Level 2 is optional** (ADR-228): `filters` empty and no `filterBar`
+    means a one-row chrome; `filterBar` lets a host draw its own level 2
+    (Głos' text tabs). The row stacks the switch under the edge actions
+    whenever the switch cannot keep its minimum width (not only at ≥ 1.6×
+    text), so "Yeels" is never cut.
+  - **Re-activating the selected format tab reloads that format** (Głos and
+    Yeels alike), with a "Odśwież"/"Refresh" tooltip and spoken hint
+    (`ImmersiveSegmentedSwitch.onReselected`, `MomentsFeedView.refreshRequests`,
+    `ReelsFeedScreen.refreshRequests`).
+  - **Yeels below 1100 (Y3):** one row — [host Back] [Głos | Yeels] … [your
+    avatar → "Twoje Yeels"] [+]. "Twoje Yeels" is its own page: [‹ Wróć do
+    Odkrywaj] [Twoje Yeels, heading 1] … [Odśwież] [+]; the chevron, system
+    Back and Escape return to Discover, focus moves to the counterpart and
+    the page is announced; the pool survives the composer. A legibility
+    scrim sits in the card's media layer under every card control (high
+    contrast: a solid band the chrome's height). Off media (600–1099, and a
+    phone's loading/empty/error states) the same row uses palette roles.
+    From 1100 the wide header and toolbar/local panel are unchanged.
+  - **A sub-view inside a shell tab that must answer Back** claims it with
+    `EmbeddedBackScope` (a real `PopScope`, claimed only while visible);
+    `MainShell` offers each Back to a claimed scope before its tab history,
+    so one Back does exactly one thing.
 - **Profile header.** `ProfileStatsRow` and `ProfileActionBar`
   (`profile_header.dart`) on own and friend profiles: stats from real fields
   only, audience counts only when the audience is visible, one primary + one

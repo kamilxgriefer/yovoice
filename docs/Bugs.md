@@ -5,6 +5,52 @@ Update this whenever a bug is found or fixed. For "features not built
 yet," see [Roadmap.md](Roadmap.md) instead; this file is specifically
 about things that are broken, risky, or need verification.
 
+## FIXED IN SOURCE — YO Moments G4/Y3 reviews (2026-09-28, 3.3.0+38, ADR-228)
+
+Found by the independent code and accessibility reviews of the G4 (Głos) and
+Y3 (Yeels) redesign before landing; fixed in the same change unless marked.
+
+- **Keyboard focus fell to the top of the page on Play (blocker, new in G4).**
+  The play button was disabled while the media grant resolved, and a disabled
+  button gives up focus. It now stays focusable (presses ignored while
+  loading) and says "Ładowanie…". A test holds the grant open.
+- **The list jumped ~90 px when the playing row scrolled off the top, and the
+  pressed control moved ~92 px when switching clips (new in G4).** The scroll
+  offset now absorbs a row's open/close delta; at the very top of a list
+  there is nothing to absorb, so that case still moves (known limit, tested).
+- **Holding still on the waveform or a like/comments button opened the ⋯
+  menu and stopped playback (new in G4).** The control lines swallow
+  long-press and right-click.
+- **Any popup menu counted as leaving the screen (pre-existing, more
+  reachable in G4):** it stopped playback, and dismissing it reloaded the
+  whole feed and dropped pages loaded with "Wczytaj więcej". Popup routes are
+  now ignored for stop and reload.
+- **The seek slider took focus with no visible ring, and its keyboard step
+  (5 %) announced no change on short clips (G4).** A focus ring and 1 s steps.
+- **Row semantics:** the focusable node had no name or role while the named
+  button could not take focus (G4) — merged into one named, focusable button
+  with its custom actions.
+- **12 px meta text on the backdrop photo measured 3.86–4.31:1 below 1100
+  (G4, Dark).** It uses `textSecondary` there (≥ 5.9:1); the unheard dot got
+  a canvas ring (≥ 3:1).
+- **"Twoje Yeels" had no refresh below 1100 (Y3, functionality loss).** It
+  has its own Odśwież plate; in Discover the selected "Yeels" tab refreshes
+  and says so.
+- **A Yeels refresh after paging showed an inactive Yeel (pre-existing).**
+  The reset set the first Yeel active while the pager stayed on page 2; the
+  pager now jumps to the first page on a reset.
+- **Creating a Yeel from "Twoje Yeels" dropped you back to Discover
+  (pre-existing).** The pool survives the composer.
+- **Scope changes dropped screen-reader focus and announced nothing (Y3).**
+  Focus moves to the counterpart control and the page name is announced.
+- **The Yeels top scrim dimmed the sound plate and its focus ring (Y3,
+  first cut).** The scrim moved into the card's media layer, under every
+  card control.
+- **"Yeels" was cut to "Ye…" on a pushed 320 px route (Y3, first cut).** The
+  row stacks whenever the switch cannot keep its width.
+- **Still open:** new strings are machine-grade translations pending native
+  review; nothing above was checked on a device.
+
 ## FIXED IN SOURCE — the final review of build 37 (2026-09-27, 3.2.0+37, ADR-227)
 
 Found by the final release review of the integrated refine-look tree

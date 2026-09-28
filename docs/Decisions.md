@@ -16762,3 +16762,122 @@ follow-ups, each needing its own visual pass: `YoButton.secondary` onto R7
 neutral with a shared error state, one search-field shape, and the Moment
 detail composer finish. Defects: [Bugs.md](Bugs.md), "the final review of
 build 37".
+
+## ADR-228: YO Moments — Głos as a compact list under author circles (G4), Yeels with a one-row chrome (Y3)
+
+**Date:** 2026-09-28 · **Status:** accepted (owner, 2026-09-28: "Design yeels
+i voice moments całkowicie do przebudowy … tak aby to faktycznie wyglądało jak
+instagram, yeelsy są niemal perfekcyjne ale górna sekcja mi się wciąż nie
+podoba … za duże te klocki od każdego użytkownika"; on the proposal canvas
+"g2 i g3 mi się podoba"; then "wdrażaj") · ships in `3.3.0+38` · brief:
+[`docs/briefs/2026-09-28-moments-g4-y3/README.md`](briefs/2026-09-28-moments-g4-y3/README.md) ·
+**Amends** [ADR-209](#adr-209-slim-redesign-instagram--discord--twitch-w-języku-yo-voice)
+(the Głos feed card, the author capsule strip, the Yeels two-level chrome, the
+four Głos filters) and
+[ADR-155](#adr-155-one-voice-moments-story-tile-and-its-ring-means-you-have-not-heard-this)
+(the viewer's own chain). ADR-227's light budget, bead, waveform variant B,
+palette-only rule and ADR-186's semantics rules stand unchanged.
+
+### Context
+
+On build 37 a Głos card measured about 382 px at 390 px wide, so a phone
+showed fewer than two Voice Moments; its caption often read "Voice Moment"
+because publishing writes that fallback for an empty caption. The Yeels
+chrome was two rows over the video (about 118 px): the Głos | Yeels switch
+and "+", then "Odkrywaj" / "Twoje Yeels" chips and a refresh plate. The
+proposal canvas (three Yeels options, three Głos options, today's build as a
+reference, a desktop board) used only data that exists: a Voice Moment has no
+waveform, transcript or listen count, and Yeels has no following scope
+(ADR-209). Kamil picked G2 (compact list) and G3 (author circles) for Głos,
+combined as G4; for Yeels he named no option before "wdrażaj", so the
+recommended Y3 was built.
+
+### Decision
+
+1. **Głos filters are three text tabs** — Odkrywaj, Obserwowani, Popularne
+   ("Najbardziej angażujące" renamed; same ranking) — drawn in the chrome's
+   new `filterBar` slot. **Najnowsze is hidden:** Discover and Recent both
+   sorted `createdAt` descending over the same pool, so the list a user saw
+   was identical; the enum value and code path stay, and any request for
+   Recent maps to Discover. If Discover ever gets its own ranking, Recent can
+   return as a tab. Refresh is pull-to-refresh (populated and empty states),
+   re-tapping the active filter tab, re-tapping the selected "Głos" format
+   tab, and on desktop "Odśwież Momenty"; a re-tap scrolls to the top, shows
+   the spinner and announces politely, and is ignored while a load runs.
+2. **Author circles replace the capsule strip** (`MomentCirclesStrip`, built
+   on `MomentSeenAvatar`, so ADR-155's one definition holds: brand band =
+   not heard, a flat line and a dimmed face = heard). The first circle,
+   "Nagraj", opens the record flow. The viewer's own chain is labelled
+   "Ty"/"You", opens "your story chain" and is never marked unheard — a
+   deliberate change to ADR-155's note that your own tile stayed ringed
+   until played back: an unheard mark on your own voice was noise.
+3. **Each Voice Moment is a compact row** (`MomentCompactRow`, 76 px at rest,
+   no card container, hairline dividers): avatar, name + badges + age + an
+   unheard dot, the caption on one line (omitted when it is empty or the
+   "Voice Moment" fallback), a meta line (duration · likes · comments ·
+   expiry, amber in the last hour), an outline play button. The Moment that
+   is the player's current clip opens in place: the one lit block of the
+   screen, the R14 bead, the full caption, expiry, the waveform with seek,
+   the clock, and like / comments / "Odpowiedz głosem" / share / ⋯. One row
+   is open at a time; a finished clip stays open at its end. Details, report,
+   delete and "View profile" live in a ⋯ menu (long-press or right-click on a
+   collapsed row, ⋯ on the open row, a screen-reader "More options" action);
+   the row body still opens the Moment sheet with like, comments, report and
+   download. Nothing the old card offered became unreachable.
+4. **Rows keep what the user is looking at:** when a row above opens or
+   closes, the scroll offset absorbs the height change so the pressed row (or
+   the first row in view) stays put. At the very top of a list there is no
+   offset to give back, so there the list still moves by one row's delta — a
+   known, tested limit.
+5. **Popup menus are not "leaving the screen":** the feed ignores
+   `PopupRoute`s for playback stop and reload, so a menu neither collapses
+   the open row nor reloads the feed and drops "Wczytaj więcej" pages
+   (dialogs and sheets still stop playback, as before).
+6. **Yeels below 1100 is one row (Y3):** [host Back] [Głos | Yeels] … [your
+   avatar → "Twoje Yeels"] [+]. "Twoje Yeels" is a page: [‹ Wróć do Odkrywaj]
+   [Twoje Yeels, heading 1] … [Odśwież] [+]. The chevron, system Back and
+   Escape return to Discover; focus moves to the counterpart control and the
+   page is announced; the pool survives the composer. In Discover the
+   selected "Yeels" tab is the refresh (tooltip "Odśwież"). A legibility scrim
+   sits in the card's media layer, under the sound plate, rail and focus
+   rings (high contrast: a solid band the chrome's height). Off media the row
+   uses palette roles. From 1100 the wide header, toolbar and local panel are
+   unchanged (the 1440 frames are pixel-identical to build 37).
+7. **`EmbeddedBackScope`** is the pattern for a sub-view inside a shell tab
+   that must answer Back: it is a real `PopScope`, claimed only while the
+   sub-view is visible (tab, route and format); `MainShell` offers each Back
+   to a claimed scope before its own tab history and latches, so one Back
+   does exactly one thing. While claimed on a pushed route, the iOS swipe-back
+   gesture is disabled until the sub-view is left (Android Back returns to
+   Discover).
+8. **Layouts:** < 600 as above; 600–1099 one centred column (Głos rows max
+   640; the Yeels card stage with the one-row chrome above it); ≥ 1100 Głos
+   has its filters in the left panel and the circles above one R2 block that
+   holds the rows, the right panel unchanged.
+
+### Reasoning
+
+A Voice Moment's content is a voice clip, a name and one line of text; the
+card gave it the footprint of a photo post. A list whose rows open only for
+the clip being heard fits more than twice as many Moments on a phone and
+keeps the light budget's "one lit block = the voice that is playing" literal.
+The circles are the Instagram gesture people already know for "new from this
+person", and they reuse the heard ring ADR-155 already defined. For Yeels the
+owner's complaint was the chip row over the video; Instagram keeps your own
+reels behind your avatar, and one row gives the footage back 60 px.
+
+### Consequences
+
+- The feed card `_MomentFeedCard`, its transport and the capsule strip are
+  deleted with their test (`moment_author_capsules_test.dart`); their
+  guarantees were re-expressed for the new widgets (`voice_feed_g4_test`,
+  `voice_feed_g4_review_test`, `moment_author_circles_test`,
+  `yeels_one_row_chrome_test`, `embedded_back_scope_test`,
+  `moments_format_reselect_test`, the extended `mobile_edge_back_test`).
+  `MomentCard` (Home, Profile, Creator, the Moment sheet) is unchanged.
+- 18 new Moments strings carry explicit translations in all locales; they
+  were written by the engineer, not reviewed by native speakers.
+- Evidence is Flutter test-renderer frames at 320/390/768/1440, Dark/Pearl,
+  100/200 %, high contrast, focus and state matrices, each looked at by the
+  engineer and an independent accessibility reviewer. Nothing was checked on
+  a device, simulator or real browser before landing — UNVERIFIED there.

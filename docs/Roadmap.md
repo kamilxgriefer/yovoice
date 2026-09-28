@@ -14,6 +14,41 @@ someone decide what to pick up next.
 
 ---
 
+## YO Voice 3.3.0 (38) — YO Moments: the Głos list (G4) and one-row Yeels (Y3) (ADR-228) — 2026-09-28
+
+**Status: on `main` as `3.3.0+38`; the release record (web deploy, store
+builds) is in [DEPLOYMENT.md](DEPLOYMENT.md) once it happens.** Client-only:
+no Functions, rules, indexes or Storage changes. Decision:
+[ADR-228](Decisions.md#adr-228-yo-moments--głos-as-a-compact-list-under-author-circles-g4-yeels-with-a-one-row-chrome-y3).
+Brief and the proposal canvas:
+[briefs/2026-09-28-moments-g4-y3/README.md](briefs/2026-09-28-moments-g4-y3/README.md).
+
+Kamil's ask: make Yeels and Voice Moments look like Instagram — the Yeels top
+section and the too-big Voice Moment blocks. He chose G2 + G3 (built as G4)
+from the canvas; Y3 was the recommended Yeels option.
+
+- **Głos (G4):** three text tabs (Odkrywaj / Obserwowani / Popularne;
+  Najnowsze folded into Odkrywaj — identical lists), author circles with the
+  heard ring and a "Nagraj" circle, compact 76 px rows (about 5 Moments per
+  phone screen instead of fewer than 2) that open in place for the clip being
+  heard, ⋯ menu for details / report / delete / profile, pull-to-refresh and
+  re-tap refresh, scroll anchoring, a desktop block of rows between the
+  filter panel and the suggestions panel.
+- **Yeels (Y3):** one row below 1100 — Głos | Yeels, your avatar → "Twoje
+  Yeels" (its own page with Back, refresh and +), re-tap Yeels to refresh, a
+  legibility scrim under the card controls; `EmbeddedBackScope` so Android
+  Back / Escape leave "Twoje Yeels" first. ≥ 1100 unchanged.
+- **Verification:** `flutter analyze` clean; the full suite on the integrated
+  tree (recorded in the landing commit); independent code and accessibility
+  reviews of each half with one fix round each (one blocker — keyboard focus
+  lost on Play — and the majors fixed; see Bugs.md); frames at
+  320/390/768/1440, Dark/Pearl, 100/200 %, high contrast. **Not verified on a
+  device, simulator or real browser.**
+- **Follow-ups:** a device pass (TalkBack/VoiceOver on the rows, the circles
+  and "Twoje Yeels"; pull-to-refresh on iOS bounce and trackpads); native-speaker
+  review of the 18 new Moments strings; the list still moves by one row's
+  delta when switching clips at the very top of a list (no offset to absorb).
+
 ## YO Voice 3.2.0 (37) — the refine look (ADR-227) — 2026-09-27
 
 **Status: on `main` as `3.2.0+37`; web deployed 2026-09-27 (Hosting serves
