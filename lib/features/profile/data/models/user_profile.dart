@@ -63,6 +63,7 @@ class UserProfile {
     this.displayNameChangedAt,
     this.profileUpdatedAt,
     this.profileVisibility = ProfileVisibility.public,
+    this.likesHidden = false,
   });
 
   final String uid;
@@ -146,6 +147,12 @@ class UserProfile {
   /// because that was the product's behaviour before this preference existed.
   final ProfileVisibility profileVisibility;
 
+  /// "Hide my likes": the owner is left out of every likers list YO Voice
+  /// shows (ADR-230). Server-written by `setMyLikesHiddenV1` only. Missing
+  /// or `false` = visible; anything else = hidden, mirroring the server's
+  /// fail-closed `likesHiddenOf`.
+  final bool likesHidden;
+
   DateTime? get nextDisplayNameChangeAt =>
       displayNameChangedAt?.add(const Duration(days: 30));
 
@@ -225,6 +232,10 @@ class UserProfile {
         _ => null,
       },
       profileVisibility: ProfileVisibility.fromValue(data['profileVisibility']),
+      likesHidden:
+          data['likesHidden'] == null || data['likesHidden'] == false
+          ? false
+          : true,
     );
   }
 

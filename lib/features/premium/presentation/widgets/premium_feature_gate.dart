@@ -191,6 +191,25 @@ class _PremiumLockedDestination extends StatelessWidget {
           'Otwórz Serwery, aby zarządzać przestrzeniami i kanałami.',
         ),
       ),
+      PremiumFeature.seeWhoLiked => (
+        copy.text('See who liked', 'Zobacz, kto polubił'),
+        copy.text(
+          'With Premium you can see the people who liked a Voice Moment, a Yeel or a comment, or reacted to a Server message. Like counts stay visible to everyone.',
+          'Z Premium zobaczysz osoby, które polubiły Moment głosowy, Yeel lub komentarz albo zareagowały na wiadomość na serwerze. Liczniki polubień nadal widzi każdy.',
+        ),
+      ),
+    };
+    // "X requires Premium" is wrong for See who liked, which an owner-granted
+    // VIP status also unlocks (ADR-230).
+    final heading = switch (feature) {
+      PremiumFeature.seeWhoLiked => copy.text(
+        'See who liked is included with Premium',
+        'Funkcja „Zobacz, kto polubił” jest w Premium',
+      ),
+      _ => copy.text(
+        '${feature.label} requires Premium',
+        '$featureLabel wymaga Premium',
+      ),
     };
     return Scaffold(
       backgroundColor: palette.background,
@@ -232,10 +251,8 @@ class _PremiumLockedDestination extends StatelessWidget {
                   ),
                   const SizedBox(height: 20),
                   Text(
-                    copy.text(
-                      '${feature.label} requires Premium',
-                      '$featureLabel wymaga Premium',
-                    ),
+                    heading,
+                    key: const ValueKey('premium-destination-heading'),
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       color: palette.textPrimary,

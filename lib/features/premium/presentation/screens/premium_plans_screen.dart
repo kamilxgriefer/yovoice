@@ -11,6 +11,7 @@ import 'package:yovoice/features/premium/data/models/subscription_entitlements.d
 import 'package:yovoice/features/premium/data/premium_plans.dart';
 import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
 import 'package:yovoice/features/premium/data/services/premium_billing_service.dart';
+import 'package:yovoice/features/premium/presentation/premium_benefit_icons.dart';
 import 'package:yovoice/features/premium/presentation/premium_localized_copy.dart';
 import 'package:yovoice/features/premium/presentation/widgets/premium_badge_pill.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
@@ -1191,15 +1192,6 @@ class _PlanCard extends StatelessWidget {
 class _EverythingIncluded extends StatelessWidget {
   const _EverythingIncluded();
 
-  static const _icons = [
-    Icons.person_outline_rounded,
-    Icons.dns_outlined,
-    Icons.visibility_off_outlined,
-    Icons.workspace_premium_outlined,
-    Icons.graphic_eq_rounded,
-    Icons.auto_awesome_outlined,
-  ];
-
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
@@ -1214,19 +1206,22 @@ class _EverythingIncluded extends StatelessWidget {
       ),
       child: Column(
         children: [
-          for (var i = 0; i < PremiumPlans.everythingIncluded.length; i++)
+          // Each line's glyph is keyed on its text, never its position, so
+          // a new line cannot throw a RangeError on a parallel icon list.
+          for (final item in PremiumPlans.everythingIncluded)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
               child: Row(
                 children: [
-                  Icon(_icons[i], size: 19, color: colors.primary),
+                  Icon(
+                    premiumIncludedItemIcon(item),
+                    size: 19,
+                    color: colors.primary,
+                  ),
                   const SizedBox(width: 13),
                   Expanded(
                     child: Text(
-                      localizedPremiumIncludedItem(
-                        copy,
-                        PremiumPlans.everythingIncluded[i],
-                      ),
+                      localizedPremiumIncludedItem(copy, item),
                       style: TextStyle(
                         color: palette.textPrimary,
                         fontSize: 13.3,

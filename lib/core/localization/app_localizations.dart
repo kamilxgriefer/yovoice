@@ -563,6 +563,44 @@ class AppLocalizations {
     });
   }
 
+  /// Count-bearing copy in the reader's plural form, in every locale.
+  ///
+  /// English picks [englishOne] or [englishOther]. Polish picks [polishOne]
+  /// (1), [polishFew] (2–4, but not 12–14) or [polishMany]. Every other
+  /// locale resolves the catalog entry `'$stem.<category>'` for its CLDR
+  /// category (zero, one, two, few, many, other) and falls back to the
+  /// English forms when an entry is missing. `Intl.pluralLogic` answers the
+  /// exact counts 0 and 2 with the `zero` and `two` entries before it applies
+  /// the CLDR rule, so a catalog stores the forms for 0 and 2 there in every
+  /// language. Every form names `{count}`, which is substituted after the
+  /// form is chosen.
+  String pluralTemplate({
+    required int count,
+    required String stem,
+    required String englishOne,
+    required String englishOther,
+    required String polishOne,
+    required String polishFew,
+    required String polishMany,
+  }) {
+    if (isPolish) {
+      final lastTwo = count % 100;
+      final last = count % 10;
+      final form = count == 1
+          ? polishOne
+          : last >= 2 && last <= 4 && (lastTwo < 12 || lastTwo > 14)
+          ? polishFew
+          : polishMany;
+      return _template(form, {'count': '$count'});
+    }
+    return _pluralized(
+      count: count,
+      stem: stem,
+      englishOne: englishOne,
+      englishOther: englishOther,
+    );
+  }
+
   String _pluralized({
     required int count,
     required String stem,

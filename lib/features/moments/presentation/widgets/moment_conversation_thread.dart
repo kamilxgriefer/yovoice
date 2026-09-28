@@ -8,6 +8,8 @@ import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_sizing.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
+import 'package:yovoice/features/likers/data/models/comment_like.dart';
+import 'package:yovoice/features/likers/presentation/widgets/comment_like_controls.dart';
 import 'package:yovoice/features/moments/data/services/voice_moment_read_service.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_mentions.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_time_labels.dart';
@@ -18,15 +20,28 @@ import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 
+/// Opens "See who liked" for [comment]; [returnFocus] is the count control
+/// that asked, so closing the flow hands keyboard focus back to it.
+typedef MomentCommentLikersOpener =
+    void Function(MomentComment comment, FocusNode returnFocus);
+
 /// One row of the "Rozmowa" thread: who replied, when, what they said —
 /// as text, or as a voice reply with its own mini-player.
 ///
-/// There is no heart on a reply: Voice Moment comments carry no like edge
-/// on the server, and a control that cannot record anything is worse than
-/// no control. "Reply" is honest too: the thread is flat (the callable
-/// accepts `momentId`, `requestId` and `text` and nothing else), so the
-/// button prefills the composer with `@name ` instead of pretending a
-/// nested reply exists.
+/// The action line reads "Odpowiedz · ♡ 3" (owner variant B, ADR-230): the
+/// heart toggles the caller's like through `setMomentCommentLikeV1`, and the
+/// count beside it opens "See who liked" (the list for Premium / VIP, the
+/// upsell for everyone else; for a viewer who can see likers it also reads
+/// "Kto polubił"). The heart is drawn ONLY when [likeState] is non-null,
+/// i.e. when the view was answered with comment likes: until the deployed
+/// backend proves it can record a comment like there is no heart and no
+/// "Coming soon" either, because a control that cannot record anything is
+/// worse than no control.
+///
+/// "Reply" is honest too: the thread is flat (the callable accepts
+/// `momentId`, `requestId` and `text` and nothing else), so the button
+/// prefills the composer with `@name ` instead of pretending a nested reply
+/// exists.
 class MomentCommentRow extends StatelessWidget {
   const MomentCommentRow({
     required this.comment,
@@ -38,9 +53,27 @@ class MomentCommentRow extends StatelessWidget {
     this.onReplyTo,
     this.onReport,
     this.onMentionTap,
+    this.likeState,
+    this.onToggleLike,
+    this.onShowLikers,
+    this.showWhoLiked = false,
     this.playerFactory,
     super.key,
   });
+
+  /// This comment's like count and the caller's like. Null: no heart.
+  final CommentLikeState? likeState;
+
+  /// Toggles the caller's like. Null draws the heart disabled.
+  final ValueChanged<MomentComment>? onToggleLike;
+
+  /// Opens "See who liked" for this comment, handing it the count's focus
+  /// node to return to. Null draws the count as text.
+  final MomentCommentLikersOpener? onShowLikers;
+
+  /// The viewer may open likers lists (client pre-gate): the count also
+  /// reads "Kto polubił".
+  final bool showWhoLiked;
 
   final MomentComment comment;
   final String momentId;
@@ -90,12 +123,165 @@ class MomentCommentRow extends StatelessWidget {
     );
   }
 
+  /// "Odpowiedz · ♡ 3 Kto polubił ⚑" on one row whenever it fits, if need
+  /// be with Reply's side padding given up. When the width or the reader's
+  /// text size does not allow it, the line breaks after "Reply" and the
+  /// heart, count and report flag move down together: the separator dot is
+  /// dropped (it would start the new line), and the flag never ends up alone
+  /// on a line of its own. The dot is drawn exactly while Reply and the
+  /// heart share a row.
+  Widget _actionLine(
+    BuildContext context, {
+    required AppLocalizations copy,
+    required AppPalette palette,
+    required CommentLikeState? likes,
+  }) {
+    final reply = onReplyTo;
+    final toggleLike = onToggleLike;
+    final showLikers = onShowLikers;
+    final replyLabel = copy.contextualText(
+      'yoMoments.replyToComment',
+      'Reply',
+      'Odpowiedz',
+    );
+    TextButton? replyWith({double padding = AppRhythm.tight}) => reply == null
+        ? null
+        : TextButton(
+            key: ValueKey('reply-to-comment-${comment.id}'),
+            onPressed: () => reply(comment),
+            style: TextButton.styleFrom(
+              foregroundColor: palette.textSecondary,
+              minimumSize: const Size(0, AppSizing.standardControlHeight),
+              padding: EdgeInsets.symmetric(horizontal: padding),
+            ),
+            child: Text(replyLabel, style: AppTypography.labelLarge),
+          );
+    final replyButton = replyWith();
+    final likeControls = likes == null
+        ? null
+        : CommentLikeControls(
+            commentId: comment.id,
+            keyPrefix: 'moment-comment',
+            state: likes,
+            onToggle: toggleLike == null ? null : () => toggleLike(comment),
+            onShowLikers: showLikers == null
+                ? null
+                : (focus) => showLikers(comment, focus),
+            showWhoLiked: showWhoLiked,
+          );
+    final tightFlag =
+        likes != null &&
+        likes.likeCount > 0 &&
+        showLikers != null &&
+        !showWhoLiked;
+    final flag = !_canReport
+        ? null
+        : IconButton(
+            key: ValueKey('report-comment-${comment.id}'),
+            onPressed: () => onReport!(comment),
+            tooltip: copy.text('Report this comment', 'Zgłoś ten komentarz'),
+            style: IconButton.styleFrom(
+              minimumSize: const Size.square(AppSizing.standardControlHeight),
+              tapTargetSize: MaterialTapTargetSize.padded,
+              // A bare count ("3") keeps a 44 px target, most of it empty
+              // after the digits; the flag's glyph moves to the start of
+              // its own 48 px target so the gap reads as in owner render B
+              // instead of doubling. Its target is unchanged.
+              alignment: tightFlag ? AlignmentDirectional.centerStart : null,
+              padding: tightFlag
+                  ? const EdgeInsetsDirectional.only(start: 4, end: 8)
+                  : null,
+            ),
+            icon: Icon(
+              Icons.flag_outlined,
+              size: 18,
+              color: palette.textSecondary,
+            ),
+          );
+    const dotText = '·';
+    final dotStyle = AppTypography.labelLarge.copyWith(
+      color: palette.textTertiary,
+    );
+    final dot = ExcludeSemantics(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 2),
+        child: Text(dotText, style: dotStyle),
+      ),
+    );
+
+    return LayoutBuilder(
+      key: ValueKey('moment-comment-actions-${comment.id}'),
+      builder: (context, constraints) {
+        if (likeControls == null) {
+          return Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [?replyButton, ?flag],
+          );
+        }
+        var needed = CommentLikeControls.estimatedWidth(
+          context,
+          state: likes!,
+          interactive: showLikers != null,
+          showWhoLiked: showWhoLiked,
+        );
+        if (replyButton != null) {
+          needed +=
+              CommentLikeControls.measureLabel(
+                context,
+                replyLabel,
+                AppTypography.labelLarge,
+              ) +
+              2 * AppRhythm.tight +
+              CommentLikeControls.measureLabel(context, dotText, dotStyle) +
+              4;
+        }
+        if (flag != null) needed += AppSizing.standardControlHeight;
+        final overflow = needed - constraints.maxWidth;
+        // Up to Reply's own side padding short: the line still fits on one
+        // row with the dot once Reply gives up that padding (its label keeps
+        // it well over the 44 px minimum). Without this, a band of widths
+        // about one dot wide drew the whole line on one row WITHOUT the dot.
+        if (overflow <= 0 ||
+            (replyButton != null && overflow <= 2 * AppRhythm.tight)) {
+          final trim = overflow <= 0 ? 0.0 : (overflow / 2).ceilToDouble();
+          return Row(
+            children: [
+              ?replyWith(padding: AppRhythm.tight - trim),
+              if (replyButton != null) dot,
+              Flexible(child: likeControls),
+              ?flag,
+            ],
+          );
+        }
+        // An explicit break, not a Wrap: a Wrap would still put everything
+        // on one row whenever it fits without the dot, i.e. a row that
+        // silently lost its separator.
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ?replyButton,
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Flexible(child: likeControls),
+                ?flag,
+              ],
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
     final resolve = resolveReplyMedia;
     final reply = onReplyTo;
+    // An id-less row (a directly constructed model) cannot be liked.
+    final likes = comment.id.isEmpty ? null : likeState;
     final age = momentRelativeAge(comment.createdAt, copy: copy);
     final avatar = UserAvatar(
       radius: 20,
@@ -202,53 +388,12 @@ class MomentCommentRow extends StatelessWidget {
                     ),
                     onMentionTap: onMentionTap,
                   ),
-                if (reply != null || _canReport)
-                  Row(
-                    children: [
-                      if (reply != null)
-                        TextButton(
-                          key: ValueKey('reply-to-comment-${comment.id}'),
-                          onPressed: () => reply(comment),
-                          style: TextButton.styleFrom(
-                            foregroundColor: palette.textSecondary,
-                            minimumSize: const Size(
-                              0,
-                              AppSizing.standardControlHeight,
-                            ),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: AppRhythm.tight,
-                            ),
-                          ),
-                          child: Text(
-                            copy.contextualText(
-                              'yoMoments.replyToComment',
-                              'Reply',
-                              'Odpowiedz',
-                            ),
-                            style: AppTypography.labelLarge,
-                          ),
-                        ),
-                      if (_canReport)
-                        IconButton(
-                          key: ValueKey('report-comment-${comment.id}'),
-                          onPressed: () => onReport!(comment),
-                          tooltip: copy.text(
-                            'Report this comment',
-                            'Zgłoś ten komentarz',
-                          ),
-                          style: IconButton.styleFrom(
-                            minimumSize: const Size.square(
-                              AppSizing.standardControlHeight,
-                            ),
-                            tapTargetSize: MaterialTapTargetSize.padded,
-                          ),
-                          icon: Icon(
-                            Icons.flag_outlined,
-                            size: 18,
-                            color: palette.textSecondary,
-                          ),
-                        ),
-                    ],
+                if (reply != null || _canReport || likes != null)
+                  _actionLine(
+                    context,
+                    copy: copy,
+                    palette: palette,
+                    likes: likes,
                   ),
               ],
             ),
@@ -282,12 +427,23 @@ class MomentConversationThread extends StatelessWidget {
     this.emptyLabel,
     this.onCompose,
     this.onOpenFullThread,
+    this.likeStateOf,
+    this.onToggleLike,
+    this.onShowLikers,
+    this.showWhoLiked = false,
     this.playerFactory,
     super.key,
   });
 
   final String momentId;
   final List<MomentComment> comments;
+
+  /// Each row's comment-like state (see [MomentCommentRow.likeState]). Null,
+  /// or null for a comment, draws no heart on it.
+  final CommentLikeState? Function(String commentId)? likeStateOf;
+  final ValueChanged<MomentComment>? onToggleLike;
+  final MomentCommentLikersOpener? onShowLikers;
+  final bool showWhoLiked;
   final int commentCount;
   final String currentUserId;
   final MentionDirectory mentions;
@@ -388,6 +544,10 @@ class MomentConversationThread extends StatelessWidget {
               onReplyTo: onReplyTo,
               onReport: onReport,
               onMentionTap: onMentionTap,
+              likeState: likeStateOf?.call(comment.id),
+              onToggleLike: onToggleLike,
+              onShowLikers: onShowLikers,
+              showWhoLiked: showWhoLiked,
               playerFactory: playerFactory,
             ),
         // The server pages this conversation OLDEST first, so the next page

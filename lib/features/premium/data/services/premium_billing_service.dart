@@ -1,5 +1,5 @@
 import 'package:cloud_functions/cloud_functions.dart';
-import 'package:flutter/foundation.dart' show visibleForTesting;
+import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;
 
 import 'package:yovoice/features/premium/data/models/premium_billing_context.dart';
 import 'package:yovoice/features/premium/data/models/subscription_entitlements.dart';
@@ -53,6 +53,34 @@ class PremiumBillingService implements PremiumBillingGateway {
       result.data,
       expectedHost: 'billing.stripe.com',
     );
+  }
+}
+
+/// How long an upsell waits for the billing context before it assumes
+/// Premium cannot be bought.
+const Duration kPremiumCheckoutProbeTimeout = Duration(seconds: 6);
+
+/// Whether a purchase can actually complete on this platform right now.
+///
+/// Checkout exists only on the web (Stripe; `PremiumPlansScreen` sells only
+/// when `kIsWeb && checkoutAvailable`) and there is no in-app purchase
+/// client, so iOS and Android answer `false` without a network call. On the
+/// web, the trusted `getPremiumBillingContext` decides; any failure or a
+/// slow answer is `false`, so an upsell never offers a purchase path that
+/// cannot finish (ADR-012).
+Future<bool> premiumCheckoutAvailable({
+  PremiumBillingGateway? billing,
+  bool isWeb = kIsWeb,
+  Duration timeout = kPremiumCheckoutProbeTimeout,
+}) async {
+  if (!isWeb) return false;
+  try {
+    final context = await (billing ?? PremiumBillingService())
+        .getContext()
+        .timeout(timeout);
+    return context.checkoutAvailable;
+  } catch (_) {
+    return false;
   }
 }
 

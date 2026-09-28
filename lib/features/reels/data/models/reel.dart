@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 
+import 'package:yovoice/features/likers/data/models/comment_like.dart';
 import 'package:yovoice/features/reels/data/models/reel_composition.dart';
 
 /// Author-selected lifetime of one Reel.
@@ -646,6 +647,7 @@ class ReelView {
     required this.comments,
     required this.commentsTruncated,
     required this.nextCommentCursor,
+    this.commentLikes,
   });
 
   /// The server's own ceiling for one comment page.
@@ -656,15 +658,34 @@ class ReelView {
   final bool commentsTruncated;
   final String? nextCommentCursor;
 
-  factory ReelView.fromWire(Object? value) {
+  /// Each projected comment's like count and the caller's own like, keyed by
+  /// comment id. Null when the view was read without the
+  /// `includeCommentLikes` flag: the thread then shows no hearts.
+  final Map<String, CommentLikeState>? commentLikes;
+
+  /// Parses the exact `getReelViewV2` shape. `commentLikes` is accepted only
+  /// when the request carried `includeCommentLikes` ([expectCommentLikes])
+  /// and is forbidden otherwise, so every earlier payload parses exactly as
+  /// before (spec §3.6). When present its key set must equal the projected
+  /// comment ids; a requested but absent map parses as "no comment likes"
+  /// (no hearts) rather than costing the whole thread.
+  factory ReelView.fromWire(Object? value, {bool expectCommentLikes = false}) {
     final map = _map(value, 'reel view');
-    _keys(map, const <String>{
-      'schemaVersion',
-      'reel',
-      'comments',
-      'commentsTruncated',
-      'nextCommentCursor',
-    }, 'reel view');
+    _keys(
+      map,
+      const <String>{
+        'schemaVersion',
+        'reel',
+        'comments',
+        'commentsTruncated',
+        'nextCommentCursor',
+      },
+      'reel view',
+      optional: expectCommentLikes
+          ? const <String>{'commentLikes'}
+          : const <String>{},
+    );
+    final withLikes = map.containsKey('commentLikes');
     if (map['schemaVersion'] != 2) {
       throw const FormatException('Unsupported Reel view schema.');
     }
@@ -682,11 +703,20 @@ class ReelView {
     if (cursor != null && !truncated) {
       throw const FormatException('Inconsistent Reel comment page boundary.');
     }
+    final comments = rawComments
+        .map(ReelComment.fromWire)
+        .toList(growable: false);
     return ReelView(
       reel: Reel.fromV2Wire(map['reel']),
-      comments: rawComments.map(ReelComment.fromWire).toList(growable: false),
+      comments: comments,
       commentsTruncated: truncated,
       nextCommentCursor: cursor as String?,
+      commentLikes: withLikes
+          ? parseCommentLikes(
+              map['commentLikes'],
+              comments.map((comment) => comment.id),
+            )
+          : null,
     );
   }
 }

@@ -76,7 +76,11 @@ void main() {
       for (final type in ServerType.values) tester.getRect(_card(type)).left,
     ];
     final sorted = [...lefts]..sort();
-    expect(lefts, sorted, reason: 'friends → community → podcast → family → company');
+    expect(
+      lefts,
+      sorted,
+      reason: 'friends → community → podcast → family → company',
+    );
   });
 
   testWidgets('each acceptance width lands on its approved arrangement', (

@@ -50,10 +50,7 @@ void main() {
     firestore = FakeFirebaseFirestore();
     service = ServerService(
       firestore: firestore,
-      auth: MockFirebaseAuth(
-        signedIn: true,
-        mockUser: MockUser(uid: 'host'),
-      ),
+      auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'host')),
     );
     values = <bool>[];
   });
@@ -107,7 +104,9 @@ void main() {
     );
     await pumpEventQueue();
     expect(values.last, isFalse);
-    await questions().doc('q4').set(_question('q4', minute: 12, author: 'host'));
+    await questions()
+        .doc('q4')
+        .set(_question('q4', minute: 12, author: 'host'));
     await pumpEventQueue();
     expect(values.last, isFalse);
   });
@@ -200,22 +199,21 @@ void main() {
       newest = [];
       cursors = [];
       dot = [];
-      subscription =
-          serverLatestQuestionUnseen(
-            newest: () {
-              final controller = StreamController<ServerNewestQuestion>();
-              newest.add(controller);
-              return controller.stream;
-            },
-            cursor: () {
-              final controller = StreamController<DateTime?>();
-              cursors.add(controller);
-              return controller.stream;
-            },
-            viewerId: 'host',
-            retryDelay: const Duration(milliseconds: 10),
-            maxRetryDelay: const Duration(milliseconds: 40),
-          ).listen(dot.add);
+      subscription = serverLatestQuestionUnseen(
+        newest: () {
+          final controller = StreamController<ServerNewestQuestion>();
+          newest.add(controller);
+          return controller.stream;
+        },
+        cursor: () {
+          final controller = StreamController<DateTime?>();
+          cursors.add(controller);
+          return controller.stream;
+        },
+        viewerId: 'host',
+        retryDelay: const Duration(milliseconds: 10),
+        maxRetryDelay: const Duration(milliseconds: 40),
+      ).listen(dot.add);
     });
 
     tearDown(() => subscription.cancel());

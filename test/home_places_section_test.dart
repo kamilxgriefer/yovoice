@@ -225,10 +225,7 @@ void main() {
             ],
             rosters: _SeededRosters({
               'club_lounge_c1': HomeRosterEntry(
-                participants: [
-                  person('mama', 'Mama'),
-                  person('tata', 'Tata'),
-                ],
+                participants: [person('mama', 'Mama'), person('tata', 'Tata')],
               ),
             }),
             onSeeAll: () {},
@@ -366,11 +363,7 @@ void main() {
           HomePlacesRail(
             places: [
               HomePlace(
-                club: club(
-                  'c1',
-                  'Podcasty nam bliskie i dalekie',
-                  members: 22,
-                ),
+                club: club('c1', 'Podcasty nam bliskie i dalekie', members: 22),
               ),
             ],
             onOpenPlace: (_) {},
@@ -380,9 +373,7 @@ void main() {
       );
       await tester.pump();
       expect(
-        tester
-            .getSemantics(find.byKey(const ValueKey('home-place-c1')))
-            .label,
+        tester.getSemantics(find.byKey(const ValueKey('home-place-c1'))).label,
         'Podcasty nam bliskie i dalekie, 22 osoby. Otwórz.',
       );
       handle.dispose();
@@ -444,10 +435,7 @@ void main() {
     ) async {
       await tester.pumpWidget(host(const HomePlacesLoading()));
       await tester.pump();
-      expect(
-        find.byKey(const ValueKey('home-places-loading')),
-        findsOneWidget,
-      );
+      expect(find.byKey(const ValueKey('home-places-loading')), findsOneWidget);
       expect(find.byType(Text), findsNothing);
     });
 

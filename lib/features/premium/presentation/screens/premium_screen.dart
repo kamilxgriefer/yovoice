@@ -10,6 +10,7 @@ import 'package:yovoice/features/premium/data/premium_plans.dart';
 import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
 import 'package:yovoice/features/premium/data/services/premium_billing_service.dart';
 import 'package:yovoice/features/premium/presentation/screens/premium_plans_screen.dart';
+import 'package:yovoice/features/premium/presentation/premium_benefit_icons.dart';
 import 'package:yovoice/features/premium/presentation/premium_localized_copy.dart';
 import 'package:yovoice/features/premium/presentation/widgets/premium_badge_pill.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
@@ -122,11 +123,14 @@ class _PremiumPresentationView extends StatelessWidget {
   final Stream<UserProfile> profileStream;
   final VoidCallback onCheckPlans;
 
-  static const _benefitIcons = [
-    (Icons.mic_rounded, Color(0xFFD3A5FF)),
-    (Icons.workspace_premium_rounded, Color(0xFFFFC24D)),
-    (Icons.auto_awesome_rounded, Color(0xFFE879F9)),
-  ];
+  /// The card tint by benefit, keyed on its title like the glyph.
+  static Color _benefitTint(BuildContext context, String title) =>
+      switch (premiumBenefitKind(title)) {
+        PremiumBenefitKind.creator => const Color(0xFFD3A5FF),
+        PremiumBenefitKind.servers => const Color(0xFFFFC24D),
+        PremiumBenefitKind.presence => const Color(0xFFE879F9),
+        PremiumBenefitKind.other => Theme.of(context).colorScheme.primary,
+      };
 
   @override
   Widget build(BuildContext context) {
@@ -177,25 +181,23 @@ class _PremiumPresentationView extends StatelessWidget {
             LayoutBuilder(
               builder: (context, constraints) {
                 final cards = [
-                  for (var i = 0; i < PremiumPlans.benefits.length; i++)
+                  for (final benefit in PremiumPlans.benefits)
                     _BenefitCard(
-                      icon: _benefitIcons[i].$1,
-                      iconColor: _benefitIcons[i].$2,
-                      title: localizedPremiumBenefit(
-                        copy,
-                        PremiumPlans.benefits[i],
-                      ).$1,
-                      subtitle: localizedPremiumBenefit(
-                        copy,
-                        PremiumPlans.benefits[i],
-                      ).$2,
+                      icon: premiumBenefitIcon(benefit.$1),
+                      iconColor: _benefitTint(context, benefit.$1),
+                      title: localizedPremiumBenefit(copy, benefit).$1,
+                      subtitle: localizedPremiumBenefit(copy, benefit).$2,
                     ),
                 ];
                 final stacked =
                     constraints.maxWidth < 420 ||
                     MediaQuery.textScalerOf(context).scale(1) > 1.3;
                 if (stacked) {
+                  // Stretched: each card spans the column, so a short
+                  // benefit ("Up to 30 Servers") lines up with its
+                  // neighbours instead of shrinking to its content.
                   return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       for (var i = 0; i < cards.length; i++) ...[
                         if (i > 0) const SizedBox(height: 10),

@@ -39,10 +39,11 @@ String localizedPremiumPlanLabel(AppLocalizations copy, PremiumPlan plan) =>
       'Free includes 5; joining stays unlimited for everyone',
       'Konto bezpłatne obejmuje 5; każdy dołącza bez limitu',
     ),
-    'Badge, shimmer, privacy controls and a modest Yeels boost' => copy.text(
-      'Badge, shimmer, privacy controls and a modest Yeels boost',
-      'Odznaka, połysk, ustawienia prywatności i umiarkowane wsparcie rekomendacji w Yeels',
-    ),
+    'Badge, shimmer, privacy controls, see who liked and a modest Yeels boost' =>
+      copy.text(
+        'Badge, shimmer, privacy controls, see who liked and a modest Yeels boost',
+        'Odznaka, połysk, ustawienia prywatności, podgląd polubień i umiarkowane wsparcie rekomendacji w Yeels',
+      ),
     _ => copy.text(benefit.$2, 'Więcej możliwości w YO Voice'),
   };
   return (title, subtitle);
@@ -64,6 +65,7 @@ String localizedPremiumChecklistItem(
     'Yeels discovery boost',
     'Wsparcie rekomendacji w Yeels',
   ),
+  'See who liked' => copy.text('See who liked', 'Zobacz, kto polubił'),
   'Exclusive features' => copy.text(
     'Exclusive features',
     'Ekskluzywne funkcje',
@@ -109,6 +111,11 @@ String localizedPremiumIncludedItem(
     'Premium presence in conversations',
     'Obecność Premium w rozmowach',
   ),
+  'See who liked Voice Moments, Yeels, comments and Server messages' =>
+    copy.text(
+      'See who liked Voice Moments, Yeels, comments and Server messages',
+      'Zobacz, kto polubił Momenty głosowe, Yeels, komentarze i wiadomości na serwerach',
+    ),
   'More benefits coming soon' => copy.text(
     'More benefits coming soon',
     'Wkrótce więcej korzyści',

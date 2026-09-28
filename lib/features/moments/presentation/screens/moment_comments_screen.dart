@@ -11,6 +11,12 @@ import 'package:yovoice/core/navigation/app_route_observer.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
+import 'package:yovoice/features/likers/data/models/comment_like.dart';
+import 'package:yovoice/features/likers/data/models/likers_target.dart';
+import 'package:yovoice/features/likers/data/services/likers_access_service.dart';
+import 'package:yovoice/features/likers/presentation/comment_likes_controller.dart';
+import 'package:yovoice/features/likers/presentation/likers_copy.dart';
+import 'package:yovoice/features/likers/presentation/likers_launcher.dart';
 import 'package:yovoice/features/moderation/data/services/content_report_service.dart';
 import 'package:yovoice/features/moderation/presentation/report_content_flow.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
@@ -51,10 +57,15 @@ class MomentCommentsScreen extends StatefulWidget {
     this.mentionFriendsStream,
     this.expiryClock,
     this.expiryTimerFactory,
+    this.likersLauncher = const LikersLauncher(),
     super.key,
   });
 
   final VoiceMoment moment;
+
+  /// Opens "See who liked" from a comment's like count (ADR-230). The const
+  /// default runs the real flow; tests pass seams.
+  final LikersLauncher likersLauncher;
 
   /// Injection seams, matching the pattern on ChatScreen and
   /// MomentsScreen: production passes nothing and gets the live
@@ -106,6 +117,23 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen>
       <_MomentCommentsRefreshTrigger>{};
   int _viewLoadGeneration = 0;
 
+  /// The comment hearts (owner variant B, ADR-230). Hearts appear only once
+  /// a flagged view answered with `commentLikes`.
+  late final CommentLikesController _commentLikes = CommentLikesController(
+    setLike: (commentId, {required bool liked}) {
+      final service = _momentService;
+      if (service == null) {
+        return Future<CommentLikeResult>.error(
+          StateError('Comment likes are unavailable.'),
+        );
+      }
+      return service.setCommentLike(_moment.id, commentId, liked: liked);
+    },
+    watchCanSeeLikers: () =>
+        (widget.likersLauncher.access ?? LikersAccessService())
+            .watchCanSeeLikers(),
+  );
+
   /// Both guarded the way MomentsScreen guards its services: without a
   /// Firebase app these throw, and the screen must still render its
   /// states rather than crash.
@@ -137,7 +165,12 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen>
       friendsStream: widget.mentionFriendsStream,
       friendService: widget.friendService,
     )..addListener(_handleMentionFriends);
+    _commentLikes.addListener(_handleCommentLikes);
     unawaited(_loadComments(trigger: _MomentCommentsRefreshTrigger.initial));
+  }
+
+  void _handleCommentLikes() {
+    if (mounted) setState(() {});
   }
 
   void _handleMentionFriends() {
@@ -200,8 +233,10 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen>
       final view = await service.loadMomentView(
         _moment.id,
         commentCursor: cursor,
+        includeCommentLikes: true,
       );
       if (!mounted || requestGeneration != _viewLoadGeneration) return;
+      _commentLikes.adopt(view.commentLikes, replace: !append);
       final byId = <String, MomentComment>{
         if (append)
           for (final comment in _comments ?? const <MomentComment>[])
@@ -241,6 +276,9 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen>
       ..removeListener(_handleMentionFriends)
       ..dispose();
     _arbiter.dispose();
+    _commentLikes
+      ..removeListener(_handleCommentLikes)
+      ..dispose();
     _controller.dispose();
     _composerFocus.dispose();
     _goneBackFocus.dispose();
@@ -254,6 +292,7 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen>
 
   void _clearCommentsAndShowGone({bool announce = true}) {
     if (!mounted) return;
+    _commentLikes.clear();
     setState(() {
       _unavailable = true;
       _comments = null;
@@ -347,6 +386,31 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen>
       offset: _controller.text.length,
     );
     _composerFocus.requestFocus();
+  }
+
+  Future<void> _toggleCommentLike(MomentComment comment) async {
+    final outcome = await _commentLikes.toggle(comment.id);
+    if (outcome != CommentLikeToggleOutcome.reverted || !mounted) return;
+    ScaffoldMessenger.maybeOf(context)
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(LikersCopy(AppLocalizations.of(context)).likeFailed),
+        ),
+      );
+  }
+
+  void _openCommentLikers(MomentComment comment, FocusNode returnFocus) {
+    final state = _commentLikes.stateOf(comment.id);
+    if (state == null) return;
+    unawaited(
+      widget.likersLauncher.open(
+        context,
+        VoiceMomentCommentLikersTarget(_moment.id, comment.id),
+        totalCount: state.likeCount,
+        returnFocus: returnFocus,
+      ),
+    );
   }
 
   /// Reports one comment.
@@ -501,6 +565,13 @@ class _MomentCommentsScreenState extends State<MomentCommentsScreen>
                                     onReplyTo: _prefillReply,
                                     onReport: (target) =>
                                         unawaited(_reportComment(target)),
+                                    likeState: _commentLikes.stateOf(
+                                      comment.id,
+                                    ),
+                                    onToggleLike: (target) =>
+                                        unawaited(_toggleCommentLike(target)),
+                                    onShowLikers: _openCommentLikers,
+                                    showWhoLiked: _commentLikes.canSeeLikers,
                                   );
                                 },
                               ),

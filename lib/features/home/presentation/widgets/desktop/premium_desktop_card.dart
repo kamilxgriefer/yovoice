@@ -4,6 +4,7 @@ import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/premium/data/premium_plans.dart';
+import 'package:yovoice/features/premium/presentation/premium_benefit_icons.dart';
 import 'package:yovoice/features/premium/presentation/premium_localized_copy.dart';
 
 /// The desktop right column's Premium card: the three benefit tiles from
@@ -18,22 +19,21 @@ class PremiumDesktopCard extends StatelessWidget {
 
   final VoidCallback onCheckPlans;
 
-  static const _icons = [
-    Icons.mic_rounded,
-    Icons.workspace_premium_rounded,
-    Icons.auto_awesome_rounded,
-  ];
+  /// Below this, a tile's longest title word no longer fits its line.
+  static const double _minimumTileWidth = 120;
 
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final colors = Theme.of(context).colorScheme;
     final palette = context.appPalette;
-    final iconColors = <Color>[
-      colors.primary,
-      palette.warningForeground,
-      palette.focus,
-    ];
+    // Glyph and tint are keyed on the benefit's title, never its position.
+    Color tint(String title) => switch (premiumBenefitKind(title)) {
+      PremiumBenefitKind.creator => colors.primary,
+      PremiumBenefitKind.servers => palette.warningForeground,
+      PremiumBenefitKind.presence => palette.focus,
+      PremiumBenefitKind.other => colors.primary,
+    };
     return Container(
       key: const ValueKey('desktop-premium-card'),
       padding: const EdgeInsets.all(16),
@@ -50,34 +50,110 @@ class PremiumDesktopCard extends StatelessWidget {
       ),
       child: Column(
         children: [
-          IntrinsicHeight(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                for (var i = 0; i < PremiumPlans.benefits.length; i++) ...[
-                  if (i > 0) const SizedBox(width: 9),
-                  Expanded(
-                    child: _BenefitTile(
-                      icon: _icons[i],
-                      iconColor: iconColors[i],
-                      title: localizedPremiumBenefit(
-                        copy,
-                        PremiumPlans.benefits[i],
-                      ).$1,
-                      subtitle: localizedPremiumBenefit(
-                        copy,
-                        PremiumPlans.benefits[i],
-                      ).$2,
-                    ),
-                  ),
-                ],
-              ],
-            ),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final tileWidth =
+                  (constraints.maxWidth - 9 * 2) / PremiumPlans.benefits.length;
+              // Three side-by-side tiles only while each is wide enough for
+              // its longest word at the tile's type size; narrower (the
+              // 318 px desktop Home column) they broke "prywatność"
+              // mid-word and grew twelve lines tall, so the card lists the
+              // benefits as rows instead, as the mobile card does.
+              if (tileWidth < _minimumTileWidth) {
+                return Column(
+                  key: const ValueKey('desktop-premium-benefit-list'),
+                  children: [
+                    for (final (i, benefit)
+                        in PremiumPlans.benefits.indexed) ...[
+                      if (i > 0) const SizedBox(height: 10),
+                      _BenefitRow(
+                        icon: premiumBenefitIcon(benefit.$1),
+                        iconColor: tint(benefit.$1),
+                        title: localizedPremiumBenefit(copy, benefit).$1,
+                        subtitle: localizedPremiumBenefit(copy, benefit).$2,
+                      ),
+                    ],
+                  ],
+                );
+              }
+              return IntrinsicHeight(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    for (final (i, benefit)
+                        in PremiumPlans.benefits.indexed) ...[
+                      if (i > 0) const SizedBox(width: 9),
+                      Expanded(
+                        child: _BenefitTile(
+                          icon: premiumBenefitIcon(benefit.$1),
+                          iconColor: tint(benefit.$1),
+                          title: localizedPremiumBenefit(copy, benefit).$1,
+                          subtitle: localizedPremiumBenefit(copy, benefit).$2,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              );
+            },
           ),
           const SizedBox(height: 14),
           _CheckPlansButton(onTap: onCheckPlans),
         ],
       ),
+    );
+  }
+}
+
+class _BenefitRow extends StatelessWidget {
+  const _BenefitRow({
+    required this.icon,
+    required this.iconColor,
+    required this.title,
+    required this.subtitle,
+  });
+
+  final IconData icon;
+  final Color iconColor;
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 1),
+          child: Icon(icon, size: 20, color: iconColor),
+        ),
+        const SizedBox(width: 11),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                title,
+                style: TextStyle(
+                  color: palette.textPrimary,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              Text(
+                subtitle,
+                style: TextStyle(
+                  color: palette.textSecondary,
+                  fontSize: 11.5,
+                  height: 1.3,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }

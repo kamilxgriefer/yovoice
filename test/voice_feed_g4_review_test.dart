@@ -369,7 +369,7 @@ void main() {
 
   group('the row is ONE focusable node, named', () {
     testWidgets('the node keyboard focus lands on is the row button with its '
-        'name, tap and three custom actions; no unnamed focusable node sits '
+        'name, tap and its custom actions; no unnamed focusable node sits '
         'in the row', (tester) async {
       final handle = tester.ensureSemantics();
       await pumpFeed(tester, locale: const Locale('pl'));
@@ -393,7 +393,9 @@ void main() {
       expect(data.label, startsWith('Otwórz Voice Moment'));
       expect(data.label, contains(', nowy'), reason: 'unheard is spoken');
       expect(data.hasAction(SemanticsAction.tap), isTrue);
-      expect(data.customSemanticsActionIds, hasLength(3));
+      // Like, Reply, More options, and — since ADR-230, because m1 has likes —
+      // "See who liked" (the meta line's count stays inert).
+      expect(data.customSemanticsActionIds, hasLength(4));
 
       // Every focusable node inside the row carries a name of its own.
       final unnamed = <SemanticsNode>[];

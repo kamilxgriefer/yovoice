@@ -5,6 +5,10 @@ class PremiumPlans {
 
   /// The three benefit cards on the Premium presentation screen — one
   /// place, so copy can't drift between the app and the marketing site.
+  ///
+  /// Surfaces pick each card's icon by its TITLE
+  /// (`premiumBenefitIcon`), never by position, so adding or reordering a
+  /// card cannot throw a RangeError on a parallel icon list.
   static const List<(String, String)> benefits = [
     (
       'Creator account & studio',
@@ -16,7 +20,7 @@ class PremiumPlans {
     ),
     (
       'Premium presence & privacy',
-      'Badge, shimmer, privacy controls and a modest Yeels boost',
+      'Badge, shimmer, privacy controls, see who liked and a modest Yeels boost',
     ),
   ];
 
@@ -29,6 +33,7 @@ class PremiumPlans {
     'Up to 30 Servers',
     'Privacy controls',
     'Yeels discovery boost',
+    'See who liked',
     'Exclusive features',
   ];
 
@@ -39,6 +44,7 @@ class PremiumPlans {
     'In private chats, Incognito hides read receipts; typing visibility is separate',
     'Premium badge and shimmering profile ring',
     'Modest Yeels recommendation boost; reach is never guaranteed',
+    'See who liked Voice Moments, Yeels, comments and Server messages',
     'More benefits coming soon',
   ];
 }

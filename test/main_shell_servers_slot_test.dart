@@ -91,63 +91,52 @@ void main() {
       expect(MainShell.desktopSlots[12], MoreDestination.findCreators);
     });
 
-    test(
-      'mobile retains 13 (and still 3) and orders the dock '
-      'Start · Serwery · Czaty · Momenty',
-      () {
-        expect(MainShell.mobileIndexFor(13), 13);
+    test('mobile retains 13 (and still 3) and orders the dock '
+        'Start · Serwery · Czaty · Momenty', () {
+      expect(MainShell.mobileIndexFor(13), 13);
+      expect(
+        MainShell.mobileIndexFor(3),
+        3,
+        reason: 'Discover stays a retained root reached from More',
+      );
+      expect(MainShell.mobileIndexFor(2), 2);
+      expect([0, 13, 1, 5].map(MainShell.mobileNavigationOrder), [0, 1, 2, 3]);
+      expect(
+        MainShell.mobileNavigationOrder(3),
+        4,
+        reason: 'no dock cell: Discover sorts with More',
+      );
+      expect(MainShell.mobileNavigationOrder(2), 4);
+      for (final desktopOnly in [4, 6, 7, 8, 9, 10, 11, 12]) {
         expect(
-          MainShell.mobileIndexFor(3),
-          3,
-          reason: 'Discover stays a retained root reached from More',
-        );
-        expect(MainShell.mobileIndexFor(2), 2);
-        expect([0, 13, 1, 5].map(MainShell.mobileNavigationOrder), [
+          MainShell.mobileIndexFor(desktopOnly),
           0,
-          1,
-          2,
-          3,
-        ]);
-        expect(
-          MainShell.mobileNavigationOrder(3),
-          4,
-          reason: 'no dock cell: Discover sorts with More',
+          reason: 'slot $desktopOnly is desktop-only',
         );
-        expect(MainShell.mobileNavigationOrder(2), 4);
-        for (final desktopOnly in [4, 6, 7, 8, 9, 10, 11, 12]) {
-          expect(
-            MainShell.mobileIndexFor(desktopOnly),
-            0,
-            reason: 'slot $desktopOnly is desktop-only',
-          );
-        }
-      },
-    );
+      }
+    });
 
-    test(
-      'mobile history records Servers as a Back entry, keeps Discover, and '
-      'survives the desktop↔mobile reset',
-      () {
-        final history = MobileDestinationHistory();
-        history.select(13);
-        expect(history.current, 13);
-        expect(history.canGoBack, isTrue);
-        // Odkrywaj opened from Więcej is still a Back entry, as today.
-        history.select(3);
-        expect(history.current, 3);
-        expect(history.back(), 13);
-        expect(history.back(), 0);
-        expect(history.canGoBack, isFalse);
-        // A desktop-only slot is never recorded.
-        history.select(12);
-        expect(history.current, 0);
-        // The shell resets through `mobileIndexFor` when the layout flips;
-        // a Serwery selection comes back as Serwery, not Home.
-        history.resetTo(MainShell.mobileIndexFor(13));
-        expect(history.current, 13);
-        expect(history.canGoBack, isTrue);
-      },
-    );
+    test('mobile history records Servers as a Back entry, keeps Discover, and '
+        'survives the desktop↔mobile reset', () {
+      final history = MobileDestinationHistory();
+      history.select(13);
+      expect(history.current, 13);
+      expect(history.canGoBack, isTrue);
+      // Odkrywaj opened from Więcej is still a Back entry, as today.
+      history.select(3);
+      expect(history.current, 3);
+      expect(history.back(), 13);
+      expect(history.back(), 0);
+      expect(history.canGoBack, isFalse);
+      // A desktop-only slot is never recorded.
+      history.select(12);
+      expect(history.current, 0);
+      // The shell resets through `mobileIndexFor` when the layout flips;
+      // a Serwery selection comes back as Serwery, not Home.
+      history.resetTo(MainShell.mobileIndexFor(13));
+      expect(history.current, 13);
+      expect(history.canGoBack, isTrue);
+    });
 
     // The shell keeps its built slots alive in an `IndexedStack`, so slot 13
     // stays mounted — with its Firestore listeners and, once someone has
@@ -170,13 +159,15 @@ void main() {
       expect(
         slot,
         isA<ServersScreen>(),
-        reason: 'Servers carries no premium gate, so the screen is handed '
+        reason:
+            'Servers carries no premium gate, so the screen is handed '
             'over directly',
       );
       expect(
         (slot as ServersScreen).isVisible,
         same(visible),
-        reason: 'without this a hidden slot keeps the microphone open behind '
+        reason:
+            'without this a hidden slot keeps the microphone open behind '
             'a dock nobody can see',
       );
       expect(slot.isRootTab, isTrue);
@@ -190,27 +181,21 @@ void main() {
       );
     });
 
-    test(
-      'the rail lights Servers for slot 13 and More for Friends, Discover '
-      'and Find creators',
-      () {
-        expect(MainShell.desktopNavItemForSlot(13), DesktopNavItem.servers);
-        expect(MainShell.desktopNavItemForSlot(0), DesktopNavItem.home);
-        expect(MainShell.desktopNavItemForSlot(1), DesktopNavItem.chats);
-        expect(MainShell.desktopNavItemForSlot(5), DesktopNavItem.moments);
+    test('the rail lights Servers for slot 13 and More for Friends, Discover '
+        'and Find creators', () {
+      expect(MainShell.desktopNavItemForSlot(13), DesktopNavItem.servers);
+      expect(MainShell.desktopNavItemForSlot(0), DesktopNavItem.home);
+      expect(MainShell.desktopNavItemForSlot(1), DesktopNavItem.chats);
+      expect(MainShell.desktopNavItemForSlot(5), DesktopNavItem.moments);
+      expect(MainShell.desktopNavItemForSlot(4), DesktopNavItem.notifications);
+      for (final slot in [2, 3, 12, 6, 7, 8, 9, 10, 11]) {
         expect(
-          MainShell.desktopNavItemForSlot(4),
-          DesktopNavItem.notifications,
+          MainShell.desktopNavItemForSlot(slot),
+          DesktopNavItem.more,
+          reason: 'slot $slot has no rail row: More stays lit',
         );
-        for (final slot in [2, 3, 12, 6, 7, 8, 9, 10, 11]) {
-          expect(
-            MainShell.desktopNavItemForSlot(slot),
-            DesktopNavItem.more,
-            reason: 'slot $slot has no rail row: More stays lit',
-          );
-        }
-      },
-    );
+      }
+    });
   });
 
   group('dock cell 1 = Servers', () {

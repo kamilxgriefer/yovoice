@@ -136,11 +136,10 @@ void main() {
       );
       await tester.tap(find.byKey(const ValueKey('server-dock-microphone')));
       await tester.pumpAndSettle();
-      expect(
-        link.microphoneCalls,
-        [true, false],
-        reason: 'the control was mounted, enabled and inert',
-      );
+      expect(link.microphoneCalls, [
+        true,
+        false,
+      ], reason: 'the control was mounted, enabled and inert');
       await tester.tap(find.byKey(const ValueKey('server-dock-headphones')));
       await tester.pumpAndSettle();
       expect(link.deafenCalls, [true]);
@@ -189,7 +188,8 @@ void main() {
       expect(
         device.speakerRequests,
         1,
-        reason: 'a social conversation left on whatever route the last call '
+        reason:
+            'a social conversation left on whatever route the last call '
             'happened to leave behind',
       );
       expect(device.keepAliveStarts, 1);
@@ -231,60 +231,64 @@ void main() {
       return ServerService(firestore: firestore, auth: auth);
     }
 
-    test('a server on an unknown schema version drops out of the directory',
-        () async {
-      final firestore = FakeFirebaseFirestore();
-      for (final (id, version) in const [('good', 1), ('future', 2)]) {
-        await firestore.doc('clubs/$id').set({
-          'serverSchemaVersion': version,
-          'serverType': 'friends',
-          'name': id,
-          'ownerId': 'u',
-          'privacy': 'private',
-        });
-        await firestore.doc('users/u/clubs/$id').set({
-          'clubId': id,
-          'joinedAt': Timestamp.now(),
-        });
-      }
-      final service = await seeded(firestore);
-      final servers = await service.watchMyServers().first;
-      expect(
-        servers.map((s) => s.id),
-        ['good'],
-        reason: 'one future document took the whole directory down',
-      );
-    });
+    test(
+      'a server on an unknown schema version drops out of the directory',
+      () async {
+        final firestore = FakeFirebaseFirestore();
+        for (final (id, version) in const [('good', 1), ('future', 2)]) {
+          await firestore.doc('clubs/$id').set({
+            'serverSchemaVersion': version,
+            'serverType': 'friends',
+            'name': id,
+            'ownerId': 'u',
+            'privacy': 'private',
+          });
+          await firestore.doc('users/u/clubs/$id').set({
+            'clubId': id,
+            'joinedAt': Timestamp.now(),
+          });
+        }
+        final service = await seeded(firestore);
+        final servers = await service.watchMyServers().first;
+        expect(
+          servers.map((s) => s.id),
+          ['good'],
+          reason: 'one future document took the whole directory down',
+        );
+      },
+    );
 
-    test('a channel of an unknown kind drops out of the channel list',
-        () async {
-      final firestore = FakeFirebaseFirestore();
-      await firestore.doc('clubs/s').set({
-        'serverSchemaVersion': 1,
-        'serverType': 'community',
-        'name': 'Klub',
-        'ownerId': 'u',
-        'privacy': 'public',
-      });
-      Map<String, Object> channel(String kind) => {
-        'serverSchemaVersion': 1,
-        'serverId': 's',
-        'name': kind,
-        'kind': kind,
-        'accessMode': 'members',
-        'isPrivate': false,
-        'status': 'active',
-        'position': 0,
-      };
-      await firestore.doc('clubs/s/channels/general').set(channel('text'));
-      await firestore.doc('clubs/s/channels/spatial').set(channel('spatial'));
-      final service = await seeded(firestore);
-      expect(
-        (await service.watchChannels('s').first).map((c) => c.id),
-        ['general'],
-        reason: 'one future channel kind took the whole list down',
-      );
-    });
+    test(
+      'a channel of an unknown kind drops out of the channel list',
+      () async {
+        final firestore = FakeFirebaseFirestore();
+        await firestore.doc('clubs/s').set({
+          'serverSchemaVersion': 1,
+          'serverType': 'community',
+          'name': 'Klub',
+          'ownerId': 'u',
+          'privacy': 'public',
+        });
+        Map<String, Object> channel(String kind) => {
+          'serverSchemaVersion': 1,
+          'serverId': 's',
+          'name': kind,
+          'kind': kind,
+          'accessMode': 'members',
+          'isPrivate': false,
+          'status': 'active',
+          'position': 0,
+        };
+        await firestore.doc('clubs/s/channels/general').set(channel('text'));
+        await firestore.doc('clubs/s/channels/spatial').set(channel('spatial'));
+        final service = await seeded(firestore);
+        expect(
+          (await service.watchChannels('s').first).map((c) => c.id),
+          ['general'],
+          reason: 'one future channel kind took the whole list down',
+        );
+      },
+    );
   });
 
   group('the configuration screen follows the app it is running in', () {

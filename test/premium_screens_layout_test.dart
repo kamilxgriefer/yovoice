@@ -318,7 +318,9 @@ void main() {
         // YoButton paints its focus ring as the foreground (refine-look
         // batch 3), so focusing never moves the label.
         final focusedDecoration =
-            tester.widget<AnimatedContainer>(paintedButton).foregroundDecoration!
+            tester
+                    .widget<AnimatedContainer>(paintedButton)
+                    .foregroundDecoration!
                 as BoxDecoration;
         final candidate = focusedDecoration.border;
         if (candidate is Border &&

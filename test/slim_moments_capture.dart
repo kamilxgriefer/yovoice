@@ -557,6 +557,7 @@ class _CaptureMoments extends MomentService {
     String? commentCursor,
     int commentLimit = 7,
     int reactionLimit = 3,
+    bool includeCommentLikes = false,
   }) async {
     final opened = subject;
     final moment = opened != null && opened.id == momentId

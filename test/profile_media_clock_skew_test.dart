@@ -34,7 +34,8 @@ void main() {
         .toUtc()
         .add(const Duration(milliseconds: 90000))
         .millisecondsSinceEpoch,
-    'url': 'https://storage.googleapis.com/yovoice-ec54a.firebasestorage.app/'
+    'url':
+        'https://storage.googleapis.com/yovoice-ec54a.firebasestorage.app/'
         'users/u/profile/avatar_1786219699632.jpg?X-Goog-Signature=abc',
     'generation': '1786219700698109',
     'contentType': 'image/jpeg',
@@ -66,9 +67,12 @@ void main() {
   Future<Uri?> resolveWithSkew(Duration deviceBehindServer) =>
       accessWithSkew(deviceBehindServer).then((access) => access.uri);
 
-  test('accepts a 90 s grant when the device clock matches the server', () async {
-    expect(await resolveWithSkew(Duration.zero), isNotNull);
-  });
+  test(
+    'accepts a 90 s grant when the device clock matches the server',
+    () async {
+      expect(await resolveWithSkew(Duration.zero), isNotNull);
+    },
+  );
 
   test(
     'accepts a 90 s grant when the device clock trails the server by 2 s',
@@ -103,7 +107,8 @@ void main() {
       expect(
         access.expiresAt.isAfter(serverNow.add(const Duration(minutes: 2))),
         isTrue,
-        reason: 'a fast clock must not cache an already-expired grant, which '
+        reason:
+            'a fast clock must not cache an already-expired grant, which '
             'would evict and re-request itself in a loop',
       );
     },
@@ -113,11 +118,10 @@ void main() {
     final deviceNow = serverNow.subtract(const Duration(seconds: 10));
     final access = await accessWithSkew(const Duration(seconds: 10));
     expect(
-      access.expiresAt.isAfter(
-        deviceNow.add(ProfileMediaService.grantTtl),
-      ),
+      access.expiresAt.isAfter(deviceNow.add(ProfileMediaService.grantTtl)),
       isFalse,
-      reason: 'the cached lifetime is clamped to the server TTL on the device '
+      reason:
+          'the cached lifetime is clamped to the server TTL on the device '
           'clock, so skew can never extend a grant',
     );
   });

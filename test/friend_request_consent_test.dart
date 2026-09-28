@@ -892,18 +892,14 @@ void main() {
       await tester.pump();
 
       final accept = tester.getSemantics(
-        find.bySemanticsLabel(
-          'Accept friend request from Ola Nowak',
-        ),
+        find.bySemanticsLabel('Accept friend request from Ola Nowak'),
       );
       expect(
         accept.getSemanticsData().hasAction(ui.SemanticsAction.tap),
         isTrue,
       );
       expect(
-        find.bySemanticsLabel(
-          'Decline friend request from Ola Nowak',
-        ),
+        find.bySemanticsLabel('Decline friend request from Ola Nowak'),
         findsOneWidget,
       );
       accept.owner!.performAction(accept.id, ui.SemanticsAction.tap);
@@ -944,10 +940,13 @@ void main() {
           .evaluate()
           .map((node) => node.label)
           .toList();
-      expect(tappable, unorderedEquals(<String>[
-        'Accept friend request',
-        'Decline friend request',
-      ]));
+      expect(
+        tappable,
+        unorderedEquals(<String>[
+          'Accept friend request',
+          'Decline friend request',
+        ]),
+      );
       final node = tester.getSemantics(
         find.bySemanticsLabel('Accept friend request'),
       );

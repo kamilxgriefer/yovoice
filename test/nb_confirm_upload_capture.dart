@@ -450,7 +450,11 @@ void main() {
         await _settle(tester);
         await tester.tap(find.text('Dodaj plik').first);
         await _settle(tester);
-        await _capturePng(tester, 'company_pdf_$suffix', pixelRatio: pixelRatio);
+        await _capturePng(
+          tester,
+          'company_pdf_$suffix',
+          pixelRatio: pixelRatio,
+        );
         expect(tester.takeException(), isNull);
       });
     }

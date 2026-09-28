@@ -92,13 +92,17 @@ void main() {
     gate.complete();
     await settleOverview(tester);
     expect(loading, findsNothing);
-    expect(find.byKey(const ValueKey('moments-author-circles')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('moments-author-circles')),
+      findsOneWidget,
+    );
     expect(find.byKey(const ValueKey('moments-follow-panel')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('Discover empty: honest copy, the recorder offered, no circles',
-      (tester) async {
+  testWidgets('Discover empty: honest copy, the recorder offered, no circles', (
+    tester,
+  ) async {
     var records = 0;
     await pumpFeed(
       tester,
@@ -106,7 +110,10 @@ void main() {
       discovery: StaticDiscovery(const <VoiceMoment>[]),
       onRecord: () => records += 1,
     );
-    expect(find.byKey(const ValueKey('moments-discovery-empty')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('moments-discovery-empty')),
+      findsOneWidget,
+    );
     expect(find.text('No Voice Moments yet'), findsOneWidget);
     expect(find.byKey(const ValueKey('moments-author-circles')), findsNothing);
     await tester.tap(find.text('Record a Moment'));
@@ -124,9 +131,14 @@ void main() {
       initialFilter: MomentsFilter.following,
       onOpenFindCreators: () => finds += 1,
     );
-    expect(find.byKey(const ValueKey('moments-following-empty')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('moments-following-empty')),
+      findsOneWidget,
+    );
     expect(find.text('Nothing here yet'), findsOneWidget);
-    final findPeople = find.byKey(const ValueKey('moments-following-find-people'));
+    final findPeople = find.byKey(
+      const ValueKey('moments-following-find-people'),
+    );
     expect(findPeople, findsOneWidget);
     expect(find.text('Find people'), findsOneWidget);
     await tester.tap(findPeople);
@@ -139,8 +151,11 @@ void main() {
       discovery: StaticDiscovery(populatedPool()),
       initialFilter: MomentsFilter.following,
     );
-    expect(find.byKey(const ValueKey('moments-following-find-people')), findsNothing,
-        reason: 'no dead button when nothing can open Find creators');
+    expect(
+      find.byKey(const ValueKey('moments-following-find-people')),
+      findsNothing,
+      reason: 'no dead button when nothing can open Find creators',
+    );
   });
 
   testWidgets('a failed first load is an inline card with one retry that '
@@ -205,12 +220,18 @@ void main() {
       AppPalette.dark.surfaceRaised,
       AppPalette.dark.background,
     ]) {
-      expect(fills.expand((gradient) => gradient.colors), isNot(contains(dark)));
+      expect(
+        fills.expand((gradient) => gradient.colors),
+        isNot(contains(dark)),
+      );
     }
     final panel = tester.widget<Container>(
       find.byKey(const ValueKey<String>('yo-moments-local-panel')),
     );
-    expect((panel.decoration as BoxDecoration).color, AppPalette.light.surfaceMuted);
+    expect(
+      (panel.decoration as BoxDecoration).color,
+      AppPalette.light.surfaceMuted,
+    );
     expect(
       find.descendant(
         of: card,

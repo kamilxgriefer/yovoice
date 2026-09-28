@@ -103,22 +103,26 @@ void main() {
     },
   );
 
-  Widget host(Widget child, {Locale locale = const Locale('pl')}) => MaterialApp(
-    locale: locale,
-    supportedLocales: AppLocalizations.supportedLocales,
-    localizationsDelegates: const [
-      AppLocalizationsDelegate(),
-      GlobalMaterialLocalizations.delegate,
-      GlobalWidgetsLocalizations.delegate,
-      GlobalCupertinoLocalizations.delegate,
-    ],
-    theme: AppTheme.darkTheme,
-    home: Scaffold(body: Center(child: child)),
-  );
+  Widget host(Widget child, {Locale locale = const Locale('pl')}) =>
+      MaterialApp(
+        locale: locale,
+        supportedLocales: AppLocalizations.supportedLocales,
+        localizationsDelegates: const [
+          AppLocalizationsDelegate(),
+          GlobalMaterialLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+        ],
+        theme: AppTheme.darkTheme,
+        home: Scaffold(body: Center(child: child)),
+      );
 
   ProfileMediaService serviceWith(ProfileMediaCallableInvoker invoker) =>
       ProfileMediaService(
-        auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'viewer')),
+        auth: MockFirebaseAuth(
+          signedIn: true,
+          mockUser: MockUser(uid: 'viewer'),
+        ),
         invoker: invoker,
       );
 
@@ -170,22 +174,26 @@ void main() {
     await tester.pump();
   }
 
-  testWidgets('an account with no photo gets a named empty state, not a letter', (
-    tester,
-  ) async {
-    await openViewer(tester, service: serviceWith((_, _) async => absentGrant()));
-    await tester.pumpAndSettle();
+  testWidgets(
+    'an account with no photo gets a named empty state, not a letter',
+    (tester) async {
+      await openViewer(
+        tester,
+        service: serviceWith((_, _) async => absentGrant()),
+      );
+      await tester.pumpAndSettle();
 
-    expect(
-      find.byKey(const ValueKey('profile-photo-viewer-empty')),
-      findsOneWidget,
-    );
-    expect(find.text('Brak zdjęcia profilowego'), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('profile-photo-viewer-image')),
-      findsNothing,
-    );
-  });
+      expect(
+        find.byKey(const ValueKey('profile-photo-viewer-empty')),
+        findsOneWidget,
+      );
+      expect(find.text('Brak zdjęcia profilowego'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('profile-photo-viewer-image')),
+        findsNothing,
+      );
+    },
+  );
 
   testWidgets('the empty state is localized in English too', (tester) async {
     await openViewer(

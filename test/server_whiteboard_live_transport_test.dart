@@ -68,52 +68,53 @@ ServerMediaDataPacket _clearPacket({
 );
 
 void main() {
-  test('media metadata preserves opaque Firebase UIDs but fences resource IDs', () {
-    const uid = 'Alicja Żółć 42';
-    String metadata({
-      String author = uid,
-      String serverId = 'company',
-    }) => jsonEncode({
-      'uid': author,
-      'role': 'guest',
-      'serverId': serverId,
-      'channelId': 'meeting',
-      'roomId': 'room',
-      'sessionId': 'session',
-    });
+  test(
+    'media metadata preserves opaque Firebase UIDs but fences resource IDs',
+    () {
+      const uid = 'Alicja Żółć 42';
+      String metadata({String author = uid, String serverId = 'company'}) =>
+          jsonEncode({
+            'uid': author,
+            'role': 'guest',
+            'serverId': serverId,
+            'channelId': 'meeting',
+            'roomId': 'room',
+            'sessionId': 'session',
+          });
 
-    final binding = decodeServerMediaSessionBinding(
-      rawMetadata: metadata(),
-      participantIdentity: uid,
-    );
-    expect(binding?.participantIdentity, uid);
-    expect(binding?.serverId, 'company');
-    expect(
-      decodeServerMediaSessionBinding(
+      final binding = decodeServerMediaSessionBinding(
         rawMetadata: metadata(),
-        participantIdentity: 'Alicja Zołc 42',
-      ),
-      isNull,
-      reason: 'opaque identities are compared exactly, without normalization',
-    );
-    expect(
-      decodeServerMediaSessionBinding(
-        rawMetadata: metadata(serverId: 'company space'),
         participantIdentity: uid,
-      ),
-      isNull,
-    );
-    for (final invalidUid in ['', 'path/uid', 'control\nuid']) {
-      expect(isValidOpaqueServerParticipantIdentity(invalidUid), isFalse);
+      );
+      expect(binding?.participantIdentity, uid);
+      expect(binding?.serverId, 'company');
       expect(
         decodeServerMediaSessionBinding(
-          rawMetadata: metadata(author: invalidUid),
-          participantIdentity: invalidUid,
+          rawMetadata: metadata(),
+          participantIdentity: 'Alicja Zołc 42',
+        ),
+        isNull,
+        reason: 'opaque identities are compared exactly, without normalization',
+      );
+      expect(
+        decodeServerMediaSessionBinding(
+          rawMetadata: metadata(serverId: 'company space'),
+          participantIdentity: uid,
         ),
         isNull,
       );
-    }
-  });
+      for (final invalidUid in ['', 'path/uid', 'control\nuid']) {
+        expect(isValidOpaqueServerParticipantIdentity(invalidUid), isFalse);
+        expect(
+          decodeServerMediaSessionBinding(
+            rawMetadata: metadata(author: invalidUid),
+            participantIdentity: invalidUid,
+          ),
+          isNull,
+        );
+      }
+    },
+  );
 
   test('whiteboard codec accepts the exact opaque provider identity', () {
     const uid = 'Zażółć gęślą';
@@ -404,8 +405,7 @@ void main() {
 
     for (
       var index = 0;
-      index <=
-          ServerWhiteboardLiveDataPlane.maximumRetiredConnectionsPerAuthor;
+      index <= ServerWhiteboardLiveDataPlane.maximumRetiredConnectionsPerAuthor;
       index++
     ) {
       link.emit(
@@ -438,48 +438,54 @@ void main() {
     expect(latest.single.draftId, 'draft_4');
   });
 
-  test('inactive author state is reclaimed instead of locking out the room', () {
-    var now = DateTime.utc(2026, 9, 14, 12);
-    final link = _FakeDataLink(_binding());
-    final plane = ServerWhiteboardLiveDataPlane(
-      link: link,
-      expectedMediaBinding: _binding(),
-      clock: () => now,
-    );
-    addTearDown(plane.dispose);
-    var latest = const <ServerWhiteboardLiveDraft>[];
-    final subscription = plane.drafts.listen((value) => latest = value);
-    addTearDown(subscription.cancel);
+  test(
+    'inactive author state is reclaimed instead of locking out the room',
+    () {
+      var now = DateTime.utc(2026, 9, 14, 12);
+      final link = _FakeDataLink(_binding());
+      final plane = ServerWhiteboardLiveDataPlane(
+        link: link,
+        expectedMediaBinding: _binding(),
+        clock: () => now,
+      );
+      addTearDown(plane.dispose);
+      var latest = const <ServerWhiteboardLiveDraft>[];
+      final subscription = plane.drafts.listen((value) => latest = value);
+      addTearDown(subscription.cancel);
 
-    for (
-      var index = 0;
-      index < ServerWhiteboardLiveDataPlane.maximumRemoteAuthors;
-      index++
-    ) {
+      for (
+        var index = 0;
+        index < ServerWhiteboardLiveDataPlane.maximumRemoteAuthors;
+        index++
+      ) {
+        link.emit(
+          _updatePacket(
+            sender: _binding(author: 'user_$index'),
+            connectionId: 'PA_$index',
+            draftId: 'draft_$index',
+          ),
+        );
+      }
+      expect(
+        latest,
+        hasLength(ServerWhiteboardLiveDataPlane.maximumRemoteAuthors),
+      );
+
+      now = now.add(
+        ServerWhiteboardLiveDataPlane.inactiveAuthorStateLifetime +
+            const Duration(milliseconds: 1),
+      );
       link.emit(
         _updatePacket(
-          sender: _binding(author: 'user_$index'),
-          connectionId: 'PA_$index',
-          draftId: 'draft_$index',
+          sender: _binding(author: 'newcomer'),
+          connectionId: 'PA_newcomer',
+          draftId: 'newcomer_draft',
         ),
       );
-    }
-    expect(latest, hasLength(ServerWhiteboardLiveDataPlane.maximumRemoteAuthors));
-
-    now = now.add(
-      ServerWhiteboardLiveDataPlane.inactiveAuthorStateLifetime +
-          const Duration(milliseconds: 1),
-    );
-    link.emit(
-      _updatePacket(
-        sender: _binding(author: 'newcomer'),
-        connectionId: 'PA_newcomer',
-        draftId: 'newcomer_draft',
-      ),
-    );
-    expect(latest, hasLength(1));
-    expect(latest.single.authorId, 'newcomer');
-  });
+      expect(latest, hasLength(1));
+      expect(latest.single.authorId, 'newcomer');
+    },
+  );
 
   test(
     'reliable clear does not block the next draft on the same link',

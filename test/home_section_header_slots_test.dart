@@ -22,33 +22,30 @@ void main() {
   // Wrapping is home_rhythm_test's subject; the slots are this file's.
   const title = 'Live rooms';
 
-  Widget app(
-    Widget child, {
-    double width = 600,
-    double textScale = 1.0,
-  }) => MaterialApp(
-    theme: AppTheme.darkTheme,
-    locale: const Locale('en'),
-    supportedLocales: AppLocalizations.supportedLocales,
-    localizationsDelegates: const [
-      AppLocalizationsDelegate(),
-      GlobalMaterialLocalizations.delegate,
-      GlobalWidgetsLocalizations.delegate,
-      GlobalCupertinoLocalizations.delegate,
-    ],
-    home: MediaQuery(
-      data: MediaQueryData(
-        size: Size(width, 900),
-        textScaler: TextScaler.linear(textScale),
-      ),
-      child: Scaffold(
-        body: Align(
-          alignment: Alignment.topLeft,
-          child: SizedBox(width: width, child: child),
+  Widget app(Widget child, {double width = 600, double textScale = 1.0}) =>
+      MaterialApp(
+        theme: AppTheme.darkTheme,
+        locale: const Locale('en'),
+        supportedLocales: AppLocalizations.supportedLocales,
+        localizationsDelegates: const [
+          AppLocalizationsDelegate(),
+          GlobalMaterialLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+        ],
+        home: MediaQuery(
+          data: MediaQueryData(
+            size: Size(width, 900),
+            textScaler: TextScaler.linear(textScale),
+          ),
+          child: Scaffold(
+            body: Align(
+              alignment: Alignment.topLeft,
+              child: SizedBox(width: width, child: child),
+            ),
+          ),
         ),
-      ),
-    ),
-  );
+      );
 
   Rect headerBox(WidgetTester tester) =>
       tester.getRect(find.byType(HomeSectionHeader));
@@ -182,28 +179,23 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets(
-    'a trailer and a View all cannot share the slot',
-    (tester) async {
-      expect(
-        () => HomeSectionHeader(
-          title: title,
-          onSeeAll: () {},
-          trailing: const SizedBox.shrink(),
-        ),
-        throwsAssertionError,
-      );
-    },
-  );
+  testWidgets('a trailer and a View all cannot share the slot', (tester) async {
+    expect(
+      () => HomeSectionHeader(
+        title: title,
+        onSeeAll: () {},
+        trailing: const SizedBox.shrink(),
+      ),
+      throwsAssertionError,
+    );
+  });
 
   testWidgets('seeAllVocabulary decides the arrangement, not the rendered '
       'label', (tester) async {
     const label = 'See all rooms';
     const width = 768.0;
 
-    Future<(Rect title, Rect button)> pump(
-      Iterable<String>? vocabulary,
-    ) async {
+    Future<(Rect title, Rect button)> pump(Iterable<String>? vocabulary) async {
       await tester.pumpWidget(
         app(
           HomeSectionHeader(

@@ -4,6 +4,7 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 
+import 'package:yovoice/features/likers/data/models/comment_like.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 
 typedef VoiceMomentFeedInvoker =
@@ -77,11 +78,19 @@ class VoiceMomentReadService {
     return VoiceMomentFeedPageV2.parse(response);
   }
 
+  /// Loads one Moment with a page of its thread.
+  ///
+  /// [includeCommentLikes] sends the opt-in `includeCommentLikes: true`
+  /// request flag (spec §3.6); the response must then carry exactly one
+  /// more key, `commentLikes`. Without it the request and the parsed shape
+  /// are byte-identical to every earlier build. Probing a deployment that
+  /// predates the flag is [MomentService.loadMomentView]'s job.
   Future<VoiceMomentViewV2> loadView({
     required String momentId,
     int commentLimit = 7,
     int reactionLimit = 3,
     String? commentCursor,
+    bool includeCommentLikes = false,
   }) async {
     final cleanMomentId = _safeId(momentId, 'momentId');
     if (commentLimit < 1 || commentLimit > 7) {
@@ -97,12 +106,16 @@ class VoiceMomentReadService {
       'reactionLimit': reactionLimit,
     };
     if (cleanCursor != null) payload['commentCursor'] = cleanCursor;
+    if (includeCommentLikes) payload['includeCommentLikes'] = true;
     final response = await _withTimeoutReplay(
       () => _viewInvoker != null
           ? _viewInvoker(payload)
           : _call('getVoiceMomentViewV2', payload),
     );
-    return VoiceMomentViewV2.parse(response);
+    return VoiceMomentViewV2.parse(
+      response,
+      expectCommentLikes: includeCommentLikes,
+    );
   }
 
   Future<Map<Object?, Object?>> _call(
@@ -208,6 +221,7 @@ class VoiceMomentViewV2 {
     required this.commentsTruncated,
     required this.nextCommentCursor,
     required this.topReactions,
+    this.commentLikes,
   });
 
   final VoiceMoment moment;
@@ -216,14 +230,33 @@ class VoiceMomentViewV2 {
   final String? nextCommentCursor;
   final List<MomentReactor> topReactions;
 
-  factory VoiceMomentViewV2.parse(Object? value) {
-    final data = _exactMap(value, const <String>{
+  /// Each projected comment's like count and the caller's own like, keyed
+  /// by comment id. Null when the view was read without the
+  /// `includeCommentLikes` flag (every earlier build, and a deployment that
+  /// predates comment likes): the thread then shows no hearts.
+  final Map<String, CommentLikeState>? commentLikes;
+
+  /// Parses the exact v2 detail shape: the six keys every build since 20
+  /// reads. `commentLikes` is accepted only when the request carried the
+  /// `includeCommentLikes` flag ([expectCommentLikes]); it is then parsed
+  /// strictly, its key set equal to the projected comment ids (spec §3.6).
+  /// Unrequested it is refused like any other unknown key. A requested but
+  /// absent map parses as "no comment likes" (no hearts), never as an error,
+  /// because a missing optional projection must not cost the whole thread.
+  factory VoiceMomentViewV2.parse(
+    Object? value, {
+    bool expectCommentLikes = false,
+  }) {
+    final withLikes =
+        expectCommentLikes && value is Map && value.containsKey('commentLikes');
+    final data = _exactMap(value, <String>{
       'schemaVersion',
       'moment',
       'comments',
       'commentsTruncated',
       'nextCommentCursor',
       'topReactions',
+      if (withLikes) 'commentLikes',
     }, 'Voice Moment detail');
     _expect(data['schemaVersion'] == 2, 'Unsupported Voice Moment detail.');
     final rawComments = data['comments'];
@@ -256,6 +289,12 @@ class VoiceMomentViewV2 {
       commentsTruncated: truncated,
       nextCommentCursor: nextCursor,
       topReactions: List<MomentReactor>.unmodifiable(reactions),
+      commentLikes: withLikes
+          ? parseCommentLikes(
+              data['commentLikes'],
+              comments.map((comment) => comment.id),
+            )
+          : null,
     );
   }
 }

@@ -303,10 +303,8 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           theme: AppTheme.darkTheme,
-          builder: (context, child) => YoTopNotificationHost(
-            controller: controller,
-            child: child!,
-          ),
+          builder: (context, child) =>
+              YoTopNotificationHost(controller: controller, child: child!),
           home: const Scaffold(body: SizedBox.expand()),
         ),
       );

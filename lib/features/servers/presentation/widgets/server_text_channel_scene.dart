@@ -8,6 +8,9 @@ import 'package:yovoice/core/preferences/app_preferences.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
+import 'package:yovoice/features/likers/data/models/likers_target.dart';
+import 'package:yovoice/features/likers/presentation/likers_copy.dart';
+import 'package:yovoice/features/likers/presentation/likers_launcher.dart';
 import 'package:yovoice/features/clubs/data/models/club_chat_authority.dart';
 import 'package:yovoice/features/clubs/data/models/club_member.dart';
 import 'package:yovoice/features/clubs/data/models/club_message.dart';
@@ -77,6 +80,7 @@ class ServerTextChannelScene extends StatefulWidget {
     this.videoInspector,
     this.videoPreviewControllerFactory,
     this.mediaImageBuilder,
+    this.likersLauncher = const LikersLauncher(),
     super.key,
   });
 
@@ -113,6 +117,11 @@ class ServerTextChannelScene extends StatefulWidget {
   /// production lets the review build the platform one.
   final YoMediaPreviewControllerFactory? videoPreviewControllerFactory;
   final Widget Function(BuildContext context, Uri url)? mediaImageBuilder;
+
+  /// Opens "See who reacted" (ADR-230) from a message's reaction pill and
+  /// its actions sheet. The const default runs the real flow; tests pass
+  /// seams.
+  final LikersLauncher likersLauncher;
 
   @override
   State<ServerTextChannelScene> createState() => _ServerTextChannelSceneState();
@@ -194,6 +203,9 @@ class _ServerTextChannelSceneState extends State<ServerTextChannelScene> {
 
   @override
   void dispose() {
+    for (final node in _reactorPillFocus.values) {
+      node.dispose();
+    }
     _gifDelivery.dispose();
     if (widget.gifService == null) _gifService.dispose();
     _controller.dispose();
@@ -438,14 +450,13 @@ class _ServerTextChannelSceneState extends State<ServerTextChannelScene> {
     // first lease lives. Reusing it makes the retry a replay.
     ServerMediaSendAttempt? attempt;
     Future<void> send() => _sendMedia(
-      attempt:
-          attempt ??= _service.newServerMediaSendAttempt(
-            serverId: widget.server.id,
-            channelId: widget.channel.id,
-            type: 'image',
-            contentType: contentType,
-            size: length,
-          ),
+      attempt: attempt ??= _service.newServerMediaSendAttempt(
+        serverId: widget.server.id,
+        channelId: widget.channel.id,
+        type: 'image',
+        contentType: contentType,
+        size: length,
+      ),
       // Built per attempt: a retry from the review streams the file again
       // rather than reusing a spent handle.
       source: ClubMediaUploadSource.pickedFile(image, length: length),
@@ -522,17 +533,16 @@ class _ServerTextChannelSceneState extends State<ServerTextChannelScene> {
     // a retry replays that reservation instead of asking for a second lease.
     ServerMediaSendAttempt? attempt;
     Future<void> send(Duration clip) => _sendMedia(
-      attempt:
-          attempt ??= _service.newServerMediaSendAttempt(
-            serverId: widget.server.id,
-            channelId: widget.channel.id,
-            type: 'video',
-            contentType: contentType,
-            size: length,
-            durationSeconds: gallery
-                ? (clip.inMilliseconds + 999) ~/ 1000
-                : directCappedTakeSeconds(clip),
-          ),
+      attempt: attempt ??= _service.newServerMediaSendAttempt(
+        serverId: widget.server.id,
+        channelId: widget.channel.id,
+        type: 'video',
+        contentType: contentType,
+        size: length,
+        durationSeconds: gallery
+            ? (clip.inMilliseconds + 999) ~/ 1000
+            : directCappedTakeSeconds(clip),
+      ),
       source: ClubMediaUploadSource.pickedFile(video, length: length),
       failure: failure,
       rethrowFailure: gallery,
@@ -647,6 +657,36 @@ class _ServerTextChannelSceneState extends State<ServerTextChannelScene> {
     }
   }
 
+  /// Opens the reactors list for [message]: tabs from the reactions the
+  /// channel already shows, the list itself from the server (which applies
+  /// every privacy filter, spec §3.3).
+  /// One focus node per reaction pill that has been drawn, so "See who
+  /// reacted" hands keyboard focus back to the pill when it closes — from
+  /// the pill itself and from the message actions sheet alike.
+  final Map<String, FocusNode> _reactorPillFocus = <String, FocusNode>{};
+
+  FocusNode _reactorFocusFor(String messageId) => _reactorPillFocus.putIfAbsent(
+    messageId,
+    () => FocusNode(debugLabel: 'server-message-reactions-$messageId'),
+  );
+
+  void _openReactors(ClubMessage message) {
+    if (message.isDeleted || message.reactions.isEmpty) return;
+    unawaited(
+      widget.likersLauncher.open(
+        context,
+        ServerMessageReactorsTarget(
+          widget.server.id,
+          widget.channel.id,
+          message.id,
+        ),
+        totalCount: message.reactions.length,
+        reactionCounts: likersReactionCounts(message.reactions.values),
+        returnFocus: _reactorPillFocus[message.id],
+      ),
+    );
+  }
+
   Future<void> _openMessageActions(
     ClubMessage message,
     ClubChatAuthority authority,
@@ -697,6 +737,22 @@ class _ServerTextChannelSceneState extends State<ServerTextChannelScene> {
                   onReaction: (value) =>
                       Navigator.pop(sheetContext, 'reaction:$value'),
                 ),
+              if (message.reactions.isNotEmpty) ...[
+                if (canReact) Divider(color: palette.border),
+                ListTile(
+                  key: const ValueKey('server-message-reactors'),
+                  onTap: () => Navigator.pop(sheetContext, 'reactors'),
+                  leading: Icon(
+                    Icons.favorite_border_rounded,
+                    color: palette.textSecondary,
+                  ),
+                  title: Text(LikersCopy(copy).seeWhoReacted),
+                  trailing: Text(
+                    messageReactionSummary(message.reactions.values),
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                ),
+              ],
               if (isAuthor || canRemove) ...[
                 if (canReact) Divider(color: palette.border),
                 // The author takes their own message back; a moderator
@@ -732,6 +788,10 @@ class _ServerTextChannelSceneState extends State<ServerTextChannelScene> {
       ),
     );
     if (choice == null || !mounted) return;
+    if (choice == 'reactors') {
+      _openReactors(message);
+      return;
+    }
     if (choice.startsWith('reaction:')) {
       await _toggleReaction(message, choice.substring('reaction:'.length));
       return;
@@ -1066,6 +1126,12 @@ class _ServerTextChannelSceneState extends State<ServerTextChannelScene> {
                         authority.isModeratingOthers(message))
                 ? () => unawaited(_openMessageActions(message, authority))
                 : null,
+            onShowReactors: message.isDeleted || message.reactions.isEmpty
+                ? null
+                : () => _openReactors(message),
+            reactorsFocusNode: message.isDeleted || message.reactions.isEmpty
+                ? null
+                : _reactorFocusFor(message.id),
             loadMediaGrant: ({bool refresh = false}) =>
                 _service.serverMediaGrant(
                   serverId: widget.server.id,
@@ -1089,6 +1155,8 @@ class _MessageTile extends StatelessWidget {
     this.isModerator = false,
     this.onOpenProfile,
     this.onOpenActions,
+    this.onShowReactors,
+    this.reactorsFocusNode,
     required this.loadMediaGrant,
     this.mediaImageBuilder,
   });
@@ -1105,6 +1173,13 @@ class _MessageTile extends StatelessWidget {
   /// same `AccessibleContextAction` the direct-message bubble uses. Null for
   /// a removed message or a viewer who may not react.
   final VoidCallback? onOpenActions;
+
+  /// "See who reacted" from the reaction pill (ADR-230, owner variant A).
+  final VoidCallback? onShowReactors;
+
+  /// The reaction pill's focus node, owned by the scene so focus can return
+  /// to the pill after the list closes.
+  final FocusNode? reactorsFocusNode;
 
   /// Asks the service for this message's short-lived media grant; requests
   /// from the visible tiles are batched and cached there.
@@ -1299,6 +1374,11 @@ class _MessageTile extends StatelessWidget {
                 MessageReactionSummaryPill(
                   key: ValueKey('server-message-reactions-${message.id}'),
                   reactions: message.reactions.values,
+                  onTap: onShowReactors,
+                  focusNode: reactorsFocusNode,
+                  semanticLabel: LikersCopy(
+                    copy,
+                  ).seeWhoReactedCount(message.reactions.length),
                 ),
               ],
             ],

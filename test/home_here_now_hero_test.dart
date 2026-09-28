@@ -128,10 +128,7 @@ void main() {
       db = FakeFirebaseFirestore();
       rooms = _Rooms(
         firestore: db,
-        auth: MockFirebaseAuth(
-          signedIn: true,
-          mockUser: MockUser(uid: 'me'),
-        ),
+        auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: 'me')),
       );
       cache = HomeRosterCache(service: rooms);
     });
@@ -147,7 +144,10 @@ void main() {
         tier: HomeHereNowTier.place,
         club: _club('c1', 'Nasz dom'),
       ),
-      HomeLiveCandidate(room: _room(id: 'owned'), tier: HomeHereNowTier.owned),
+      HomeLiveCandidate(
+        room: _room(id: 'owned'),
+        tier: HomeHereNowTier.owned,
+      ),
       HomeLiveCandidate(
         room: _room(id: 'public'),
         tier: HomeHereNowTier.public,
@@ -284,10 +284,7 @@ void main() {
         ]),
         '3 osoby słuchają',
       );
-      expect(
-        homeActivitySummary(copy: pl, participants: const []),
-        isNull,
-      );
+      expect(homeActivitySummary(copy: pl, participants: const []), isNull);
     });
 
     test('the Polish count buckets follow the 2-4 / 12-14 rule', () {
@@ -490,7 +487,10 @@ void main() {
         find.byKey(const ValueKey('home-hero-roster-note')),
         findsOneWidget,
       );
-      expect(find.text('Nie udało się sprawdzić, kto rozmawia.'), findsOneWidget);
+      expect(
+        find.text('Nie udało się sprawdzić, kto rozmawia.'),
+        findsOneWidget,
+      );
       expect(find.text('Maja'), findsNothing);
       expect(find.byKey(const ValueKey('home-hero-join')), findsOneWidget);
       expect(find.byKey(const ValueKey('home-rooms-error')), findsNothing);

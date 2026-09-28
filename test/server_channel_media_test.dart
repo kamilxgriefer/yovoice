@@ -867,7 +867,8 @@ void main() {
         tester,
         service(),
         video: video,
-        videoPreview: (_) => _FakePreviewController(const Duration(seconds: 90)),
+        videoPreview: (_) =>
+            _FakePreviewController(const Duration(seconds: 90)),
       );
       await attach(tester, 'Video library');
 
@@ -1057,7 +1058,10 @@ void main() {
         chat.sendServerMediaAttempt(attempt, source: source),
         throwsA(isA<FirebaseFunctionsException>()),
       );
-      expect(await chat.sendServerMediaAttempt(attempt, source: source), mediaId);
+      expect(
+        await chat.sendServerMediaAttempt(attempt, source: source),
+        mediaId,
+      );
 
       expect(uploadCount, 1);
       expect(

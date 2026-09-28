@@ -742,10 +742,12 @@ void main() {
       // The row's own body (G4: the compact row has no separate title).
       Focus.of(
         tester.element(
-          find.descendant(
-            of: find.byKey(const ValueKey('moment-row-body-social-only')),
-            matching: find.byType(Padding),
-          ).first,
+          find
+              .descendant(
+                of: find.byKey(const ValueKey('moment-row-body-social-only')),
+                matching: find.byType(Padding),
+              )
+              .first,
         ),
       ).requestFocus();
       await tester.pump();

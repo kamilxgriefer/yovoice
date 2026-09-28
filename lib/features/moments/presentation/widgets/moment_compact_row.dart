@@ -14,6 +14,9 @@ import 'package:yovoice/core/theme/app_motion.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
+import 'package:yovoice/features/likers/data/models/likers_target.dart';
+import 'package:yovoice/features/likers/presentation/likers_copy.dart';
+import 'package:yovoice/features/likers/presentation/likers_launcher.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_discover_tiles.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_pill.dart';
@@ -158,6 +161,7 @@ class MomentCompactRow extends StatefulWidget {
     this.divider = true,
     this.clip,
     this.onCanvas = true,
+    this.likersLauncher = const LikersLauncher(),
     super.key,
   });
 
@@ -218,6 +222,12 @@ class MomentCompactRow extends StatefulWidget {
   /// secondary text (age, meta, availability) then takes `textSecondary`:
   /// `textTertiary` measured 3.86–4.31:1 over the photo's brightest pixels.
   final bool onCanvas;
+
+  /// Opens "See who liked" from the ⋯ menu and the screen-reader action
+  /// (ADR-230). The meta line's count stays inert: it is a span inside the
+  /// row's one merged label (G4). The const default runs the real flow;
+  /// tests pass seams.
+  final LikersLauncher likersLauncher;
 
   static const double minHeight = 76;
   static const double avatarDiameter = 44;
@@ -308,6 +318,27 @@ class _MomentCompactRowState extends State<MomentCompactRow> {
       onReport: () => _afterMenu(widget.onReport),
       onDelete: () => _afterMenu(widget.onDelete),
       onOpenProfile: _profileAction,
+      onShowLikers: _likersAction,
+    );
+  }
+
+  /// "See who liked" in the ⋯ menu and as a screen-reader action: a
+  /// published Moment with likes, for a signed-in viewer.
+  VoidCallback? get _likersAction {
+    if (_uploading || !widget.canInteract) return null;
+    if (widget.moment.likeCount <= 0) return null;
+    return () => _afterMenu(_openLikers);
+  }
+
+  void _openLikers() {
+    final moment = widget.moment;
+    unawaited(
+      widget.likersLauncher.open(
+        context,
+        VoiceMomentLikersTarget(moment.id),
+        totalCount: moment.likeCount,
+        returnFocus: _focusNode,
+      ),
     );
   }
 
@@ -646,6 +677,8 @@ class _MomentCompactRowState extends State<MomentCompactRow> {
         CustomSemanticsAction(
           label: copy.text('Reply with voice', 'Odpowiedz głosem'),
         ): widget.onReplyVoice,
+      if (_likersAction != null)
+        CustomSemanticsAction(label: LikersCopy(copy).seeWhoLiked): _openLikers,
       if (_menuAvailable)
         CustomSemanticsAction(
           label: copy.text('More options', 'Więcej opcji'),

@@ -51,32 +51,34 @@ void main() {
       expect(invoked, isFalse);
     });
 
-    test('a refresh we could not complete is reported, not papered over',
-        () async {
-      var invoked = false;
-      final service = AccountDeletionService(
-        refreshIdToken: () async =>
-            throw FirebaseAuthException(code: 'network-request-failed'),
-        invoke: (_, _) async {
-          invoked = true;
-          return const {};
-        },
-      );
+    test(
+      'a refresh we could not complete is reported, not papered over',
+      () async {
+        var invoked = false;
+        final service = AccountDeletionService(
+          refreshIdToken: () async =>
+              throw FirebaseAuthException(code: 'network-request-failed'),
+          invoke: (_, _) async {
+            invoked = true;
+            return const {};
+          },
+        );
 
-      await expectLater(
-        service.requestDeletion(),
-        throwsA(
-          isA<AccountDeletionFailure>().having(
-            (failure) => failure.kind,
-            'kind',
-            AccountDeletionFailureKind.recentSignInRequired,
+        await expectLater(
+          service.requestDeletion(),
+          throwsA(
+            isA<AccountDeletionFailure>().having(
+              (failure) => failure.kind,
+              'kind',
+              AccountDeletionFailureKind.recentSignInRequired,
+            ),
           ),
-        ),
-      );
-      // Sending a possibly stale token and rendering the server's refusal
-      // would tell the user to do the one thing that cannot help.
-      expect(invoked, isFalse);
-    });
+        );
+        // Sending a possibly stale token and rendering the server's refusal
+        // would tell the user to do the one thing that cannot help.
+        expect(invoked, isFalse);
+      },
+    );
   });
 
   group('deleteAccountSelfV1 contract', () {

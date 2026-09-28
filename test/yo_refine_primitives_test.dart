@@ -465,10 +465,7 @@ void main() {
           child: const Text('Zapisz'),
         ),
       );
-      expect(
-        tester.getSemantics(find.byType(FilledButton)).value,
-        isEmpty,
-      );
+      expect(tester.getSemantics(find.byType(FilledButton)).value, isEmpty);
       await tester.tap(find.byType(FilledButton));
       await tester.pump();
       expect(presses, 1);

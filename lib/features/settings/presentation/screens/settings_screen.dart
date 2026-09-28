@@ -31,6 +31,7 @@ import 'package:yovoice/features/premium/presentation/screens/premium_plans_scre
 import 'package:yovoice/features/premium/presentation/screens/premium_screen.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/models/profile_visibility.dart';
+import 'package:yovoice/features/profile/data/services/likes_visibility_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/profile/presentation/screens/profile_screen.dart';
 import 'package:yovoice/features/settings/presentation/screens/profile_visibility_screen.dart';
@@ -66,6 +67,7 @@ class SettingsScreen extends StatefulWidget {
     @visibleForTesting this.entitlementService,
     @visibleForTesting this.showcaseConsentService,
     @visibleForTesting this.messagePrivacyService,
+    @visibleForTesting this.likesVisibilityService,
     super.key,
   });
 
@@ -77,6 +79,7 @@ class SettingsScreen extends StatefulWidget {
   final EntitlementService? entitlementService;
   final PublicShowcaseConsentService? showcaseConsentService;
   final MessagePrivacyService? messagePrivacyService;
+  final LikesVisibilityService? likesVisibilityService;
 
   /// True when this screen IS the shell's current content (a desktop
   /// content slot) rather than a pushed route — the same flag
@@ -109,6 +112,67 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _refreshingVerification = false;
   bool _clearingCache = false;
   bool _updatingShowcaseConsent = false;
+
+  late final _likesVisibilityService =
+      widget.likesVisibilityService ?? LikesVisibilityService();
+  bool _updatingLikesHidden = false;
+
+  /// The optimistic Hide my likes value, shown while the call is in flight
+  /// and afterwards only until the streamed profile moves off
+  /// [_likesHiddenBase] (the value at the tap). From then on the
+  /// server-written field is the truth again, including later changes made
+  /// on another device.
+  bool? _likesHiddenOverride;
+  bool? _likesHiddenBase;
+
+  bool _likesHiddenShown(UserProfile profile) {
+    final override = _likesHiddenOverride;
+    if (override == null) return profile.likesHidden;
+    if (_updatingLikesHidden) return override;
+    if (profile.likesHidden == _likesHiddenBase &&
+        profile.likesHidden != override) {
+      // The server has answered but the stream has not caught up yet.
+      return override;
+    }
+    // Settled: drop the override without a rebuild (the value shown is the
+    // profile's either way).
+    _likesHiddenOverride = null;
+    _likesHiddenBase = null;
+    return profile.likesHidden;
+  }
+
+  /// Optimistic flip → `setMyLikesHiddenV1`; a failure reverts and says so.
+  Future<void> _setLikesHidden(UserProfile profile, bool hidden) async {
+    if (_updatingLikesHidden) return;
+    final copy = AppLocalizations.of(context);
+    setState(() {
+      _updatingLikesHidden = true;
+      _likesHiddenBase = profile.likesHidden;
+      _likesHiddenOverride = hidden;
+    });
+    try {
+      final result = await _likesVisibilityService.setHidden(hidden);
+      if (!mounted) return;
+      setState(() {
+        _updatingLikesHidden = false;
+        _likesHiddenOverride = result.hidden;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _updatingLikesHidden = false;
+        _likesHiddenOverride = null;
+        _likesHiddenBase = null;
+      });
+      _notify(
+        copy.text(
+          'Couldn\'t update this setting. Try again.',
+          'Nie udało się zmienić tego ustawienia. Spróbuj ponownie.',
+        ),
+        isError: true,
+      );
+    }
+  }
 
   Future<void> _setShowcaseConsent({
     required UserProfile profile,
@@ -649,6 +713,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     initialVisibility: profile.profileVisibility,
                   ),
                 ),
+              ),
+            ),
+            // Hide my likes (ADR-230): server-written through
+            // setMyLikesHiddenV1; works before any likers list is live. The
+            // subtitle is never truncated — its Server caveat is the honest
+            // part of the promise.
+            _SettingsTile(
+              key: const ValueKey('settings-hide-my-likes'),
+              icon: Icons.favorite_border_rounded,
+              title: copy.text('Hide my likes', 'Ukryj moje polubienia'),
+              subtitle: copy.text(
+                'You won\'t appear in YO Voice\'s lists of who liked or reacted. Counts don\'t change. Server members still receive your reactions in channels you share.',
+                'Nie pojawisz się na listach YO Voice pokazujących, kto polubił lub zareagował. Liczniki się nie zmieniają. Członkowie serwerów nadal otrzymują Twoje reakcje na wspólnych kanałach.',
+              ),
+              subtitleMaxLines: null,
+              trailing: Switch.adaptive(
+                key: const ValueKey('settings-hide-my-likes-switch'),
+                value: _likesHiddenShown(profile),
+                activeTrackColor: colors.primary,
+                onChanged: _updatingLikesHidden
+                    ? null
+                    : (value) => _setLikesHidden(profile, value),
               ),
             ),
             StreamBuilder<PublicProfileShowcaseConsent>(
@@ -1603,6 +1689,7 @@ class _SettingsTile extends StatefulWidget {
     this.onTap,
     this.danger = false,
     this.leading,
+    this.subtitleMaxLines = 3,
   });
 
   final IconData icon;
@@ -1615,6 +1702,10 @@ class _SettingsTile extends StatefulWidget {
   /// Replaces the glyph box in the 40 px leading slot (the "Wersja" row's
   /// bare logo). [icon] is then unused.
   final Widget? leading;
+
+  /// null = the whole subtitle, for rows whose subtitle is a disclosure
+  /// that must not be cut (Hide my likes).
+  final int? subtitleMaxLines;
 
   @override
   State<_SettingsTile> createState() => _SettingsTileState();
@@ -1671,8 +1762,10 @@ class _SettingsTileState extends State<_SettingsTile> {
             semanticsLabel: subtitle.contains(_breakOpportunity)
                 ? subtitle.replaceAll(_breakOpportunity, '')
                 : null,
-            maxLines: expanded ? null : 3,
-            overflow: expanded ? TextOverflow.visible : TextOverflow.ellipsis,
+            maxLines: expanded ? null : widget.subtitleMaxLines,
+            overflow: expanded || widget.subtitleMaxLines == null
+                ? TextOverflow.visible
+                : TextOverflow.ellipsis,
             style: TextStyle(color: palette.textSecondary, fontSize: 12.5),
           );
 

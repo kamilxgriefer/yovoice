@@ -9,6 +9,9 @@ import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_immersive_colors.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
+import 'package:yovoice/features/likers/data/models/likers_target.dart';
+import 'package:yovoice/features/likers/presentation/likers_copy.dart';
+import 'package:yovoice/features/likers/presentation/likers_launcher.dart';
 import 'package:yovoice/features/moderation/data/services/content_report_service.dart';
 import 'package:yovoice/features/moderation/presentation/report_content_flow.dart';
 import 'package:yovoice/features/moments/data/models/moment_chain.dart';
@@ -20,6 +23,8 @@ import 'package:yovoice/features/moments/presentation/screens/moment_comments_sc
 import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_accessibility.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_time_labels.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
+import 'package:yovoice/shared/widgets/overlays/immersive_overlay_atoms.dart'
+    show compactCount;
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/shared/widgets/theme/yo_immersive_dark_surface.dart';
 import 'package:yovoice/shared/widgets/waveform/yo_waveform.dart';
@@ -135,6 +140,7 @@ class MomentStoryViewer extends StatefulWidget {
     this.expiryClock,
     this.expiryTimerFactory,
     this.removeOwnRouteOnEmpty = false,
+    this.likersLauncher = const LikersLauncher(),
     super.key,
   });
 
@@ -183,6 +189,10 @@ class MomentStoryViewer extends StatefulWidget {
   /// route (for example Comments) is above it at the expiry deadline.
   @visibleForTesting
   final bool removeOwnRouteOnEmpty;
+
+  /// Opens "See who liked" from the like count (ADR-230). The const default
+  /// runs the real flow; tests pass seams.
+  final LikersLauncher likersLauncher;
 
   /// True in production: tapping a chain means "play this person".
   /// Tests turn it off to drive playback explicitly.
@@ -329,6 +339,7 @@ class _MomentStoryViewerState extends State<MomentStoryViewer>
     }
     _player?.dispose();
     _storyFocus.dispose();
+    _likersFocus.dispose();
     super.dispose();
   }
 
@@ -743,6 +754,33 @@ class _MomentStoryViewerState extends State<MomentStoryViewer>
     );
   }
 
+  /// The count chip, so closing the likers flow hands focus back to it.
+  final FocusNode _likersFocus = FocusNode(debugLabel: 'See who liked');
+
+  /// Opens "See who liked" for [moment]. The story holds still while the
+  /// list or the upsell is open — playback pauses, so completion cannot
+  /// auto-advance the chain behind the sheet — and resumes on close only if
+  /// it was playing and the same Moment is still on screen.
+  Future<void> _openLikers(VoiceMoment moment) async {
+    var resumeAfter = false;
+    await widget.likersLauncher.open(
+      context,
+      VoiceMomentLikersTarget(moment.id),
+      totalCount: moment.likeCount,
+      returnFocus: _likersFocus,
+      onSheetOpened: () {
+        if (!mounted || !_isPlaying) return;
+        resumeAfter = true;
+        unawaited(_togglePlay());
+      },
+      onSheetClosed: () {
+        if (!resumeAfter || !mounted || _isPlaying) return;
+        if (_chainMoments.isEmpty || _current.id != moment.id) return;
+        unawaited(_togglePlay());
+      },
+    );
+  }
+
   Future<void> _toggleLike(VoiceMoment moment) async {
     final service = _feed;
     if (service == null || _likePendingMomentId != null) return;
@@ -1015,6 +1053,8 @@ class _MomentStoryViewerState extends State<MomentStoryViewer>
               canReport: uid.isNotEmpty && !isOwn,
               canDelete: isOwn && !_deleting,
               onLike: () => unawaited(_toggleLike(moment)),
+              onShowLikers: () => unawaited(_openLikers(moment)),
+              likersFocus: _likersFocus,
               onComments: () => unawaited(_openComments(moment)),
               onReport: () => unawaited(_report(moment)),
               onDelete: () => unawaited(_deleteCurrent(moment)),
@@ -1467,6 +1507,8 @@ class _StoryActions extends StatelessWidget {
     required this.canReport,
     required this.canDelete,
     required this.onLike,
+    required this.onShowLikers,
+    required this.likersFocus,
     required this.onComments,
     required this.onReport,
     required this.onDelete,
@@ -1483,114 +1525,189 @@ class _StoryActions extends StatelessWidget {
   /// only one.
   final bool canDelete;
   final VoidCallback onLike;
+
+  /// Opens "See who liked" from the separate count chip (owner variant A).
+  final VoidCallback onShowLikers;
+  final FocusNode likersFocus;
   final VoidCallback onComments;
   final VoidCallback onReport;
   final VoidCallback onDelete;
   final VoidCallback? onPrevious;
   final VoidCallback? onNext;
 
+  /// The narrowest the action cluster can draw without squeezing the
+  /// like-count chip: the heart, that chip at its natural width, the
+  /// comments chip at its glyph-only minimum and the owner / report icons.
+  double _clusterMinimum(BuildContext context) {
+    var width = moment.likeCount == 0 ? 60.0 : 44.0;
+    if (moment.likeCount > 0) {
+      final painter = TextPainter(
+        text: TextSpan(
+          text: compactCount(moment.likeCount),
+          style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+        ),
+        textDirection: Directionality.of(context),
+        textScaler: MediaQuery.textScalerOf(context),
+        maxLines: 1,
+      )..layout();
+      final chip = painter.width + 16;
+      painter.dispose();
+      width += 6 + (chip < 44 ? 44 : chip);
+    }
+    width += 6 + 44;
+    if (canReport) width += 6 + 48;
+    if (canDelete) width += 6 + 48;
+    return width;
+  }
+
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
+    final navigation = <Widget>[
+      IconButton.filledTonal(
+        key: const ValueKey('story-previous'),
+        onPressed: onPrevious,
+        tooltip: copy.text('Previous Moment', 'Poprzedni Moment'),
+        icon: const Icon(Icons.chevron_left_rounded),
+      ),
+      const SizedBox(width: 6),
+      IconButton.filledTonal(
+        key: const ValueKey('story-next'),
+        onPressed: onNext,
+        tooltip: copy.text('Next Moment', 'Następny Moment'),
+        icon: const Icon(Icons.chevron_right_rounded),
+      ),
+    ];
+    final cluster = <Widget>[
+      // Glyph-only once its count moved beside it: a fixed 44 px
+      // target that never squeezes; with "Like" it flexes as
+      // before.
+      Flexible(
+        flex: moment.likeCount == 0 ? 1 : 0,
+        fit: FlexFit.loose,
+        child: _ActionChip(
+          key: const ValueKey('story-like'),
+          icon: moment.callerLiked
+              ? Icons.favorite_rounded
+              : Icons.favorite_border_rounded,
+          // Owner variant A (ADR-230): with likes, the heart only
+          // toggles and its count is the chip beside it.
+          label: moment.likeCount == 0 ? copy.text('Like', 'Lubię to') : null,
+          active: moment.callerLiked,
+          semanticLabel: moment.callerLiked
+              ? copy.text('Unlike this Moment', 'Usuń polubienie tego Momentu')
+              : copy.text('Like this Moment', 'Polub ten Moment'),
+          onTap: !canLike || likePending ? null : onLike,
+        ),
+      ),
+      if (moment.likeCount > 0) ...[
+        const SizedBox(width: 6),
+        // Never squeezed and never scaled below the reader's text
+        // size: the count keeps its natural width, and the whole
+        // cluster takes a row of its own when it cannot fit.
+        _ActionChip(
+          key: const ValueKey('story-likers'),
+          focusNode: likersFocus,
+          labelInSemantics: false,
+          label: compactCount(moment.likeCount),
+          active: false,
+          semanticLabel: LikersCopy(copy).seeWhoLikedCount(moment.likeCount),
+          onTap: onShowLikers,
+        ),
+      ],
+      const SizedBox(width: 6),
+      Flexible(
+        child: _ActionChip(
+          key: const ValueKey('story-comments'),
+          icon: Icons.mode_comment_outlined,
+          label: moment.commentCount == 0
+              ? copy.text('Comment', 'Komentarz')
+              : '${moment.commentCount}',
+          active: false,
+          semanticLabel: copy.text(
+            'Open comments for this Moment',
+            'Otwórz komentarze do tego Momentu',
+          ),
+          onTap: onComments,
+        ),
+      ),
+      if (canReport) ...[
+        const SizedBox(width: 6),
+        IconButton(
+          key: ValueKey('story-report-${moment.id}'),
+          onPressed: onReport,
+          tooltip: copy.text(
+            'Report this Voice Moment',
+            'Zgłoś ten Voice Moment',
+          ),
+          icon: const Icon(
+            Icons.flag_outlined,
+            size: 20,
+            color: AppImmersiveColors.textSecondary,
+          ),
+        ),
+      ],
+      if (canDelete) ...[
+        const SizedBox(width: 6),
+        IconButton(
+          key: ValueKey('story-delete-${moment.id}'),
+          onPressed: onDelete,
+          tooltip: copy.text(
+            'Delete this Voice Moment',
+            'Usuń ten Voice Moment',
+          ),
+          icon: const Icon(
+            Icons.delete_outline_rounded,
+            size: 20,
+            color: AppColors.error,
+          ),
+        ),
+      ],
+    ];
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 4, 14, 12),
-      child: Row(
-        children: [
-          IconButton.filledTonal(
-            key: const ValueKey('story-previous'),
-            onPressed: onPrevious,
-            tooltip: copy.text('Previous Moment', 'Poprzedni Moment'),
-            icon: const Icon(Icons.chevron_left_rounded),
-          ),
-          const SizedBox(width: 6),
-          IconButton.filledTonal(
-            key: const ValueKey('story-next'),
-            onPressed: onNext,
-            tooltip: copy.text('Next Moment', 'Następny Moment'),
-            icon: const Icon(Icons.chevron_right_rounded),
-          ),
-          // One Expanded cluster aligned right — NOT a Spacer next to
-          // Flexible chips. A Spacer is itself a flex child, so it takes
-          // an equal share of the free space and starves the chips of
-          // their counts even when the row has room; inside this cluster
-          // the chips only squeeze (their labels ellipsize) when the
-          // width genuinely runs out, and the report control never
-          // leaves the screen.
-          Expanded(
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.end,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // Previous / next take 2 × 48 + 6; the cluster starts 6 later.
+          final fits =
+              constraints.maxWidth >= 2 * 48 + 12 + _clusterMinimum(context);
+          if (!fits) {
+            // A narrow phone at a large text size: the navigation keeps its
+            // row and the actions take the next, instead of shrinking the
+            // like count below the reader's chosen size (WCAG 1.4.4).
+            return Column(
+              key: const ValueKey('story-actions-stacked'),
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Flexible(
-                  child: _ActionChip(
-                    key: const ValueKey('story-like'),
-                    icon: moment.callerLiked
-                        ? Icons.favorite_rounded
-                        : Icons.favorite_border_rounded,
-                    label: moment.likeCount == 0
-                        ? copy.text('Like', 'Lubię to')
-                        : '${moment.likeCount}',
-                    active: moment.callerLiked,
-                    semanticLabel: moment.callerLiked
-                        ? copy.text(
-                            'Unlike this Moment',
-                            'Usuń polubienie tego Momentu',
-                          )
-                        : copy.text('Like this Moment', 'Polub ten Moment'),
-                    onTap: !canLike || likePending ? null : onLike,
-                  ),
+                Row(children: navigation),
+                const SizedBox(height: 6),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: cluster,
                 ),
-                const SizedBox(width: 6),
-                Flexible(
-                  child: _ActionChip(
-                    key: const ValueKey('story-comments'),
-                    icon: Icons.mode_comment_outlined,
-                    label: moment.commentCount == 0
-                        ? copy.text('Comment', 'Komentarz')
-                        : '${moment.commentCount}',
-                    active: false,
-                    semanticLabel: copy.text(
-                      'Open comments for this Moment',
-                      'Otwórz komentarze do tego Momentu',
-                    ),
-                    onTap: onComments,
-                  ),
-                ),
-                if (canReport) ...[
-                  const SizedBox(width: 6),
-                  IconButton(
-                    key: ValueKey('story-report-${moment.id}'),
-                    onPressed: onReport,
-                    tooltip: copy.text(
-                      'Report this Voice Moment',
-                      'Zgłoś ten Voice Moment',
-                    ),
-                    icon: const Icon(
-                      Icons.flag_outlined,
-                      size: 20,
-                      color: AppImmersiveColors.textSecondary,
-                    ),
-                  ),
-                ],
-                if (canDelete) ...[
-                  const SizedBox(width: 6),
-                  IconButton(
-                    key: ValueKey('story-delete-${moment.id}'),
-                    onPressed: onDelete,
-                    tooltip: copy.text(
-                      'Delete this Voice Moment',
-                      'Usuń ten Voice Moment',
-                    ),
-                    icon: const Icon(
-                      Icons.delete_outline_rounded,
-                      size: 20,
-                      color: AppColors.error,
-                    ),
-                  ),
-                ],
               ],
-            ),
-          ),
-        ],
+            );
+          }
+          return Row(
+            children: [
+              ...navigation,
+              // One Expanded cluster aligned right — NOT a Spacer next to
+              // Flexible chips. A Spacer is itself a flex child, so it takes
+              // an equal share of the free space and starves the chips of
+              // their counts even when the row has room; inside this cluster
+              // the chips only squeeze (their labels ellipsize) when the
+              // width genuinely runs out, and the report control never
+              // leaves the screen.
+              Expanded(
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: cluster,
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -1598,19 +1715,33 @@ class _StoryActions extends StatelessWidget {
 
 class _ActionChip extends StatelessWidget {
   const _ActionChip({
-    required this.icon,
     required this.label,
     required this.active,
     required this.onTap,
+    this.icon,
     this.semanticLabel,
+    this.focusNode,
+    this.labelInSemantics = true,
     super.key,
   });
 
-  final IconData icon;
-  final String label;
+  /// False when [semanticLabel] already says everything the visible label
+  /// shows (the like-count chip: "See who liked. Likes: 9", not "… 9 9").
+  final bool labelInSemantics;
+
+  /// Null for the like-count chip, which is its number alone.
+  final IconData? icon;
+
+  /// Null for a glyph-only chip (the heart once its count moved beside it).
+  final String? label;
   final bool active;
   final VoidCallback? onTap;
   final String? semanticLabel;
+  final FocusNode? focusNode;
+
+  /// Narrower than this, a glyph-and-label chip shows its glyph alone —
+  /// the spoken label is unchanged — instead of overflowing.
+  static const double _labelledMinimum = 76;
 
   @override
   Widget build(BuildContext context) {
@@ -1621,36 +1752,65 @@ class _ActionChip extends StatelessWidget {
         color: AppImmersiveColors.surface.withValues(alpha: .55),
         borderRadius: BorderRadius.circular(14),
         child: InkWell(
+          focusNode: focusNode,
           onTap: onTap,
           borderRadius: BorderRadius.circular(14),
-          child: Container(
-            constraints: const BoxConstraints(minHeight: 44, minWidth: 60),
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  icon,
-                  size: 20,
-                  color: active
-                      ? AppColors.secondary
-                      : AppImmersiveColors.textSecondary,
-                ),
-                const SizedBox(width: 6),
-                Flexible(
-                  child: Text(
-                    label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: AppImmersiveColors.textSecondary,
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w700,
-                    ),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final glyph = icon;
+              final squeezed =
+                  glyph != null &&
+                  label != null &&
+                  constraints.maxWidth < _labelledMinimum;
+              final text = squeezed ? null : label;
+              final both = glyph != null && text != null;
+              Widget? words;
+              if (text != null) {
+                words = Text(
+                  text,
+                  maxLines: 1,
+                  softWrap: false,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: AppImmersiveColors.textSecondary,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
                   ),
+                );
+                // The visible label stays readable by a screen reader
+                // even when squeezed away, through [semanticLabel].
+                words = ExcludeSemantics(
+                  excluding: !labelInSemantics,
+                  child: words,
+                );
+              }
+              return Container(
+                constraints: BoxConstraints(
+                  minHeight: 44,
+                  minWidth: both ? 60 : 44,
                 ),
-              ],
-            ),
+                // A chip that is only a glyph or only a number keeps its
+                // 44 px target with less side padding, so the cluster still
+                // fits a narrow phone.
+                padding: EdgeInsets.symmetric(horizontal: both ? 12 : 8),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    if (glyph != null)
+                      Icon(
+                        glyph,
+                        size: 20,
+                        color: active
+                            ? AppColors.secondary
+                            : AppImmersiveColors.textSecondary,
+                      ),
+                    if (both) const SizedBox(width: 6),
+                    if (words != null) Flexible(child: words),
+                  ],
+                ),
+              );
+            },
           ),
         ),
       ),

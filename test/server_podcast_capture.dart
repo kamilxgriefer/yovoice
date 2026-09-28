@@ -128,15 +128,14 @@ Future<void> _shoot(
 void main() {
   setUpAll(_loadRealFonts);
 
-  for (final (label, size, scale, light)
-      in <(String, Size, double, bool)>[
-        ('390x844', Size(390, 844), 1, false),
-        ('768x1024', Size(768, 1024), 1, false),
-        ('1440x900', Size(1440, 900), 1, false),
-        ('1920x1080', Size(1920, 1080), 1, false),
-        ('320x760-scale2', Size(320, 760), 2, false),
-        ('1440x900-pearl', Size(1440, 900), 1, true),
-      ]) {
+  for (final (label, size, scale, light) in <(String, Size, double, bool)>[
+    ('390x844', Size(390, 844), 1, false),
+    ('768x1024', Size(768, 1024), 1, false),
+    ('1440x900', Size(1440, 900), 1, false),
+    ('1920x1080', Size(1920, 1080), 1, false),
+    ('320x760-scale2', Size(320, 760), 2, false),
+    ('1440x900-pearl', Size(1440, 900), 1, true),
+  ]) {
     testWidgets('podcast studio live $label', (tester) async {
       final captureKey = GlobalKey();
       await _render(
@@ -201,12 +200,11 @@ void main() {
   /// The studio in session, as a listener: the host and guests the server
   /// signed, the audience the provider reports, and a dock that says
   /// `Słuchasz` rather than `Na antenie`.
-  for (final (label, size, scale)
-      in <(String, Size, double)>[
-        ('390x844', Size(390, 844), 1),
-        ('1440x900', Size(1440, 900), 1),
-        ('320x760-scale2', Size(320, 760), 2),
-      ]) {
+  for (final (label, size, scale) in <(String, Size, double)>[
+    ('390x844', Size(390, 844), 1),
+    ('1440x900', Size(1440, 900), 1),
+    ('320x760-scale2', Size(320, 760), 2),
+  ]) {
     testWidgets('podcast studio in session $label', (tester) async {
       final captureKey = GlobalKey();
       final connector = FakeServerMediaConnector();

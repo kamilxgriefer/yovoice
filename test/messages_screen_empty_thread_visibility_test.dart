@@ -62,7 +62,9 @@ void main() {
       'archivedBy': <String>[],
       'mutedBy': <String>[],
       'lastMessage': lastMessage,
-      'lastMessageId': lastMessageSequence == 0 ? null : 'm$lastMessageSequence',
+      'lastMessageId': lastMessageSequence == 0
+          ? null
+          : 'm$lastMessageSequence',
       'lastMessageSequence': lastMessageSequence,
       'lastMessageType': 'text',
       'lastMessageSenderId': lastMessageSenderId,
@@ -73,33 +75,39 @@ void main() {
 
   Future<void> seed() async {
     final conversations = db.collection('conversations');
-    await conversations.doc('dm_writer').set(
-      root(
-        other: writer,
-        otherName: 'Wanda Writer',
-        createdAt: now.subtract(const Duration(hours: 5)),
-        updatedAt: now.subtract(const Duration(hours: 2)),
-        lastMessage: 'hello from Wanda',
-        lastMessageSenderId: writer,
-        lastMessageSequence: 1,
-      ),
-    );
-    await conversations.doc('dm_lurker').set(
-      root(
-        other: lurker,
-        otherName: 'Larry Lurker',
-        createdAt: now,
-        updatedAt: now,
-      ),
-    );
-    await conversations.doc('dm_friend').set(
-      root(
-        other: friend,
-        otherName: 'Frida Friend',
-        createdAt: now.subtract(const Duration(hours: 3)),
-        updatedAt: now,
-      ),
-    );
+    await conversations
+        .doc('dm_writer')
+        .set(
+          root(
+            other: writer,
+            otherName: 'Wanda Writer',
+            createdAt: now.subtract(const Duration(hours: 5)),
+            updatedAt: now.subtract(const Duration(hours: 2)),
+            lastMessage: 'hello from Wanda',
+            lastMessageSenderId: writer,
+            lastMessageSequence: 1,
+          ),
+        );
+    await conversations
+        .doc('dm_lurker')
+        .set(
+          root(
+            other: lurker,
+            otherName: 'Larry Lurker',
+            createdAt: now,
+            updatedAt: now,
+          ),
+        );
+    await conversations
+        .doc('dm_friend')
+        .set(
+          root(
+            other: friend,
+            otherName: 'Frida Friend',
+            createdAt: now.subtract(const Duration(hours: 3)),
+            updatedAt: now,
+          ),
+        );
   }
 
   Widget host(Widget child) => MaterialApp(

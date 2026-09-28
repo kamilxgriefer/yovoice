@@ -290,7 +290,9 @@ void main() {
       final fontSize = count.textScaler.scale(count.text.style!.fontSize!);
       expect(fontSize, greaterThanOrEqualTo(16));
       expect(fontSize, closeTo(16.5, .01));
-      final badge = tester.getRect(find.byKey(const ValueKey('home-bell-count')));
+      final badge = tester.getRect(
+        find.byKey(const ValueKey('home-bell-count')),
+      );
       expect(badge.height, closeTo(30, .01), reason: 'the floor grows too');
       // The 46 px glass disc itself (its tap region may be a little larger).
       Rect discRect() => tester.getRect(
@@ -329,7 +331,9 @@ void main() {
           ),
         ),
       );
-      final small = tester.getRect(find.byKey(const ValueKey('home-bell-count')));
+      final small = tester.getRect(
+        find.byKey(const ValueKey('home-bell-count')),
+      );
       final smallDisc = discRect();
       expect(small.height, 20);
       expect(small.top, closeTo(smallDisc.top + 1 - 4, .01));
@@ -502,12 +506,12 @@ void main() {
       await tester.pump(AppMotion.entrance * 2);
       Border rim() =>
           (tester
-                      .widget<AnimatedContainer>(
-                        find.byKey(const ValueKey('home-live-thumbnail')),
-                      )
-                      .foregroundDecoration!
-                  as BoxDecoration)
-              .border!
+                          .widget<AnimatedContainer>(
+                            find.byKey(const ValueKey('home-live-thumbnail')),
+                          )
+                          .foregroundDecoration!
+                      as BoxDecoration)
+                  .border!
               as Border;
       expect(rim().top.color, AppColors.live.withValues(alpha: .30));
 
@@ -805,15 +809,15 @@ void main() {
           find.descendant(of: create, matching: find.byType(FilledButton)),
         );
         expect(button.style!.backgroundColor!.resolve({}), palette.glass);
-        expect(
-          button.style!.side!.resolve({})!.color,
-          palette.hairlineControl,
-        );
+        expect(button.style!.side!.resolve({})!.color, palette.hairlineControl);
         expect(
           button.style!.foregroundColor!.resolve({}),
           palette.interactiveForeground,
         );
-        expect(find.descendant(of: create, matching: find.byType(Ink)), findsNothing);
+        expect(
+          find.descendant(of: create, matching: find.byType(Ink)),
+          findsNothing,
+        );
         final lift = tester.widget<AnimatedContainer>(
           find
               .descendant(of: create, matching: find.byType(AnimatedContainer))
@@ -854,7 +858,10 @@ void main() {
       await tester.pump();
       await tester.pumpWidget(actions(YoActionEmphasis.lifted));
       expect(focus.hasFocus, isTrue);
-      expect(find.descendant(of: create, matching: find.byType(Ink)), findsOneWidget);
+      expect(
+        find.descendant(of: create, matching: find.byType(Ink)),
+        findsOneWidget,
+      );
     });
 
     // Cross-batch review: the pill used to get its ring from two painters
@@ -1115,8 +1122,18 @@ void main() {
         rtl: false,
         highContrast: false,
       );
-      expect(fading.colors.map((c) => c.a).toList(), [1, 1, closeTo(.22, 1e-3), 0]);
-      expect(fading.stops, [0, closeTo(1 - 44 / 300, 1e-9), closeTo(1 - 32 / 300, 1e-9), 1]);
+      expect(fading.colors.map((c) => c.a).toList(), [
+        1,
+        1,
+        closeTo(.22, 1e-3),
+        0,
+      ]);
+      expect(fading.stops, [
+        0,
+        closeTo(1 - 44 / 300, 1e-9),
+        closeTo(1 - 32 / 300, 1e-9),
+        1,
+      ]);
       expect(fading.begin, Alignment.centerLeft);
       final rtl = recentChatsPeekMask(
         width: 300,

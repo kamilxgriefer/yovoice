@@ -178,6 +178,7 @@ class TestServerRepository
     questionSeenAt[key] = newestCreatedAt;
     _questionsChanged.add(null);
   }
+
   List<ServerPodcastEpisode> podcastEpisodes = const [];
   ServerPodcastRecordingState? podcastRecording;
   Stream<ServerPodcastRecordingState?>? podcastRecordingStream;
@@ -314,14 +315,17 @@ class TestServerRepository
   Stream<List<ServerPodcastQuestion>> watchPodcastQuestions(
     String serverId,
     String channelId,
-  ) => podcastQuestionsStream ?? Stream.value(
-    podcastQuestions
-        .where(
-          (question) =>
-              question.serverId == serverId && question.channelId == channelId,
-        )
-        .toList(),
-  );
+  ) =>
+      podcastQuestionsStream ??
+      Stream.value(
+        podcastQuestions
+            .where(
+              (question) =>
+                  question.serverId == serverId &&
+                  question.channelId == channelId,
+            )
+            .toList(),
+      );
 
   @override
   Stream<bool> watchMyPodcastQuestionVote(

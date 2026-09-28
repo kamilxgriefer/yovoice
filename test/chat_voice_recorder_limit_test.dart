@@ -413,7 +413,10 @@ void main() {
       // Let the pill's fade-in finish; a fully transparent pill is not in the
       // semantics tree.
       await tester.pump(const Duration(milliseconds: 400));
-      expect(find.bySemanticsLabel(RegExp(r'\b6 seconds left\b')), findsWidgets);
+      expect(
+        find.bySemanticsLabel(RegExp(r'\b6 seconds left\b')),
+        findsWidgets,
+      );
       expect(find.bySemanticsLabel(RegExp(r'\b6 s left\b')), findsNothing);
       handle.dispose();
     });
