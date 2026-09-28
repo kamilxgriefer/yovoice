@@ -637,6 +637,33 @@ async function main() {
       await assertFails(read(OUTSIDER, `clubs/${ACTIVE}/channels/hr/messages/one`));
       await assertFails(getDocs(query(collection(db(MEMBER), `clubs/${ACTIVE}/channels`), where("accessMode", "==", "restricted"))));
     });
+    await check("VIP LIKERS (ADR-230): the server message reactions map remains channel-readable (recorded oracle)", async () => {
+      // Recorded, not endorsed: Rules cannot hide one field, and builds
+      // 36-38 render the reaction pill from this map. Every channel reader
+      // therefore receives {uid: emoji}, whatever "Hide my likes", blocks or
+      // profile visibility say. listServerChannelMessageReactorsV1 filters
+      // its own list, so a modified client comparing the two learns why a
+      // reactor is missing (ADR-230 residual disclosure; removal of the uid
+      // map is the 3.5.0 (40) follow-up). If this starts failing because the
+      // map became unreadable, that follow-up has landed: update ADR-230.
+      const location = `clubs/${ACTIVE}/channels/general/messages/reacted`;
+      const reactions = { [MEMBER]: "\u2764\ufe0f", [OWNER]: "\ud83d\udc4d" };
+      await seed({ [location]: {
+        clubId: ACTIVE, channelId: "general", senderId: OWNER, content: "reacted message",
+        createdAt: new Date(1), isDeleted: false, reactions,
+      } });
+      const single = await assertSucceeds(read(MEMBER, location));
+      assert.deepEqual(single.data().reactions, reactions);
+      const page = await assertSucceeds(getDocs(query(
+        collection(db(MEMBER), `clubs/${ACTIVE}/channels/general/messages`),
+        orderBy("createdAt", "desc"), limit(50))));
+      assert.deepEqual(page.docs.find((item) => item.id === "reacted").data().reactions, reactions);
+      // The boundary is still the channel: no non-member reads the map.
+      await assertFails(read(OUTSIDER, location));
+      await assertFails(read(STRANGER, location));
+      await assertFails(read(BANNED, location));
+      await seed({ [location]: null });
+    });
     await check("self opaque reference query is discovery, never shared authority", async () => {
       await assertSucceeds(getDocs(query(collection(db(MEMBER), `users/${MEMBER}/serverChannelRefs`), where("serverId", "==", ACTIVE))));
       await assertFails(read(OUTSIDER, `users/${MEMBER}/serverChannelRefs/one`));

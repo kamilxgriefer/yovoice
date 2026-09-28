@@ -16,6 +16,7 @@ if (getApps().length === 0) initializeApp();
 
 const {
   DEFAULT_LIMITS,
+  VOICE_MOMENT_V2_COMMENT_LIKES_READ_BUDGETS,
   VOICE_MOMENT_V2_READ_BUDGETS,
   canonicalCommentId,
   createMomentIntegrityService,
@@ -152,7 +153,27 @@ async function deleteQuery(query) {
   }
 }
 
+// Comment-like state (ADR-230) is keyed on canonical (deterministic) Moment
+// and comment ids, so it must go with the Moments or a later run would find
+// an earlier run's edges.
+async function resetCommentLikes(uid) {
+  const owned = await db
+    .collection("voiceMoments")
+    .where("authorId", "==", uid)
+    .get();
+  for (const moment of owned.docs) {
+    await deleteQuery(
+      db.collection("commentLikeCounters").where("parentId", "==", moment.id),
+    );
+    await deleteQuery(
+      db.collection("commentLikes").where("parentId", "==", moment.id),
+    );
+  }
+  await deleteQuery(db.collection("commentLikes").where("userId", "==", uid));
+}
+
 async function reset() {
+  for (const uid of USERS) await resetCommentLikes(uid);
   for (const uid of USERS) {
     await Promise.all([
       db.doc(`users/${uid}`).delete(),
@@ -307,6 +328,165 @@ test("Voice Moment v2 read budgets stay below the release latency gates", () => 
   assert.ok(VOICE_MOMENT_V2_READ_BUDGETS.viewTypical < 100);
   assert.ok(VOICE_MOMENT_V2_READ_BUDGETS.feedWorst < 180);
   assert.ok(VOICE_MOMENT_V2_READ_BUDGETS.viewWorst < 180);
+  // includeCommentLikes (ADR-230) adds exactly its two queries.
+  assert.deepEqual(VOICE_MOMENT_V2_COMMENT_LIKES_READ_BUDGETS, {
+    viewTypical: 100,
+    viewWorst: 128,
+  });
+});
+
+// Counts the collections a service queries (the Admin SDK itself, untouched).
+function queryRecordingDb(seen) {
+  return new Proxy(db, {
+    get(target, property) {
+      if (property === "collection") {
+        return (path) => {
+          seen.push(path);
+          return target.collection(path);
+        };
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
+function commentLike(uid, momentId, commentId, liked, requestId) {
+  return request(uid, { commentId, liked, momentId, requestId });
+}
+
+test("comment likes toggle exactly once under concurrency on a real Firestore", async () => {
+  const service = momentService();
+  const published = await publish(service);
+  const comment = await service.createMomentComment(request(A, {
+    momentId: published.momentId,
+    text: "Like me",
+    requestId: "comment-like-target",
+  }));
+  const results = await Promise.all(USERS.map((uid) => service.setMomentCommentLikeV1(
+    commentLike(uid, published.momentId, comment.commentId, true, `cl-${uid}-like`),
+  )));
+  assert.deepEqual(results.map((result) => result.changed), [true, true, true]);
+  assert.deepEqual(
+    results.map((result) => result.likeCount).sort(),
+    [1, 2, 3],
+  );
+  const key = `v:${published.momentId}:${comment.commentId}`;
+  const counter = await db.doc(`commentLikeCounters/${key}`).get();
+  assert.equal(counter.data().likeCount, 3);
+  const edges = await db.collection("commentLikes")
+    .where("commentKey", "==", key).get();
+  assert.deepEqual(edges.docs.map((edge) => edge.data().userId).sort(), [...USERS].sort());
+  // The comment document never changes shape.
+  const stored = await db
+    .doc(`voiceMoments/${published.momentId}/comments/${comment.commentId}`)
+    .get();
+  assert.equal(Object.hasOwn(stored.data(), "likeCount"), false);
+
+  const unliked = await service.setMomentCommentLikeV1(
+    commentLike(A, published.momentId, comment.commentId, false, "cl-a-unlike"),
+  );
+  assert.deepEqual(unliked, {
+    momentId: published.momentId,
+    commentId: comment.commentId,
+    liked: false,
+    changed: true,
+    likeCount: 2,
+  });
+});
+
+test("v2 detail includeCommentLikes is opt-in, exact and keyed on projected comments", async () => {
+  const service = momentService();
+  const published = await publish(service);
+  const mine = await service.createMomentComment(request(A, {
+    momentId: published.momentId,
+    text: "From A",
+    requestId: "comment-likes-view-a",
+  }));
+  nowMs += 1_000;
+  const theirs = await service.createMomentComment(request(C, {
+    momentId: published.momentId,
+    text: "From C",
+    requestId: "comment-likes-view-c",
+  }));
+  for (const [uid, commentId] of [[A, mine.commentId], [C, mine.commentId], [A, theirs.commentId]]) {
+    await service.setMomentCommentLikeV1(commentLike(
+      uid, published.momentId, commentId, true, `cl-view-${uid}-${commentId.slice(0, 6)}`,
+    ));
+  }
+
+  const seen = [];
+  const recorded = momentService({}, { db: queryRecordingDb(seen) });
+  const unflagged = await recorded.getVoiceMomentViewV2(
+    request(A, { momentId: published.momentId }),
+  );
+  assert.deepEqual(Object.keys(unflagged).sort(), [
+    "comments",
+    "commentsTruncated",
+    "moment",
+    "nextCommentCursor",
+    "schemaVersion",
+    "topReactions",
+  ]);
+  assert.equal(unflagged.schemaVersion, 2);
+  assert.deepEqual(seen.filter((path) => path.startsWith("commentLike")), []);
+
+  const flagged = await recorded.getVoiceMomentViewV2(
+    request(A, { momentId: published.momentId, includeCommentLikes: true }),
+  );
+  assert.deepEqual(
+    seen.filter((path) => path.startsWith("commentLike")).sort(),
+    ["commentLikeCounters", "commentLikes"],
+    "exactly the two comment-like queries",
+  );
+  assert.deepEqual(Object.keys(flagged).sort(), [
+    "commentLikes",
+    "comments",
+    "commentsTruncated",
+    "moment",
+    "nextCommentCursor",
+    "schemaVersion",
+    "topReactions",
+  ]);
+  assert.equal(flagged.schemaVersion, 2);
+  assert.deepEqual(
+    flagged.comments.map((comment) => comment.commentId),
+    unflagged.comments.map((comment) => comment.commentId),
+  );
+  assert.deepEqual(flagged.commentLikes, {
+    [mine.commentId]: { likeCount: 2, callerLiked: true },
+    [theirs.commentId]: { likeCount: 1, callerLiked: true },
+  });
+  // B sees the same counts with its own callerLiked.
+  const other = await service.getVoiceMomentViewV2(
+    request(B, { momentId: published.momentId, includeCommentLikes: true }),
+  );
+  assert.deepEqual(other.commentLikes[mine.commentId], {
+    likeCount: 2,
+    callerLiked: false,
+  });
+
+  // A withheld comment gets no entry: C goes private, so A no longer sees
+  // C's comment, and C's counts are not in the map either.
+  await db.doc(`users/${C}`).update({ profileVisibility: "private" });
+  const withheld = await service.getVoiceMomentViewV2(
+    request(A, { momentId: published.momentId, includeCommentLikes: true }),
+  );
+  assert.deepEqual(
+    withheld.comments.map((comment) => comment.commentId),
+    [mine.commentId],
+  );
+  assert.deepEqual(Object.keys(withheld.commentLikes), [mine.commentId]);
+
+  for (const value of [false, null, "true"]) {
+    await assert.rejects(
+      service.getVoiceMomentViewV2(request(A, {
+        momentId: published.momentId,
+        includeCommentLikes: value,
+      })),
+      (error) => error.code === "invalid-argument",
+    );
+  }
 });
 
 test("v2 feed and detail project safe current identity without media secrets", async () => {
@@ -732,6 +912,55 @@ test("detail hides comments and reaction identities after their authors become p
   assert.deepEqual(view.topReactions, []);
   assert.equal(view.moment.commentCount, 1);
   assert.equal(view.moment.likeCount, 1);
+});
+
+test("top reactions honour Hide my likes, fail closed, and always keep the viewer", async () => {
+  const service = momentService();
+  const published = await publish(service);
+  for (const [uid, requestId] of [[C, "reaction-hidden-c"], [A, "reaction-hidden-a"]]) {
+    nowMs += 1_000;
+    await service.setMomentLike(request(uid, {
+      momentId: published.momentId,
+      liked: true,
+      requestId,
+    }));
+  }
+  const reactors = async (viewer) =>
+    (await service.getVoiceMomentViewV2(request(viewer, {
+      momentId: published.momentId,
+    }))).topReactions.map((reaction) => reaction.userId);
+
+  assert.deepEqual(await reactors(A), [A, C]);
+
+  await db.doc(`users/${C}`).update({ likesHidden: true });
+  const hidden = await service.getVoiceMomentViewV2(request(A, {
+    momentId: published.momentId,
+  }));
+  assert.deepEqual(hidden.topReactions.map((reaction) => reaction.userId), [A]);
+  // The count is an aggregate and does not change; the key set is the frozen
+  // installed-build shape.
+  assert.equal(hidden.moment.likeCount, 2);
+  assert.deepEqual(Object.keys(hidden).sort(), [
+    "comments",
+    "commentsTruncated",
+    "moment",
+    "nextCommentCursor",
+    "schemaVersion",
+    "topReactions",
+  ]);
+  // You always see yourself, whatever your own setting says.
+  assert.deepEqual(await reactors(C), [A, C]);
+
+  // Any stored value other than false/missing is hidden (fail closed).
+  for (const malformed of ["false", 0, null, { on: false }]) {
+    await db.doc(`users/${C}`).update({ likesHidden: malformed });
+    assert.deepEqual(await reactors(A), [A], JSON.stringify(malformed));
+  }
+
+  await db.doc(`users/${C}`).update({ likesHidden: false });
+  assert.deepEqual(await reactors(A), [A, C]);
+  await db.doc(`users/${C}`).update({ likesHidden: FieldValue.delete() });
+  assert.deepEqual(await reactors(A), [A, C]);
 });
 
 test("Voice Moment reporting has no missing/private/blocked/expired oracle", async () => {

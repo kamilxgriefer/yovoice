@@ -1700,25 +1700,75 @@ async function main() {
   });
 
   await check(
-    "SECURITY: Moment engagement reads inherit the parent visibility boundary",
+    "SECURITY: Moment comment reads inherit the parent visibility boundary",
     async () => {
-      const privateLike = "voiceMoments/moment-private/likes/private-like";
       const privateComment =
         "voiceMoments/moment-private/comments/private-comment";
-      const publishedLike = "voiceMoments/moment1/likes/published-like";
       const publishedComment =
         "voiceMoments/moment1/comments/existing-comment";
 
-      await assertSucceeds(getDoc(doc(host.firestore(), privateLike)));
       await assertSucceeds(getDoc(doc(host.firestore(), privateComment)));
-      await assertFails(getDoc(doc(attacker.firestore(), privateLike)));
       await assertFails(getDoc(doc(attacker.firestore(), privateComment)));
-      await assertSucceeds(getDoc(doc(attacker.firestore(), publishedLike)));
       await assertSucceeds(getDoc(doc(attacker.firestore(), publishedComment)));
 
       const anonymous = testEnv.unauthenticatedContext().firestore();
-      await assertFails(getDoc(doc(anonymous, publishedLike)));
       await assertFails(getDoc(doc(anonymous, publishedComment)));
+    },
+  );
+
+  await check(
+    "VIP LIKERS (ADR-230): the ADR-140 Voice Moment likes read bridge is closed",
+    async () => {
+      // Owner decision 2026-09-28: the bridge let any signed-in Build <= 19
+      // or modified client list every liker uid of a published Moment with
+      // no block, visibility, mute or Hide-my-likes filter. No build 36+
+      // path reads it. Point reads AND the list query an old client ran are
+      // denied for the Moment author, the liker and a stranger alike.
+      const privateLike = "voiceMoments/moment-private/likes/private-like";
+      const publishedLike = "voiceMoments/moment1/likes/published-like";
+      const anonymous = testEnv.unauthenticatedContext().firestore();
+      for (const db of [host.firestore(), attacker.firestore(), anonymous]) {
+        await assertFails(getDoc(doc(db, privateLike)));
+        await assertFails(getDoc(doc(db, publishedLike)));
+        await assertFails(
+          getDocs(collection(db, "voiceMoments/moment1/likes")),
+        );
+        await assertFails(
+          getDocs(
+            query(
+              collection(db, "voiceMoments/moment1/likes"),
+              orderBy("createdAt", "desc"),
+              limit(3),
+            ),
+          ),
+        );
+        await assertFails(
+          getDocs(collection(db, "voiceMoments/moment-private/likes")),
+        );
+      }
+      // The liker's own edge (published-like is host-uid's) is closed too:
+      // callerLiked comes from getVoiceMomentViewV2, not from this path.
+      await assertFails(
+        getDocs(
+          query(
+            collection(host.firestore(), "voiceMoments/moment1/likes"),
+            where("userId", "==", "host-uid"),
+          ),
+        ),
+      );
+      // The parent roots and comments of the separate ADR-140 bridge are
+      // untouched by this closure.
+      await assertSucceeds(
+        getDoc(doc(attacker.firestore(), "voiceMoments/moment1")),
+      );
+      await assertSucceeds(
+        getDoc(
+          doc(
+            attacker.firestore(),
+            "voiceMoments/moment1/comments/existing-comment",
+          ),
+        ),
+      );
     },
   );
 
@@ -15026,6 +15076,441 @@ async function main() {
       await assertFails(
         getDoc(doc(survivor.firestore(), "publicProfiles/deleting-uid")),
       );
+    },
+  );
+
+  // -----------------------------------------------------------------
+  // VIP LIKERS (ADR-230): "See who liked" server-only stores.
+  //
+  // commentLikes / commentLikeCounters, likerPageCursors and the
+  // appConfig/likersV1 activation switch are reached only through Admin SDK
+  // callables that apply the liker filter; users/{uid}.likesHidden is
+  // written only by setMyLikesHiddenV1. Every case below runs the
+  // production-shaped read, query, batch or transaction a client would
+  // actually issue (ADR-007), for every party that could want it.
+  // -----------------------------------------------------------------
+  const likersAuthor = testEnv.authenticatedContext("vl-author-uid", {
+    email_verified: true,
+  });
+  const likersCommenter = testEnv.authenticatedContext("vl-commenter-uid", {
+    email_verified: true,
+  });
+  const likersLiker = testEnv.authenticatedContext("vl-liker-uid", {
+    email_verified: true,
+  });
+  const likersStranger = testEnv.authenticatedContext("vl-stranger-uid", {
+    email_verified: true,
+  });
+  const likersStaff = testEnv.authenticatedContext("vl-staff-uid", {
+    email_verified: true,
+    role: "superAdmin",
+  });
+  const likersAnonymous = testEnv.unauthenticatedContext();
+  const likersParties = [
+    likersAuthor,
+    likersCommenter,
+    likersLiker,
+    likersStranger,
+    likersStaff,
+    likersAnonymous,
+  ];
+  const VL_COMMENT_KEY = "v:vl-moment:vl-comment";
+  const VL_EDGE_ID = `${VL_COMMENT_KEY}:vl-liker-uid`;
+  const VL_CURSOR = "A".repeat(43);
+  const vlEdge = () => ({
+    schemaVersion: 1,
+    parentKind: "voiceMoment",
+    parentId: "vl-moment",
+    commentId: "vl-comment",
+    commentKey: VL_COMMENT_KEY,
+    userId: "vl-liker-uid",
+    createdAt: Timestamp.fromMillis(1_830_000_000_000),
+  });
+  const vlCounter = (likeCount = 1) => ({
+    schemaVersion: 1,
+    parentKind: "voiceMoment",
+    parentId: "vl-moment",
+    commentId: "vl-comment",
+    commentKey: VL_COMMENT_KEY,
+    likeCount,
+    updatedAt: Timestamp.fromMillis(1_830_000_000_000),
+  });
+
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    const db = context.firestore();
+    await Promise.all([
+      ...[
+        "vl-author-uid",
+        "vl-commenter-uid",
+        "vl-liker-uid",
+        "vl-stranger-uid",
+      ].map((uid) =>
+        setDoc(doc(db, `users/${uid}`), {
+          uid,
+          displayName: uid,
+          banned: false,
+        })),
+      setDoc(doc(db, "users/vl-staff-uid"), {
+        uid: "vl-staff-uid",
+        displayName: "Staff",
+        role: "superAdmin",
+        banned: false,
+      }),
+      setDoc(doc(db, "voiceMoments/vl-moment"), {
+        authorId: "vl-author-uid",
+        isPublished: true,
+        likeCount: 1,
+        commentCount: 1,
+      }),
+      setDoc(doc(db, "voiceMoments/vl-moment/likes/vl-liker-uid"), {
+        schemaVersion: 1,
+        userId: "vl-liker-uid",
+        momentId: "vl-moment",
+        createdAt: Timestamp.fromMillis(1_830_000_000_000),
+      }),
+      setDoc(doc(db, "voiceMoments/vl-moment/comments/vl-comment"), {
+        type: "text",
+        authorId: "vl-commenter-uid",
+        text: "A comment people like",
+        createdAt: Timestamp.fromMillis(1_830_000_000_000),
+      }),
+      setDoc(doc(db, `commentLikes/${VL_EDGE_ID}`), vlEdge()),
+      setDoc(doc(db, `commentLikeCounters/${VL_COMMENT_KEY}`), vlCounter()),
+      setDoc(doc(db, `likerPageCursors/${VL_CURSOR}`), {
+        schemaVersion: 1,
+        viewerId: "vl-liker-uid",
+        targetKey: "0".repeat(64),
+        afterCreatedAt: Timestamp.fromMillis(1_830_000_000_000),
+        afterId: "vl-author-uid",
+        afterEmojiIndex: null,
+        afterUid: null,
+        expiresAt: Timestamp.fromMillis(4_000_000_000_000),
+        createdAt: Timestamp.fromMillis(1_830_000_000_000),
+      }),
+      setDoc(doc(db, "appConfig/likersV1"), {
+        schemaVersion: 1,
+        enabled: false,
+        serverMessagesEnabled: false,
+        updatedAt: Timestamp.fromMillis(1_830_000_000_000),
+      }),
+    ]);
+  });
+
+  await check(
+    "VIP LIKERS: commentLikes and commentLikeCounters are unreadable by every party",
+    async () => {
+      for (const party of likersParties) {
+        const db = party.firestore();
+        await assertFails(getDoc(doc(db, `commentLikes/${VL_EDGE_ID}`)));
+        await assertFails(
+          getDoc(doc(db, `commentLikeCounters/${VL_COMMENT_KEY}`)),
+        );
+        await assertFails(getDocs(collection(db, "commentLikes")));
+        await assertFails(getDocs(collection(db, "commentLikeCounters")));
+        // The likers list's own page query (commentKey, createdAt desc,
+        // __name__ desc) and the V2 view's two state queries, as a client
+        // would try to run them directly.
+        await assertFails(
+          getDocs(
+            query(
+              collection(db, "commentLikes"),
+              where("commentKey", "==", VL_COMMENT_KEY),
+              orderBy("createdAt", "desc"),
+              orderBy(documentId(), "desc"),
+              limit(21),
+            ),
+          ),
+        );
+        await assertFails(
+          getDocs(
+            query(
+              collection(db, "commentLikeCounters"),
+              where("commentKey", "in", [VL_COMMENT_KEY]),
+            ),
+          ),
+        );
+      }
+      // Not even the liker may read back their own edge by a self filter.
+      await assertFails(
+        getDocs(
+          query(
+            collection(likersLiker.firestore(), "commentLikes"),
+            where("userId", "==", "vl-liker-uid"),
+            where("commentKey", "in", [VL_COMMENT_KEY]),
+          ),
+        ),
+      );
+    },
+  );
+
+  await check(
+    "VIP LIKERS: commentLikes and commentLikeCounters are unwritable, in any shape",
+    async () => {
+      for (const party of likersParties) {
+        const db = party.firestore();
+        const edgeRef = doc(db, `commentLikes/${VL_EDGE_ID}`);
+        const counterRef = doc(db, `commentLikeCounters/${VL_COMMENT_KEY}`);
+        await assertFails(setDoc(edgeRef, vlEdge()));
+        await assertFails(updateDoc(edgeRef, { userId: "vl-stranger-uid" }));
+        await assertFails(deleteDoc(edgeRef));
+        await assertFails(setDoc(counterRef, vlCounter(9999)));
+        await assertFails(updateDoc(counterRef, { likeCount: 0 }));
+        await assertFails(deleteDoc(counterRef));
+        await assertFails(
+          addDoc(collection(db, "commentLikes"), vlEdge()),
+        );
+      }
+      // The toggle's real write pattern (edge + counter together) is refused
+      // as a whole, as a batch and as a transaction, even for the liker.
+      const db = likersLiker.firestore();
+      const forgedEdge = doc(
+        db,
+        `commentLikes/${VL_COMMENT_KEY}:vl-stranger-uid`,
+      );
+      const counterRef = doc(db, `commentLikeCounters/${VL_COMMENT_KEY}`);
+      const batch = writeBatch(db);
+      batch.set(forgedEdge, { ...vlEdge(), userId: "vl-stranger-uid" });
+      batch.set(counterRef, vlCounter(2));
+      await assertFails(batch.commit());
+      await assertFails(
+        runTransaction(db, async (transaction) => {
+          await transaction.get(counterRef);
+          transaction.set(forgedEdge, { ...vlEdge(), userId: "vl-stranger-uid" });
+          transaction.set(counterRef, vlCounter(2));
+        }),
+      );
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        const stored = await getDoc(
+          doc(context.firestore(), `commentLikeCounters/${VL_COMMENT_KEY}`),
+        );
+        assert.equal(stored.data().likeCount, 1);
+        assert.equal(
+          (
+            await getDoc(
+              doc(
+                context.firestore(),
+                `commentLikes/${VL_COMMENT_KEY}:vl-stranger-uid`,
+              ),
+            )
+          ).exists(),
+          false,
+        );
+      });
+    },
+  );
+
+  await check(
+    "VIP LIKERS: collectionGroup('commentLikes'), ('commentLikeCounters') and ('likes') all fail",
+    async () => {
+      // Two collection-group ids now hold like edges. No `{path=**}` rule
+      // exists for either, so no collection-group query may reach them, with
+      // or without a self filter (ADR-006, ADR-007).
+      for (const party of likersParties) {
+        const db = party.firestore();
+        await assertFails(getDocs(query(collectionGroup(db, "commentLikes"))));
+        await assertFails(
+          getDocs(query(collectionGroup(db, "commentLikeCounters"))),
+        );
+        await assertFails(getDocs(query(collectionGroup(db, "likes"))));
+        await assertFails(
+          getDocs(
+            query(
+              collectionGroup(db, "commentLikes"),
+              where("userId", "==", "vl-liker-uid"),
+            ),
+          ),
+        );
+        await assertFails(
+          getDocs(
+            query(
+              collectionGroup(db, "likes"),
+              where("userId", "==", "vl-liker-uid"),
+            ),
+          ),
+        );
+        await assertFails(
+          getDocs(
+            query(
+              collectionGroup(db, "likes"),
+              where("momentId", "==", "vl-moment"),
+              orderBy("createdAt", "desc"),
+            ),
+          ),
+        );
+      }
+    },
+  );
+
+  await check(
+    "VIP LIKERS: likerPageCursors are unreadable and unwritable",
+    async () => {
+      // The cursor's owner (vl-liker-uid) included: the stored position may be
+      // a hidden liker's uid, so only the callable ever resolves it.
+      for (const party of likersParties) {
+        const db = party.firestore();
+        const cursorRef = doc(db, `likerPageCursors/${VL_CURSOR}`);
+        await assertFails(getDoc(cursorRef));
+        await assertFails(getDocs(collection(db, "likerPageCursors")));
+        await assertFails(
+          getDocs(
+            query(
+              collection(db, "likerPageCursors"),
+              where("viewerId", "==", "vl-liker-uid"),
+            ),
+          ),
+        );
+        await assertFails(
+          getDocs(query(collectionGroup(db, "likerPageCursors"))),
+        );
+        await assertFails(
+          setDoc(doc(db, `likerPageCursors/${"B".repeat(43)}`), {
+            schemaVersion: 1,
+            viewerId: "vl-liker-uid",
+            targetKey: "0".repeat(64),
+            afterCreatedAt: null,
+            afterId: null,
+            afterEmojiIndex: null,
+            afterUid: null,
+            expiresAt: Timestamp.fromMillis(4_000_000_000_000),
+            createdAt: Timestamp.fromMillis(1_830_000_000_000),
+          }),
+        );
+        await assertFails(
+          updateDoc(cursorRef, { expiresAt: Timestamp.fromMillis(4_100_000_000_000) }),
+        );
+        await assertFails(deleteDoc(cursorRef));
+      }
+    },
+  );
+
+  await check(
+    "VIP LIKERS: appConfig/likersV1 is unreadable and cannot be flipped, even by staff",
+    async () => {
+      for (const party of likersParties) {
+        const db = party.firestore();
+        const configRef = doc(db, "appConfig/likersV1");
+        await assertFails(getDoc(configRef));
+        await assertFails(getDocs(collection(db, "appConfig")));
+        await assertFails(
+          updateDoc(configRef, { enabled: true, serverMessagesEnabled: true }),
+        );
+        await assertFails(
+          setDoc(configRef, {
+            schemaVersion: 1,
+            enabled: true,
+            serverMessagesEnabled: true,
+            updatedAt: serverTimestamp(),
+          }),
+        );
+        await assertFails(deleteDoc(configRef));
+      }
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        const stored = await getDoc(
+          doc(context.firestore(), "appConfig/likersV1"),
+        );
+        assert.equal(stored.data().enabled, false);
+      });
+    },
+  );
+
+  await check(
+    "VIP LIKERS: likesHidden is server-only on users/{uid}",
+    async () => {
+      const ownerDb = likersLiker.firestore();
+      const ownRef = doc(ownerDb, "users/vl-liker-uid");
+      // Neither value, nor the timestamp alone, nor both, nor a removal.
+      await assertFails(updateDoc(ownRef, { likesHidden: true }));
+      await assertFails(updateDoc(ownRef, { likesHidden: false }));
+      await assertFails(
+        updateDoc(ownRef, { likesHiddenUpdatedAt: serverTimestamp() }),
+      );
+      await assertFails(
+        updateDoc(ownRef, {
+          likesHidden: true,
+          likesHiddenUpdatedAt: serverTimestamp(),
+        }),
+      );
+      await assertFails(
+        setDoc(ownRef, { likesHidden: true }, { merge: true }),
+      );
+      // Hiding a legitimate field change alongside it does not help.
+      await assertFails(
+        updateDoc(ownRef, { bio: "hello", likesHidden: true }),
+      );
+
+      // A first write cannot carry it either.
+      const fresh = testEnv.authenticatedContext("vl-fresh-uid", {
+        email_verified: true,
+      });
+      const freshProfile = {
+        uid: "vl-fresh-uid",
+        email: "vl-fresh@yovoice.app",
+        displayName: "Fresh Liker",
+        username: "vlfresh",
+        accountType: "personal",
+        friendCount: 0,
+        isOnline: true,
+        lastSeen: serverTimestamp(),
+      };
+      await assertFails(
+        setDoc(doc(fresh.firestore(), "users/vl-fresh-uid"), {
+          ...freshProfile,
+          likesHidden: true,
+        }),
+      );
+      await assertFails(
+        setDoc(doc(fresh.firestore(), "users/vl-fresh-uid"), {
+          ...freshProfile,
+          likesHidden: false,
+          likesHiddenUpdatedAt: serverTimestamp(),
+        }),
+      );
+      // Control: the same payload without the field is a valid bootstrap, so
+      // the refusals above are about likesHidden and nothing else.
+      await assertSucceeds(
+        setDoc(doc(fresh.firestore(), "users/vl-fresh-uid"), freshProfile),
+      );
+
+      // Old clients keep working: an owner update of another field on a
+      // document that already holds the server-written value succeeds
+      // (the allowlist is a diff), and cannot clear it.
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        await updateDoc(doc(context.firestore(), "users/vl-liker-uid"), {
+          likesHidden: true,
+          likesHiddenUpdatedAt: Timestamp.fromMillis(1_830_000_000_000),
+        });
+      });
+      await assertSucceeds(updateDoc(ownRef, { bio: "Still editable" }));
+      await assertSucceeds(
+        updateDoc(ownRef, {
+          isOnline: true,
+          lastSeen: serverTimestamp(),
+          presenceUpdatedAt: serverTimestamp(),
+        }),
+      );
+      await assertFails(updateDoc(ownRef, { likesHidden: false }));
+      await assertFails(updateDoc(ownRef, { likesHidden: deleteField() }));
+      const own = await assertSucceeds(getDoc(ownRef));
+      assert.equal(own.data().likesHidden, true);
+
+      // The setting is private: nobody else can read it, staff clients
+      // included, and users cannot be listed or queried by it.
+      for (const party of [
+        likersAuthor,
+        likersCommenter,
+        likersStranger,
+        likersStaff,
+        likersAnonymous,
+      ]) {
+        const db = party.firestore();
+        await assertFails(getDoc(doc(db, "users/vl-liker-uid")));
+        await assertFails(
+          getDocs(query(collection(db, "users"), where("likesHidden", "==", true))),
+        );
+        await assertFails(updateDoc(doc(db, "users/vl-liker-uid"), {
+          likesHidden: false,
+        }));
+      }
     },
   );
 

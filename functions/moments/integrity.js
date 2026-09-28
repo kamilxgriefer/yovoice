@@ -44,6 +44,34 @@ const {
   writeCommentMentions,
 } = require("../notifications/comment_mentions");
 const defaultLogger = require("firebase-functions/logger");
+const {
+  COMMENT_LIKE_VIEW_READS,
+  applyCommentLikeToggle,
+  commentLikeKey,
+  commentLikeReferences,
+  commentLikeUserIdOf,
+  commentLikeWriteState,
+  HIDDEN_COMMENT_LIKE_COUNT,
+  commentUnavailable,
+  isCommentRefusal,
+  loadCommentLikeStates,
+  requireIncludeCommentLikes,
+  validateCommentLike,
+} = require("../engagement/comment_likes");
+const {
+  LIKER_CONTEXT_MAX_READS,
+  likesHiddenOf,
+} = require("../engagement/liker_audience");
+const { LIKERS_SURFACES } = require("../engagement/likers_activation");
+const { LIKERS_ADMISSION_READS } = require("../engagement/likers_admission");
+const { serveLikersList } = require("../engagement/likers_callable");
+const {
+  LIKERS_CHUNK,
+  LIKERS_MAX_FETCHED,
+  LIKERS_PAGE_SIZE,
+  LIKERS_SCAN_CAP,
+  queryCandidateFetcher,
+} = require("../engagement/likers_paging");
 
 // HttpsError's canonical code set. The feed's drop counter reports codes and
 // nothing else, so anything that is not one of these — a raw Node error, a
@@ -231,6 +259,39 @@ const VOICE_MOMENT_V2_READ_BUDGETS = Object.freeze({
     MAX_THREAD_REACTIONS * 2 +
     (1 + MAX_THREAD_COMMENTS + MAX_THREAD_REACTIONS * 2) * 7 +
     (1 + MAX_THREAD_COMMENTS),
+});
+// A view requested with includeCommentLikes (ADR-230) costs exactly the
+// unflagged view plus the two comment-like queries; an unflagged view is
+// unchanged. Kept beside the frozen V2 constants rather than inside them so
+// the pinned unflagged budgets stay byte-identical.
+const VOICE_MOMENT_V2_COMMENT_LIKES_READ_BUDGETS = Object.freeze({
+  viewTypical: VOICE_MOMENT_V2_READ_BUDGETS.viewTypical + COMMENT_LIKE_VIEW_READS,
+  viewWorst: VOICE_MOMENT_V2_READ_BUDGETS.viewWorst + COMMENT_LIKE_VIEW_READS,
+});
+
+// "See who liked" (ADR-230), one listVoiceMomentLikersV1 page. Fixed part:
+// admission (activation 1 + likers budgets 3 + the caller's users,
+// entitlements, vipGrants and restrictions 4), a cursor document 1 on later
+// pages, the Moment (+ the comment) and the same again for the fresh
+// response-time re-check, and the Voice audience context of each distinct
+// parent author: users, restrictions and publicProfiles 3, both blocks 2 and,
+// for a friends-only author, both friendship guards 2 (yourself: 3). Per
+// candidate: at most three chunks of 21 edges are fetched (60 consumed plus
+// each chunk's sentinel) and a consumed liker costs 5 (public) to
+// LIKER_CONTEXT_MAX_READS.content (friends-only) context reads.
+// Typical = first page, 21 edges, 20 visible public likers, public author.
+const VOICE_MOMENT_LIKERS_READ_BUDGETS = Object.freeze({
+  momentTypical:
+    LIKERS_ADMISSION_READS + 1 + 5 + LIKERS_CHUNK + LIKERS_PAGE_SIZE * 5 + 1,
+  momentWorst:
+    LIKERS_ADMISSION_READS + 1 + 1 + 7 + LIKERS_MAX_FETCHED +
+    LIKERS_SCAN_CAP * LIKER_CONTEXT_MAX_READS.content + 1,
+  commentTypical:
+    LIKERS_ADMISSION_READS + 2 + 5 * 2 + LIKERS_CHUNK +
+    LIKERS_PAGE_SIZE * 5 + 2,
+  commentWorst:
+    LIKERS_ADMISSION_READS + 1 + 2 + 7 * 2 + LIKERS_MAX_FETCHED +
+    LIKERS_SCAN_CAP * LIKER_CONTEXT_MAX_READS.content + 2,
 });
 
 function exactFollowingEdge(snapshot, targetId) {
@@ -1512,12 +1573,25 @@ function createMomentIntegrityService({
 
   async function getVoiceMomentViewV2(request) {
     const auth = requireActor(request, { verified: false });
+    // `includeCommentLikes` is an OPT-IN request flag (ADR-230), the
+    // getReelViewV2 `commentTypes` precedent: installed builds 36-38 parse
+    // this response with an EXACT key set and never send it, so their
+    // requests and responses stay byte-identical.
     const data = requireExactInput(
       request.data,
-      ["commentCursor", "commentLimit", "momentId", "reactionLimit"],
+      [
+        "commentCursor",
+        "commentLimit",
+        "includeCommentLikes",
+        "momentId",
+        "reactionLimit",
+      ],
       ["momentId"],
     );
     const momentId = requireId(data.momentId, "momentId");
+    const includeCommentLikes = requireIncludeCommentLikes(
+      data.includeCommentLikes,
+    );
     const commentCursor = data.commentCursor === undefined
       ? null
       : decodeVoiceMomentPageCursor(data.commentCursor, {
@@ -1539,8 +1613,9 @@ function createMomentIntegrityService({
     const timing = time();
     await beginVoiceMomentReadAttempt(auth.uid, timing);
 
+    let view;
     try {
-      return await db.runTransaction(async (transaction) => {
+      view = await db.runTransaction(async (transaction) => {
         const momentRef = db.doc(`voiceMoments/${momentId}`);
         const [moment, viewerProfile, viewerRestriction, callerLike] =
           await transactionGetAll(
@@ -1692,6 +1767,16 @@ function createMomentIntegrityService({
               context: contexts.get(reaction.userId),
               nowMs: responseTiming.nowMs,
             });
+            // "Hide my likes" (ADR-230): the reactor's own private setting,
+            // read from the users/{uid} snapshot the audience context already
+            // holds (no extra read). You always see yourself. Fewer than
+            // reactionLimit entries is already a valid installed-build shape.
+            if (
+              reaction.userId !== auth.uid &&
+              likesHiddenOf(contexts.get(reaction.userId)?.authorProfile)
+            ) {
+              continue;
+            }
             const identity = canonicalPublicProfile(
               context.publicProfile,
               reaction.userId,
@@ -1739,6 +1824,143 @@ function createMomentIntegrityService({
       }
       throw error;
     }
+    if (!includeCommentLikes) return view;
+    // After the view's own transaction, keyed on the PROJECTED comments only:
+    // a withheld comment gets no entry, so the map reveals nothing the
+    // comments array does not. +COMMENT_LIKE_VIEW_READS reads, no lock.
+    return {
+      ...view,
+      commentLikes: await loadCommentLikeStates({
+        db,
+        parentKind: "voiceMoment",
+        parentId: momentId,
+        commentIds: view.comments.map((comment) => comment.commentId),
+        viewerId: auth.uid,
+      }),
+    };
+  }
+
+  // "See who liked" for a Voice Moment or one of its comments (ADR-230).
+  // Premium / canonical VIP / staff preview only, behind appConfig/likersV1.
+  // The parent is authorized exactly as getVoiceMomentViewV2 shows it: a
+  // published, unexpired Moment whose author passes the Voice audience rule
+  // for the caller and, for a comment target, a canonical comment whose
+  // author passes it too. Then the one liker predicate filters every liker.
+  // Nothing here charges the Voice `read` budget, and nothing runs in a
+  // read-write transaction.
+  async function listVoiceMomentLikersV1(request) {
+    return serveLikersList({
+      db,
+      Timestamp,
+      request,
+      family: "voiceMoment",
+      surface: LIKERS_SURFACES.CONTENT,
+      time,
+      logger,
+      openTarget: async ({ input, auth, admitted, timing, reader, getAll }) => {
+        const { momentId, commentId } = input;
+        const momentRef = db.doc(`voiceMoments/${momentId}`);
+        const commentRef = commentId === null
+          ? null
+          : db.doc(`voiceMoments/${momentId}/comments/${commentId}`);
+        const parentReferences = commentRef === null
+          ? [momentRef]
+          : [momentRef, commentRef];
+        const [moment, comment] = await getAll(...parentReferences);
+        const momentData = publishedMomentForRead(moment, momentId, timing.nowMs);
+        const commentData = commentRef === null
+          ? null
+          : validateComment(comment, momentId);
+        const authorIds = [
+          momentData.authorId,
+          ...(commentData === null ? [] : [commentData.authorId]),
+        ];
+        const contexts = await loadVoiceAudienceContexts(
+          reader,
+          auth.uid,
+          authorIds,
+        );
+        for (const authorId of authorIds) {
+          assertVoiceMomentAudienceFromContext({
+            viewerId: auth.uid,
+            viewerProfile: admitted.callerProfile,
+            viewerRestriction: admitted.callerRestriction,
+            authorId,
+            context: contexts.get(authorId),
+            nowMs: timing.nowMs,
+          });
+        }
+
+        let fetchCandidates;
+        if (commentRef === null) {
+          fetchCandidates = queryCandidateFetcher({
+            query: momentRef.collection("likes"),
+            documentIdField: FieldPath.documentId(),
+            toLikerId: (document) => {
+              try {
+                return validateMomentLike(document, momentId, document.id)
+                  ? document.id
+                  : null;
+              } catch (_) {
+                // A malformed edge is skipped (but consumed), never an
+                // identity oracle.
+                return null;
+              }
+            },
+          });
+        } else {
+          const commentKey = commentLikeKey("voiceMoment", momentId, commentId);
+          fetchCandidates = queryCandidateFetcher({
+            query: db
+              .collection("commentLikes")
+              .where("commentKey", "==", commentKey),
+            documentIdField: FieldPath.documentId(),
+            toLikerId: (document) => {
+              const userId = commentLikeUserIdOf(document.id, commentKey);
+              if (userId === null) return null;
+              try {
+                return validateCommentLike(document, {
+                  parentKind: "voiceMoment",
+                  parentId: momentId,
+                  commentId,
+                  userId,
+                })
+                  ? userId
+                  : null;
+              } catch (_) {
+                return null;
+              }
+            },
+          });
+        }
+
+        return {
+          fetchCandidates,
+          // A fresh read at response time: a Moment deleted, expired or
+          // hidden (or a comment removed) during the scan is not listed.
+          recheck: async () => {
+            const responseTiming = time();
+            const [freshMoment, freshComment] = await getAll(
+              ...parentReferences,
+            );
+            const fresh = publishedMomentForRead(
+              freshMoment,
+              momentId,
+              responseTiming.nowMs,
+            );
+            if (fresh.authorId !== momentData.authorId) {
+              fail("data-loss", "The Voice Moment author changed.");
+            }
+            if (commentRef !== null) {
+              const freshCommentData = validateComment(freshComment, momentId);
+              if (freshCommentData.authorId !== commentData.authorId) {
+                fail("data-loss", "The comment author changed.");
+              }
+            }
+          },
+        };
+      },
+    });
   }
 
   async function beginStoragePreflight({
@@ -2338,6 +2560,161 @@ function createMomentIntegrityService({
         ledgerRef,
         ledgerData({
           kind: "moment.like",
+          uid: auth.uid,
+          requestId,
+          inputHash: identity.inputHash,
+          result,
+          now: timing.now,
+        }),
+      );
+      return result;
+    });
+  }
+
+  // Like or unlike one Voice Moment comment (ADR-230). Not gated on Premium
+  // and not behind appConfig/likersV1: everyone may like a comment, and the
+  // counts must exist before any list is exposed. The edge and its counter
+  // live in the flat commentLikes / commentLikeCounters store; the comment
+  // document itself is never written (its validator takes an exact key set).
+  //
+  // Direction matters for the audience checks. Liking needs the same
+  // audience the view applies to the Moment author AND the comment author,
+  // so a comment the view would hide cannot be liked. Unliking an edge the
+  // caller already holds skips both checks: they would reveal nothing (the
+  // caller made that edge) and a like must never get stuck behind a later
+  // block, privacy change or mute. Every Moment or comment refusal is the
+  // one uniform `permission-denied`; the caller's own account state and
+  // store corruption keep their codes.
+  async function setMomentCommentLikeV1(request) {
+    const auth = requireActor(request);
+    const data = requireExactInput(
+      request.data,
+      ["commentId", "liked", "momentId", "requestId"],
+      ["commentId", "liked", "momentId", "requestId"],
+    );
+    const momentId = requireId(data.momentId, "momentId");
+    const commentId = requireId(data.commentId, "commentId");
+    const requestId = requireRequestId(data.requestId);
+    const liked = requireBoolean(data.liked, "liked");
+    const identity = operationIdentity(
+      "moment.comment.like",
+      auth.uid,
+      requestId,
+      { commentId, liked, momentId },
+    );
+    const timing = time();
+    // The `like` budget is shared with Moment likes (60/min).
+    const attempt = await beginOperationAttempt({
+      identity,
+      kind: "moment.comment.like",
+      uid: auth.uid,
+      scope: "like",
+      timing,
+    });
+    if (attempt.replay) return attempt.replay;
+
+    const target = {
+      parentKind: "voiceMoment",
+      parentId: momentId,
+      commentId,
+      userId: auth.uid,
+    };
+    const references = commentLikeReferences(db, target);
+    return db.runTransaction(async (transaction) => {
+      const ledgerRef = ledgerReference(identity);
+      const momentRef = db.doc(`voiceMoments/${momentId}`);
+      const [
+        ledger,
+        moment,
+        comment,
+        edge,
+        counter,
+        viewerProfile,
+        viewerRestriction,
+      ] = await transactionGetAll(
+        transaction,
+        ledgerRef,
+        momentRef,
+        momentRef.collection("comments").doc(commentId),
+        references.edgeRef,
+        references.counterRef,
+        db.doc(`users/${auth.uid}`),
+        db.doc(`restrictions/${auth.uid}`),
+      );
+      const replay = assertLedgerReplay(ledger, {
+        kind: "moment.comment.like",
+        uid: auth.uid,
+        inputHash: identity.inputHash,
+      });
+      if (replay) return replay;
+      activeProfile(viewerProfile, "Your");
+      let authorIds;
+      try {
+        const momentData = validateMoment(moment, momentId, {
+          published: true,
+          activeAtMs: timing.nowMs,
+        });
+        const commentData = validateComment(comment, momentId);
+        authorIds = [momentData.authorId, commentData.authorId];
+      } catch (error) {
+        throw commentUnavailable(error);
+      }
+      const state = commentLikeWriteState(target, {
+        edgeSnapshot: edge,
+        counterSnapshot: counter,
+      });
+      // Review S9: an unlike of a like the caller holds is never refused,
+      // so a like cannot get stuck. The audience is still evaluated: when
+      // it would refuse, the unlike runs but the answer carries the stable
+      // HIDDEN_COMMENT_LIKE_COUNT instead of the fresh count (ADR-230).
+      // The caller's own restriction is their own state, not something the
+      // audience hides: it refuses a like with its own error and does not
+      // mask an unlike.
+      const heldUnlike = !liked && state.liked;
+      if (!heldUnlike) {
+        assertNotRestricted(viewerRestriction, "Your", timing.nowMs);
+      }
+      let audienceHidden = false;
+      try {
+        const contexts = await loadVoiceAudienceContexts(
+          transaction,
+          auth.uid,
+          authorIds,
+        );
+        for (const authorId of authorIds) {
+          assertVoiceMomentAudienceFromContext({
+            viewerId: auth.uid,
+            viewerProfile,
+            viewerRestriction: heldUnlike ? null : viewerRestriction,
+            authorId,
+            context: contexts.get(authorId),
+            nowMs: timing.nowMs,
+          });
+        }
+      } catch (error) {
+        if (!heldUnlike || !isCommentRefusal(error)) {
+          throw heldUnlike ? error : commentUnavailable(error);
+        }
+        audienceHidden = true;
+      }
+      const toggle = applyCommentLikeToggle(transaction, {
+        references,
+        target,
+        state,
+        liked,
+        now: timing.now,
+      });
+      const result = {
+        momentId,
+        commentId,
+        liked,
+        changed: toggle.changed,
+        likeCount: audienceHidden ? HIDDEN_COMMENT_LIKE_COUNT : toggle.likeCount,
+      };
+      transaction.create(
+        ledgerRef,
+        ledgerData({
+          kind: "moment.comment.like",
           uid: auth.uid,
           requestId,
           inputHash: identity.inputHash,
@@ -3823,9 +4200,11 @@ function createMomentIntegrityService({
     getVoiceMomentViewV2,
     getVoiceMomentMediaAccess,
     getVoiceMomentsFeedV2,
+    listVoiceMomentLikersV1,
     processCleanupOutbox,
     reserveMomentDraft,
     reserveVoiceCommentDraft,
+    setMomentCommentLikeV1,
     setMomentLike,
   };
 }
@@ -4015,6 +4394,8 @@ module.exports = {
   MIN_MOMENT_AVAILABILITY_HOURS,
   MOMENT_TTL_MS,
   PERMANENT_AVAILABILITY,
+  VOICE_MOMENT_LIKERS_READ_BUDGETS,
+  VOICE_MOMENT_V2_COMMENT_LIKES_READ_BUDGETS,
   VOICE_MOMENT_V2_READ_BUDGETS,
   canonicalCommentId,
   canonicalMomentId,

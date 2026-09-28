@@ -1206,6 +1206,91 @@ generation prevents a stale publisher transaction from restoring removed data.
 Existing conversation access is intentionally independent and reveals only the
 participant label already stored on that authorised conversation.
 
+## "See who liked" and Hide my likes (2026-09-28, ADR-230, source only, NOT deployed)
+
+[ADR-230](Decisions.md#adr-230-see-who-liked-is-a-premium-or-vip-capability-behind-an-activation-switch-comment-likes-live-in-a-flat-server-only-store)
+adds an **enumeration surface**: a caller can page through the people who
+liked something. Everything below is what bounds it.
+
+- **Who may list.** Paid Premium, a canonical `vipGrants/{uid}`
+  (`canonicalLikersVipGrant`, fail closed on any unexpected key, source,
+  `revoked` or expiry type) or the ADR-119 staff preview with a matching
+  signed role. Read per request from the caller's own documents; never
+  from `users.premiumIdentity`, the badge or any other client-visible field.
+  This is the one capability a VIP grant alone unlocks; ADR-053 holds for
+  everything else.
+- **When.** Only while `appConfig/likersV1` has exactly
+  `{schemaVersion: 1, enabled: true, serverMessagesEnabled, updatedAt}`;
+  the Server list also needs `serverMessagesEnabled: true`. Missing or
+  malformed = off (`likersNotEnabled`), checked before any budget or content
+  read. `appConfig/*` is `allow read, write: if false`.
+- **Whom a list shows.** The caller always sees their own like. Anyone else
+  only if active, not hiding likes, public (or friends-only with both
+  canonical friendship guards), not communication-muted, not blocked either
+  way, with a canonical public profile and, for a Server message, a
+  canonical member row. The parent must pass the family's own read rule
+  (Voice audience; Yeel content rule plus expiry; channel `read` capability),
+  re-checked with a fresh read at response time; every content refusal is
+  the same `permission-denied`.
+- **What a row carries.** `userId`, `displayName`, `photoUrl: null`,
+  `reaction`. No like time, no hidden count, no hidden reason. Avatars go
+  through the existing viewer-authorized media grant.
+- **Paging.** Fixed page size 20 (no client `limit`), scan cap 60, cursor
+  after the last consumed candidate, stored server-side in
+  `likerPageCursors/{token}` (32 random bytes; bound to viewer, target and
+  emoji filter; 15-minute expiry plus a TTL policy). A foreign, expired,
+  other-target or malformed cursor is `invalid-argument`. Replaying a cursor
+  returns the same page, so reuse is not an oracle.
+- **Budgets** (the only scraping control; App Check stays off):
+  `likers.list` 10/min, `likers.listHourly` 120/h, `likers.listDaily`
+  500/day per account, shared by the three lists. Exhaustion logs
+  `likers budget exhausted` with the scope and no uid; the
+  `likers.listDaily` alert is in [DEPLOYMENT.md](DEPLOYMENT.md#see-who-liked-adr-230--source-only-nothing-deployed).
+- **No write locks.** A list call's only transaction touches its three
+  `privateRateLimits` documents; content is read with plain reads (pinned by
+  tests that spy on `runTransaction`).
+- **Server-only stores.** `commentLikes`, `commentLikeCounters` and
+  `likerPageCursors` are `allow read, write: if false` for every client,
+  including the liker, the author and staff. Neither `commentLikes` nor
+  `likes` has a `{path=**}` rule, so every `collectionGroup()` query over
+  them is refused (emulator-tested with the real queries, ADR-007). The
+  comment-like id is deliberately not `likes`.
+- **Hide my likes.** `users/{uid}.likesHidden` / `likesHiddenUpdatedAt` are
+  server-written by `setMyLikesHiddenV1` only: absent from the owner update
+  allowlist and from `userCreateAllowed`, so a direct write, a merge, a
+  create or a removal is denied, while an older client's update of other
+  fields on the same document still succeeds (diff allowlist). The document
+  is owner-get only. Malformed stored values read as hidden. It applies to
+  every list and to Top reactions, and is not behind the activation switch.
+- **Closed:** the ADR-140 `voiceMoments/{id}/likes/{uid}` client read
+  (owner decision 2026-09-28). It listed every liker uid of a published
+  Moment to any signed-in Build ≤ 19 or modified client with no filter. No
+  build 36+ or website path read it.
+
+**Residual disclosures (accepted in ADR-230, not bugs):**
+
+1. The partial footer ("Some people aren't shown.") reveals that at least one
+   liker in the listed window is hidden: the public count minus the rows
+   listed says the same.
+2. A short page with `hasMore: true` reveals a run of at least 41 hidden
+   likers within 60 candidates, never who or why.
+3. **Server `reactions` map oracle.** Every reader of a Server channel,
+   guests included, still receives `{uid: emoji}` on each message
+   (`server_rules.test.js` pins this so its removal is noticed). A modified
+   client comparing it with `listServerChannelMessageReactorsV1` learns that
+   a missing reactor is blocked, private or friends-only, muted, deleted,
+   departed or hiding likes, and can narrow some to "hides likes or is
+   muted". Hide my likes cannot remove a uid from the map. Follow-up at
+   3.5.0 (40); until then `serverMessagesEnabled: false` switches the Server
+   list off alone.
+4. **Unlike of a held comment like.** `setMomentCommentLikeV1` and
+   `setReelCommentLikeV1` with `liked: false` never refuse a caller who holds
+   the edge (a like must not get stuck behind a later block or privacy
+   change). The success reveals that the parent and the comment still exist
+   and are published. When the audience would refuse, the answer carries
+   `likeCount: 0` (`HIDDEN_COMMENT_LIKE_COUNT`), never the fresh count
+   (`comment_likes.test.js` pins both). Once per held edge only.
+
 ## Private media rollout status (Build 19 tester deployment complete)
 
 Room covers, profile media and Voice Moments no longer treat Firebase
@@ -1283,6 +1368,28 @@ access to something another user controls:
       owner changes it; reading the CURRENT root and letting the flip
       invalidate them is the answer that needs no sweep
       ([ADR-207](Decisions.md#adr-207-an-invitation-to-a-server-anyone-may-join-is-a-pointer-not-a-key)).
+- [ ] Does the new path **enumerate people** (a list of likers, members,
+      followers)? Then every row must pass the same per-person filter as the
+      rest of the product (active, blocks both ways, profile visibility,
+      mute, any opt-out such as `likesHidden`), the page size must be a
+      server constant, a cursor must not carry a possibly hidden identity
+      (store it server-side), there must be a dedicated rate budget with a
+      daily cap and an alert, and the residual disclosures must be written
+      down ([ADR-230](Decisions.md#adr-230-see-who-liked-is-a-premium-or-vip-capability-behind-an-activation-switch-comment-likes-live-in-a-flat-server-only-store)).
+- [ ] Is a **new private setting** stored on `users/{uid}`? Keep it out of
+      the owner update allowlist and `userCreateAllowed` unless the owner may
+      really write it directly, give it one callable writer, fail closed on a
+      malformed stored value, and add the rules cases: owner update, merge,
+      create and removal denied; another field's update on a document that
+      already holds it still allowed.
+- [ ] Does a **VIP grant** authorize anything new? Only through a
+      canonical, fail-closed predicate (`canonicalLikersVipGrant`), never
+      through `grantIsActive` or the badge mirror, and record the exception
+      to ADR-053 in an ADR.
+- [ ] Is an existing **client read bridge** still needed? If a new
+      server-filtered path replaces what it exposes, check which installed
+      builds and the website still read it, and close it rather than
+      leaving an unfiltered path beside the filtered one.
 
 ### Availability status (2026-09-06, ADR-150)
 

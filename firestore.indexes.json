@@ -523,6 +523,38 @@
       ]
     },
     {
+      "collectionGroup": "commentLikes",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "commentKey",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "commentLikes",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "userId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "commentKey",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
       "collectionGroup": "reelCleanupOutbox",
       "queryScope": "COLLECTION",
       "fields": [
@@ -880,6 +912,12 @@
     },
     {
       "collectionGroup": "voiceMomentReportReceipts",
+      "fieldPath": "expiresAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "likerPageCursors",
       "fieldPath": "expiresAt",
       "ttl": true,
       "indexes": []

@@ -42,6 +42,17 @@ class MemoryDocumentReference {
     this.database._set(this.database._documents, this, data, options);
   }
 
+  async create(data) {
+    if (this.database._documents.has(this.path)) {
+      throw new Error(`document exists: ${this.path}`);
+    }
+    this.database._set(this.database._documents, this, data);
+  }
+
+  async delete() {
+    this.database._documents.delete(this.path);
+  }
+
   async update(data) {
     if (!this.database._documents.has(this.path)) {
       throw new Error(`document missing: ${this.path}`);
@@ -70,8 +81,15 @@ class MemoryQuery {
   }
 
   where(field, operator, value) {
-    if (operator !== "==" && operator !== "<=") {
+    if (operator !== "==" && operator !== "<=" && operator !== "in") {
       throw new Error(`unsupported operator: ${operator}`);
+    }
+    // Firestore's own `in` limits: a non-empty array of at most 30 values.
+    if (
+      operator === "in" &&
+      (!Array.isArray(value) || value.length === 0 || value.length > 30)
+    ) {
+      throw new Error("an `in` filter needs 1-30 values");
     }
     return this._copy({
       filters: [...this.config.filters, { field, operator, value }],
@@ -108,6 +126,7 @@ class MemoryQuery {
         const left = record.data?.[filter.field];
         if (left === undefined) return false;
         if (filter.operator === "==") return left === filter.value;
+        if (filter.operator === "in") return filter.value.includes(left);
         const normalizedLeft = left instanceof Date ? left.getTime() : left;
         const normalizedRight = filter.value instanceof Date
           ? filter.value.getTime()

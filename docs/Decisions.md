@@ -8869,7 +8869,10 @@ state.
 
 ## ADR-140: Voice Moment privacy moves to bounded v2 projections before the legacy direct-read cutover
 
-**Status**: Accepted in source; backend deployment and Build 20 client migration pending
+**Status**: Accepted in source; backend deployment and Build 20 client migration pending.
+The `voiceMoments/{id}/likes` part of the legacy read bridge is closed by
+[ADR-230](#adr-230-see-who-liked-is-a-premium-or-vip-capability-behind-an-activation-switch-comment-likes-live-in-a-flat-server-only-store)
+(owner decision 2026-09-28); the root and `comments` reads are unchanged.
 **Date**: 2026-09-04
 
 ### Context
@@ -16881,3 +16884,186 @@ reels behind your avatar, and one row gives the footage back 60 px.
   100/200 %, high contrast, focus and state matrices, each looked at by the
   engineer and an independent accessibility reviewer. Nothing was checked on
   a device, simulator or real browser before landing — UNVERIFIED there.
+
+## ADR-230: "See who liked" is a Premium-or-VIP capability behind an activation switch; comment likes live in a flat server-only store
+
+**Date:** 2026-09-28 · **Status:** accepted in source (owner, 2026-09-28, in
+chat: scope, gate, filters, Hide my likes; then the four answers recorded
+under Decision 9) · NOT deployed · spec:
+`yovoice-evidence/2026-09-28/vip-likers/spec.md` (revision 2 + §12 owner
+answers) · **Amends** [ADR-053](#adr-053-paid-capabilities-come-only-from-the-trusted-entitlement-and-every-entry-boundary-fails-closed)
+for this one capability, and **closes** the `likes` part of
+[ADR-140](#adr-140-voice-moment-privacy-moves-to-bounded-v2-projections-before-the-legacy-direct-read-cutover)'s
+legacy read bridge.
+
+### Context
+
+Kamil asked for a list of who liked a Voice Moment, a Yeel, a Voice Moment or
+Yeel comment, and who reacted to a Server channel message, for paid Premium
+and for the people he has granted VIP (the testers), with blocked, private,
+restricted, suspended and deleted accounts never listed and a new "Hide my
+likes" setting. Comments had no likes at all. ADR-053 says only
+`entitlements/{uid}` authorizes a paid capability, and Premium cannot be
+bought today (billing is not live), so without an exception nobody but staff
+could use the feature. Likes that already exist were made before anyone was
+told a list could show them, and three surfaces already expose likers
+without any filter: the Build ≤ 19 `voiceMoments/{id}/likes` read bridge
+(ADR-140), the Server message `reactions` `{uid: emoji}` map every channel
+reader receives (ADR-216), and Top reactions (3 names, free).
+
+### Decision
+
+1. **Gate** (`functions/utils/likers_access.js`): paid Premium (an active
+   entitlement with its own `premiumIdentityEnabled === true`) OR a
+   **canonical** `vipGrants/{uid}` (exact key set, source in
+   `testerProgram | legacyRoleMigration | admin`, `revoked === false`,
+   `active` absent or `true`, `expiresAt` a Timestamp in the future or
+   `null`: `canonicalLikersVipGrant`) OR the ADR-119 staff preview with a
+   signed role claim matching the stored role. `grantIsActive` (which fails
+   open) stays for the badge only; every other paid capability keeps ADR-053.
+   The gate reads the caller's own `users`, `entitlements`, `vipGrants` and
+   `restrictions` per request, so a revoke (`revoked: true`) is immediate.
+2. **Exposure is switched, not deployed.** `appConfig/likersV1 =
+   {schemaVersion: 1, enabled, serverMessagesEnabled, updatedAt}` (exact
+   keys, any other shape = off) is read once per list call, before budgets.
+   Off answers `failed-precondition` `{reason: "likersNotEnabled"}`. Only an
+   operator with Admin credentials writes it. There is no `listedSince`
+   bound: a document that still carries that key reads as off.
+3. **Three family-local list callables with one response shape:**
+   `listVoiceMomentLikersV1` (Stage B), `listReelLikersV1` (Reels, not warm)
+   and `listServerChannelMessageReactorsV1` (the Servers message extension,
+   behind the Servers activation gate, outside the frozen 62/56/55
+   manifest). Order: auth, exact input, activation, budgets, gate, content.
+   Page size is a server constant (20; a `limit` key is `invalid-argument`);
+   the scan consumes candidates in order, stops at 20 visible or 60
+   consumed, and the cursor goes after the last consumed candidate. A
+   malformed edge whose `createdAt` the cursor cannot store (a map, array,
+   bytes, geopoint or reference: server-side data corruption only) never
+   refuses or strands a list: the page is cut back to the last storable
+   consumed position and the next page re-consumes past it; a page that
+   consumed nothing storable ends the list and logs a warning.
+   Cursors are opaque 43-character tokens backed by server-only
+   `likerPageCursors/{token}` (15 minutes, TTL on `expiresAt`), because a
+   plain `startAfter` cursor would carry a possibly hidden liker's uid. No
+   hidden count, no like time, no client photo URL (`photoUrl` is always
+   `null`). Content refusals collapse to one `permission-denied`. The scan
+   takes **no write locks**: budgets run in their own transaction over the
+   three `privateRateLimits` documents, the content uses plain reads, the
+   parent is re-read at response time, and the cursor is a separate
+   `create()`.
+4. **One liker predicate for all five targets**
+   (`functions/engagement/liker_audience.js`): you always see yourself;
+   anyone else must be an active account, not hiding likes, public (or
+   friends-only with both friendship guards), not communication-muted, not
+   blocked either way, with a canonical public profile and, for a Server
+   message, a canonical member row. Profile visibility applies to Yeel
+   likers too, although the Yeel content rule has none: a list exposes a
+   person.
+5. **Budgets are separate and the only anti-scraping control:**
+   `likers.list` 10/min, `likers.listHourly` 120/h, `likers.listDaily`
+   500/day, shared by the three lists; the Voice `read` and Yeel `view`
+   budgets are not charged. App Check stays off, as on every callable.
+6. **Comment likes** live in `commentLikes/{commentKey}:{uid}` and
+   `commentLikeCounters/{commentKey}` (`commentKey` =
+   `v:{momentId}:{commentId}` or `r:{reelId}:{commentId}`), written only by
+   `setMomentCommentLikeV1` / `setReelCommentLikeV1` (edge and counter in one
+   transaction, idempotent, sharing the `like` budget) and purged by the
+   comment-delete triggers. Comment documents stay byte-identical: their
+   validators and installed parsers take an exact key set. The V2 views
+   return comment-like state only when the request carries
+   `includeCommentLikes: true` (+2 reads, outside the view transaction), so
+   builds 36-38 see byte-identical responses. Removing a like you already
+   hold is never refused by the audience, so a like never gets stuck behind
+   a later block or privacy change. The audience is still evaluated: when it
+   would refuse, the unlike runs and the answer carries the stable
+   `likeCount: 0` (`HIDDEN_COMMENT_LIKE_COUNT`) instead of the fresh count.
+   The caller's own mute is not an audience refusal (it refuses a like with
+   its own error and does not mask an unlike).
+7. **Hide my likes** is `users/{uid}.likesHidden` (+
+   `likesHiddenUpdatedAt`), written only by `setMyLikesHiddenV1` (exact
+   `{hidden: boolean}`, `likes.visibility` 20/min, no e-mail verification
+   needed, active account required) and absent from the owner update
+   allowlist and `userCreateAllowed`. Missing or `false` = visible; any other
+   stored value = hidden (fail closed). It is **not** behind the activation
+   switch. Top reactions in `getVoiceMomentViewV2` honour it (zero extra
+   reads: the context already holds the reactor's `users` snapshot); counts
+   never change.
+8. **Rules:** explicit `allow read, write: if false` for `commentLikes`,
+   `commentLikeCounters` and `likerPageCursors`; `appConfig/*` was already
+   fully denied. The ADR-140 likes bridge `voiceMoments/{id}/likes/{uid}`
+   becomes `allow read, write: if false` (Decision 9.2).
+9. **Owner answers (2026-09-28), which override the spec's defaults:**
+   1. every existing like is listable once activation is on (no
+      `listedSince`);
+   2. **close** the ADR-140 likes read bridge. No build 36+ client path
+      and no website path reads that subcollection (verified in
+      `lib/` at 3.1.0+36, 3.2.0+37 and 3.3.0+38, and in `yovoice-website`
+      `origin/main`): `callerLiked` and Top reactions come from
+      `getVoiceMomentViewV2`. The root and `comments` parts of the bridge
+      are untouched and remain ADR-140's separate cutover;
+   3. Server reaction lists ship now (`serverMessagesEnabled: true`) with
+      the oracle below recorded;
+   4. this record is ADR-230 (ADR-229 is the Yeels create ring).
+
+### Reasoning
+
+A per-capability exception is narrower than treating VIP as paid: the
+canonical-grant predicate fails closed where `grantIsActive` fails open, and
+nothing else learns to trust `vipGrants`. The switch lets the backend, the
+rules and the build carrying Hide my likes ship first and gives people time
+to opt out before any list exists. Three callables keep each family's
+audience machinery and the Servers activation gate where they already live.
+Stored cursors and a fixed page size remove the easy hidden-count oracle that
+a client-chosen `limit` with a reusable cursor would have re-created. A flat
+store with a distinct collection id keeps comment likes out of the shared
+`likes` collection group (no future `{path=**}/likes` rule, query or index can
+cover them by accident) and makes each view's state two queries instead of
+two point reads per comment. Closing the likes bridge is what makes "Hide my
+likes" true for Voice Moment likes; no supported build loses anything.
+
+### Consequences
+
+- **Residual disclosures, accepted and recorded:**
+  1. the client's partial footer ("Some people aren't shown.") says at least
+     one liker in the listed window is hidden, the same fact as the public
+     count minus the rows listed;
+  2. a short page with `hasMore: true` reveals a run of at least 41 hidden
+     likers inside a 60-candidate window (not who, not why);
+  3. **the Server `reactions` map is an oracle.** Every channel reader,
+     guests included, still receives `{uid: emoji}` (Rules cannot hide one
+     field, and builds 36-38 draw the pill from it). A modified client that
+     compares it with the filtered list learns that a missing reactor is
+     blocked (either way), private or friends-only, muted, deleted, departed
+     or hiding likes, and with other reads can narrow some to "hides likes
+     or is muted". Hide my likes cannot remove a uid from that map; the
+     settings copy and the policy say so. Follow-up: server reactions without
+     a readable uid map (reaction counts + caller reaction projection + a
+     server-only reactor store), target 3.5.0 (40) plus a minimum-version
+     cutover; until then `serverMessagesEnabled: false` turns the Server list
+     off alone;
+  4. an unlike of a comment like the caller already holds succeeds even when
+     the commenter or the Moment/Yeel author has since blocked the caller or
+     become private or friends-only. That success says the parent and the
+     comment still exist and are published (a refusal would say the
+     uniform "This comment is unavailable."). The fresh count is NOT
+     disclosed: a hidden audience answers `likeCount: 0`. It works once per
+     held edge; afterwards the caller holds no edge and every call gets the
+     audience check. The alternative (refuse) would leave the like stuck.
+- Build 19 and older lose their Voice Moment like lists (they degrade, they
+  do not crash). All testers run 36+.
+- Complimentary VIP accounts see likers; budgets are the only scraping
+  control (≤ 500 pages/day/account, about 10k liker identities).
+- Read cost per list page (pinned in tests): Voice Moment 136 typical / 501
+  worst, Voice comment 143 / 510, Yeel 135 / 498, Yeel comment 140 / 503,
+  Server message 134 / 496; flagged views +2. Relevant under the 2026-10-21
+  billing deadline; bounded per account per day.
+- Comment-like orphans (a lasting purge failure, an edge written between a
+  comment delete and its trigger) are unreachable, because every read path
+  first requires a canonical visible comment: storage only, never exposure.
+  Likes a deleted account left survive like Moment and Yeel likes do, and
+  are never listed (the account is no longer active).
+- The privacy policy states no lawful basis today (pre-existing); flagged
+  for the GDPR reviewer.
+- Deploy order, activation preconditions and rollback:
+  [DEPLOYMENT.md](DEPLOYMENT.md#see-who-liked-adr-230--source-only-nothing-deployed).
+  Security surface: [SECURITY.md](SECURITY.md#see-who-liked-and-hide-my-likes-2026-09-28-adr-230-source-only-not-deployed).

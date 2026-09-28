@@ -17,7 +17,9 @@
  *
  * The matching delete trigger retires both, so a comment that is removed —
  * by its author, by the Yeel's author, or by a parent's deletion cascade —
- * takes its notifications with it. Retirement is driven by the delivery
+ * takes its notifications with it. Before that it purges the comment's likes
+ * (ADR-230): every `commentLikes` edge keyed on the comment and its
+ * `commentLikeCounters` row. Retirement is driven by the delivery
  * ledger written in the same transaction as each row, which is the only
  * place that records WHICH recipient and WHICH document id a comment
  * produced.
@@ -47,6 +49,10 @@ const {
   commentSourcePath,
 } = require("./engagement_source");
 const { documentGeneration } = require("./social_source");
+const {
+  commentLikeKey,
+  purgeCommentLikes,
+} = require("../engagement/comment_likes");
 
 const REGION = "europe-west1";
 // The same bound the direct-message notification uses: a comment row that
@@ -64,6 +70,7 @@ const MENTION_BUDGET = Object.freeze({
 const SURFACES = Object.freeze({
   moment: Object.freeze({
     kind: "moment",
+    likeParentKind: "voiceMoment",
     rootCollection: "voiceMoments",
     parentParam: "momentId",
     type: "momentComment",
@@ -72,6 +79,7 @@ const SURFACES = Object.freeze({
   }),
   reel: Object.freeze({
     kind: "reel",
+    likeParentKind: "reel",
     rootCollection: "reels",
     parentParam: "reelId",
     type: "reelComment",
@@ -329,12 +337,58 @@ async function retireForEvent(firestore, eventId, sourcePath) {
   });
 }
 
-async function handleCommentDeleted(surface, event, { firestore = db } = {}) {
+// Every comment-document deletion reaches this trigger: an author delete, a
+// Yeel author's removal, a moderation removal, the voice-comment cleanup and
+// each per-document delete of a parent's recursive purge. So this is the one
+// place a comment's likes are purged. Within the retry window a failure
+// rethrows (the trigger retries); past it the purge is abandoned with an
+// error log, because an orphaned edge is unreachable (every read path first
+// requires a canonical, visible comment) and costs storage, never exposure.
+async function purgeLikesOfDeletedComment(surface, event, {
+  firestore,
+  parentId,
+  commentId,
+  nowMs,
+}) {
+  let commentKey;
+  try {
+    commentKey = commentLikeKey(surface.likeParentKind, parentId, commentId);
+  } catch (_) {
+    // An id no comment-like toggle accepts (requireId) holds no likes.
+    return { purged: 0 };
+  }
+  try {
+    const { deleted } = await purgeCommentLikes(firestore, commentKey);
+    return { purged: deleted };
+  } catch (error) {
+    if (!eventIsTooOldToNotify(event, nowMs)) throw error;
+    logger.error("comment like purge abandoned", {
+      surface: surface.kind,
+      parentId,
+      commentId,
+      code: error?.code ?? "unknown",
+    });
+    return { purged: 0 };
+  }
+}
+
+async function handleCommentDeleted(surface, event, {
+  firestore = db,
+  nowMs = Date.now(),
+} = {}) {
   const parentId = event.params?.[surface.parentParam];
   const commentId = event.params?.commentId;
   if (typeof parentId !== "string" || typeof commentId !== "string") {
     return { retired: 0 };
   }
+  // First, so a redelivery after a later step failed still purges; the purge
+  // and both retirements below are idempotent.
+  await purgeLikesOfDeletedComment(surface, event, {
+    firestore,
+    parentId,
+    commentId,
+    nowMs,
+  });
   const sourcePath = commentSourcePath(surface.kind, parentId, commentId);
   let retired = 0;
   if (await retireForEvent(
