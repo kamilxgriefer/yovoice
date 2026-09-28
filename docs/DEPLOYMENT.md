@@ -205,9 +205,10 @@ from another VIP's list and from Top reactions; a cursor page 2 works.
   `canonicalLikersVipGrant` in `functions/utils/likers_access.js`): required
   `source` (`testerProgram`, `legacyRoleMigration` or `admin`), `revoked:
   false`, `expiresAt` (`null` or a future Timestamp); optional `active: true`,
-  `grantedAt` (Timestamp), `grantedBy` (1-200 chars); no other key. Tester
+  `grantedAt` (Timestamp), `grantedBy` (1-200 chars), `note` (1-500 chars); no other key. Tester
   grants `{source: "testerProgram", expiresAt: null, revoked: false,
-  grantedBy}` and legacy-role grants `{source: "legacyRoleMigration",
+  grantedAt, grantedBy, note}` (the 2026-09-28 census: all 14 canonical once
+  `note` was admitted) and legacy-role grants `{source: "legacyRoleMigration",
   grantedAt, expiresAt: null, revoked: false}` are canonical as written.
 - **Census:** `node functions/scripts/census_vip_grants.js --project
   yovoice-ec54a` (read only, counts per key set / source / canonical, no

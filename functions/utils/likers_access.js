@@ -34,7 +34,9 @@ const LIKERS_VIP_GRANT_OPTIONAL_KEYS = Object.freeze([
   "active",
   "grantedAt",
   "grantedBy",
+  "note",
 ]);
+const LIKERS_VIP_GRANT_NOTE_MAX_LENGTH = 500;
 const LIKERS_ACCESS_SOURCES = Object.freeze([
   "paid",
   "vipGrant",
@@ -54,7 +56,9 @@ function requireNowMillis(now) {
 //
 // Known production shapes it accepts:
 //   tester grants        {source: "testerProgram", expiresAt: null,
-//                         revoked: false, grantedBy}
+//                         revoked: false, grantedAt, grantedBy, note}
+//                         (the 2026-09-19 tester script wrote a free-text
+//                         `note`; the 2026-09-28 census found it on all 14)
 //   legacy-role grants   {source: "legacyRoleMigration", grantedAt,
 //                         expiresAt: null, revoked: false}
 // A non-canonical grant is repaired by the operator, never by widening this.
@@ -82,6 +86,14 @@ function canonicalLikersVipGrant(grant, now) {
     return false;
   }
   if ("grantedAt" in grant && typeof grant.grantedAt?.toMillis !== "function") {
+    return false;
+  }
+  if (
+    "note" in grant &&
+    (typeof grant.note !== "string" ||
+      grant.note.length === 0 ||
+      grant.note.length > LIKERS_VIP_GRANT_NOTE_MAX_LENGTH)
+  ) {
     return false;
   }
   if (grant.expiresAt === null) return true;

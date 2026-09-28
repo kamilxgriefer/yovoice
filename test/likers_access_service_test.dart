@@ -110,6 +110,33 @@ void main() {
       expect(await service().watchCanSeeLikers().first, isTrue);
     });
 
+    test('the real tester grant shape with a note unlocks it', () async {
+      await firestore.doc('vipGrants/me').set(<String, Object?>{
+        'source': 'testerProgram',
+        'expiresAt': null,
+        'revoked': false,
+        'grantedAt': Timestamp.fromDate(DateTime.utc(2026, 9, 19)),
+        'grantedBy': 'owner-decision-2026-09-19',
+        'note': 'Tester VIP',
+      });
+      expect(await service().canSeeLikers(), isTrue);
+    });
+
+    test('a note that is not a non-empty string is refused', () async {
+      for (final note in <Object?>['', 7, 'x' * 501]) {
+        expect(
+          LikersAccessService.canonicalLikersVipGrant(<String, Object?>{
+            'source': 'testerProgram',
+            'expiresAt': null,
+            'revoked': false,
+            'note': note,
+          }, DateTime.utc(2026, 9, 28)),
+          isFalse,
+          reason: 'note: $note',
+        );
+      }
+    });
+
     test('a non-canonical grant does not', () async {
       await firestore.doc('vipGrants/me').set(<String, Object?>{
         'source': 'testerProgram',

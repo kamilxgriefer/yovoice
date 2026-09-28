@@ -58,6 +58,11 @@ describe("canonicalLikersVipGrant (fail closed)", () => {
     assert.equal(canonicalLikersVipGrant(legacyGrant(), NOW), true);
     assert.equal(canonicalLikersVipGrant(testerGrant({ source: "admin" }), NOW), true);
     assert.equal(canonicalLikersVipGrant(testerGrant({ active: true }), NOW), true);
+    // The real 2026-09-19 tester grants (census 2026-09-28: all 14).
+    assert.equal(canonicalLikersVipGrant(testerGrant({
+      grantedAt: ts(NOW - 86_400_000),
+      note: "Tester VIP, owner decision 2026-09-19",
+    }), NOW), true);
     assert.equal(
       canonicalLikersVipGrant(testerGrant({ expiresAt: ts(NOW + 1) }), NOW),
       true,
@@ -298,5 +303,16 @@ describe("vipGrants census script (read-only, aggregate)", () => {
     assert.throws(() => assertProject({ project: null }, null), /--project/u);
     assert.throws(() => assertProject({ project: "yovoice-ec54a" }, "other"), /refusing/u);
     assert.doesNotThrow(() => assertProject({ project: "yovoice-ec54a" }, "yovoice-ec54a"));
+  });
+});
+
+describe("canonicalLikersVipGrant note", () => {
+  test("an optional note must be a non-empty string of at most 500 characters", () => {
+    assert.equal(canonicalLikersVipGrant(testerGrant({ note: "x".repeat(500) }), NOW), true);
+    assert.equal(canonicalLikersVipGrant(testerGrant({ note: "" }), NOW), false);
+    assert.equal(canonicalLikersVipGrant(testerGrant({ note: "x".repeat(501) }), NOW), false);
+    assert.equal(canonicalLikersVipGrant(testerGrant({ note: 7 }), NOW), false);
+    assert.equal(canonicalLikersVipGrant(testerGrant({ note: null }), NOW), false);
+    assert.equal(canonicalLikersVipGrant(testerGrant({ notes: "typo key" }), NOW), false);
   });
 });

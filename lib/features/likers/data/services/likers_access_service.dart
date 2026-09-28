@@ -58,6 +58,7 @@ class LikersAccessService {
     'active',
     'grantedAt',
     'grantedBy',
+    'note',
   };
 
   /// Dart port of the server's `canonicalLikersVipGrant` (spec §2): exact
@@ -87,6 +88,10 @@ class LikersAccessService {
     }
     if (keys.contains('grantedAt') && grant['grantedAt'] is! Timestamp) {
       return false;
+    }
+    if (keys.contains('note')) {
+      final note = grant['note'];
+      if (note is! String || note.isEmpty || note.length > 500) return false;
     }
     final expiresAt = grant['expiresAt'];
     if (expiresAt == null) return true;
