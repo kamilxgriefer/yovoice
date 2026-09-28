@@ -17,7 +17,8 @@ enum PageCommentsClosed {
 
 /// The post detail A "karta + wątek" (spec premium-pages §2.5
 /// `getPagePostV1`, §2.6, §4.5): the post, its comments 20 per page
-/// (newest first), the like, the comment composer and the owner's comment
+/// (the server pages newest first; [thread] reads oldest first, deviation
+/// sheet §13), the like, the comment composer and the owner's comment
 /// deletion. Every accepted change is broadcast through [PagePostEvents] so
 /// the wall and the profile under it stay in step.
 class PagePostDetailController extends ChangeNotifier {
@@ -59,7 +60,13 @@ class PagePostDetailController extends ChangeNotifier {
 
   PagePostDetailStatus get status => _status;
   PagePostView? get post => _post;
+
+  /// Loaded comments as the server pages them: newest first.
   List<PageCommentView> get comments => _comments;
+
+  /// The loaded comments oldest first, the order the thread shows them in:
+  /// earlier pages land above, a new comment lands at the bottom.
+  List<PageCommentView> get thread => _comments.reversed.toList();
   bool get commentsLoaded => _commentsLoaded;
   bool get hasMore => _hasMore;
   bool get loadingMore => _loadingMore;

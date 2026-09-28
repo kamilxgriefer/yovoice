@@ -104,6 +104,7 @@ const pagesTranslationKeys = <String>[
   'Couldn\'t connect. Check your connection and try again.',
   'Something went wrong. Try again.',
   'Write a comment…',
+  'Earlier comments',
   'Publish comment',
   'Comments are closed while this Page is paused.',
   'The Page turned comments off for this post.',
@@ -598,6 +599,7 @@ const pagesTranslations = <String, Map<String, String>>{
     'Something went wrong. Try again.':
         'Etwas ist schiefgelaufen. Versuch es erneut.',
     'Write a comment…': 'Schreib einen Kommentar …',
+    'Earlier comments': 'Frühere Kommentare',
     'Publish comment': 'Kommentar veröffentlichen',
     'Comments are closed while this Page is paused.':
         'Kommentare sind geschlossen, solange diese Seite pausiert ist.',
@@ -1192,6 +1194,7 @@ const pagesTranslations = <String, Map<String, String>>{
         'Sin conexión. Revisa tu conexión e inténtalo de nuevo.',
     'Something went wrong. Try again.': 'Algo salió mal. Inténtalo de nuevo.',
     'Write a comment…': 'Escribe un comentario…',
+    'Earlier comments': 'Comentarios anteriores',
     'Publish comment': 'Publicar comentario',
     'Comments are closed while this Page is paused.':
         'Los comentarios están cerrados mientras esta página está en pausa.',
@@ -1782,6 +1785,7 @@ const pagesTranslations = <String, Map<String, String>>{
         'Sem ligação. Verifica a tua ligação e tenta novamente.',
     'Something went wrong. Try again.': 'Algo correu mal. Tenta novamente.',
     'Write a comment…': 'Escreve um comentário…',
+    'Earlier comments': 'Comentários anteriores',
     'Publish comment': 'Publicar comentário',
     'Comments are closed while this Page is paused.':
         'Os comentários estão fechados enquanto esta página está em pausa.',
@@ -2370,6 +2374,7 @@ const pagesTranslations = <String, Map<String, String>>{
         'Sem conexão. Confira sua conexão e tente de novo.',
     'Something went wrong. Try again.': 'Algo deu errado. Tente de novo.',
     'Write a comment…': 'Escreva um comentário…',
+    'Earlier comments': 'Comentários anteriores',
     'Publish comment': 'Publicar comentário',
     'Comments are closed while this Page is paused.':
         'Os comentários estão fechados enquanto esta página está pausada.',
@@ -2958,6 +2963,7 @@ const pagesTranslations = <String, Map<String, String>>{
         'Connexion impossible. Vérifie ta connexion et réessaie.',
     'Something went wrong. Try again.': 'Un problème est survenu. Réessaie.',
     'Write a comment…': 'Écris un commentaire…',
+    'Earlier comments': 'Commentaires précédents',
     'Publish comment': 'Publier le commentaire',
     'Comments are closed while this Page is paused.':
         'Les commentaires sont fermés tant que cette page est en pause.',
@@ -3546,6 +3552,7 @@ const pagesTranslations = <String, Map<String, String>>{
         'Connessione non riuscita. Controlla la connessione e riprova.',
     'Something went wrong. Try again.': 'Qualcosa è andato storto. Riprova.',
     'Write a comment…': 'Scrivi un commento…',
+    'Earlier comments': 'Commenti precedenti',
     'Publish comment': 'Pubblica commento',
     'Comments are closed while this Page is paused.':
         'I commenti sono chiusi finché questa pagina è in pausa.',
@@ -4135,6 +4142,7 @@ const pagesTranslations = <String, Map<String, String>>{
     'Something went wrong. Try again.':
         'Er ging iets mis. Probeer het opnieuw.',
     'Write a comment…': 'Schrijf een reactie…',
+    'Earlier comments': 'Eerdere reacties',
     'Publish comment': 'Reactie plaatsen',
     'Comments are closed while this Page is paused.':
         'Reacties zijn gesloten zolang deze pagina gepauzeerd is.',
@@ -4718,6 +4726,7 @@ const pagesTranslations = <String, Map<String, String>>{
         'Nu există conexiune. Verifică conexiunea și încearcă din nou.',
     'Something went wrong. Try again.': 'Ceva nu a mers. Încearcă din nou.',
     'Write a comment…': 'Scrie un comentariu…',
+    'Earlier comments': 'Comentarii anterioare',
     'Publish comment': 'Publică comentariul',
     'Comments are closed while this Page is paused.':
         'Comentariile sunt închise cât timp pagina e pe pauză.',
@@ -5304,6 +5313,7 @@ const pagesTranslations = <String, Map<String, String>>{
         'Bağlanılamadı. Bağlantını kontrol edip tekrar dene.',
     'Something went wrong. Try again.': 'Bir sorun oluştu. Tekrar dene.',
     'Write a comment…': 'Bir yorum yaz…',
+    'Earlier comments': 'Önceki yorumlar',
     'Publish comment': 'Yorumu yayınla',
     'Comments are closed while this Page is paused.':
         'Bu sayfa duraklatılmışken yorumlar kapalı.',
@@ -5885,6 +5895,7 @@ const pagesTranslations = <String, Map<String, String>>{
         'Δεν υπάρχει σύνδεση. Έλεγξε τη σύνδεσή σου και δοκίμασε ξανά.',
     'Something went wrong. Try again.': 'Κάτι πήγε στραβά. Δοκίμασε ξανά.',
     'Write a comment…': 'Γράψε ένα σχόλιο…',
+    'Earlier comments': 'Προηγούμενα σχόλια',
     'Publish comment': 'Δημοσίευση σχολίου',
     'Comments are closed while this Page is paused.':
         'Τα σχόλια είναι κλειστά όσο αυτή η σελίδα είναι σε παύση.',
@@ -6476,6 +6487,7 @@ const pagesTranslations = <String, Map<String, String>>{
         'Nincs kapcsolat. Ellenőrizd a kapcsolatot, és próbáld újra.',
     'Something went wrong. Try again.': 'Hiba történt. Próbáld újra.',
     'Write a comment…': 'Írj egy hozzászólást…',
+    'Earlier comments': 'Korábbi hozzászólások',
     'Publish comment': 'Hozzászólás közzététele',
     'Comments are closed while this Page is paused.':
         'A hozzászólások le vannak zárva, amíg az oldal szünetel.',
@@ -7055,6 +7067,7 @@ const pagesTranslations = <String, Map<String, String>>{
         'Немає з’єднання. Перевірте підключення й спробуйте ще раз.',
     'Something went wrong. Try again.': 'Щось пішло не так. Спробуйте ще раз.',
     'Write a comment…': 'Напишіть коментар…',
+    'Earlier comments': 'Попередні коментарі',
     'Publish comment': 'Опублікувати коментар',
     'Comments are closed while this Page is paused.':
         'Коментарі закрито, доки сторінку призупинено.',
@@ -7636,6 +7649,7 @@ const pagesTranslations = <String, Map<String, String>>{
     'Something went wrong. Try again.':
         'Что-то пошло не так. Попробуйте ещё раз.',
     'Write a comment…': 'Напишите комментарий…',
+    'Earlier comments': 'Предыдущие комментарии',
     'Publish comment': 'Опубликовать комментарий',
     'Comments are closed while this Page is paused.':
         'Комментарии закрыты, пока страница приостановлена.',
@@ -8217,6 +8231,7 @@ const pagesTranslations = <String, Map<String, String>>{
         'Nelze se připojit. Zkontroluj připojení a zkus to znovu.',
     'Something went wrong. Try again.': 'Něco se pokazilo. Zkus to znovu.',
     'Write a comment…': 'Napiš komentář…',
+    'Earlier comments': 'Starší komentáře',
     'Publish comment': 'Zveřejnit komentář',
     'Comments are closed while this Page is paused.':
         'Komentáře jsou zavřené, dokud je stránka pozastavená.',
@@ -8794,6 +8809,7 @@ const pagesTranslations = <String, Map<String, String>>{
         'Nedá sa pripojiť. Skontroluj pripojenie a skús to znova.',
     'Something went wrong. Try again.': 'Niečo sa pokazilo. Skús to znova.',
     'Write a comment…': 'Napíš komentár…',
+    'Earlier comments': 'Staršie komentáre',
     'Publish comment': 'Zverejniť komentár',
     'Comments are closed while this Page is paused.':
         'Komentáre sú zatvorené, kým je stránka pozastavená.',
@@ -9375,6 +9391,7 @@ const pagesTranslations = <String, Map<String, String>>{
         'Няма връзка. Провери връзката си и опитай отново.',
     'Something went wrong. Try again.': 'Нещо се обърка. Опитай отново.',
     'Write a comment…': 'Напиши коментар…',
+    'Earlier comments': 'По-стари коментари',
     'Publish comment': 'Публикувай коментара',
     'Comments are closed while this Page is paused.':
         'Коментарите са затворени, докато тази страница е на пауза.',
@@ -9961,6 +9978,7 @@ const pagesTranslations = <String, Map<String, String>>{
         'Nema veze. Provjeri vezu i pokušaj ponovno.',
     'Something went wrong. Try again.': 'Nešto nije u redu. Pokušaj ponovno.',
     'Write a comment…': 'Napiši komentar…',
+    'Earlier comments': 'Stariji komentari',
     'Publish comment': 'Objavi komentar',
     'Comments are closed while this Page is paused.':
         'Komentari su zatvoreni dok je stranica pauzirana.',
@@ -10541,6 +10559,7 @@ const pagesTranslations = <String, Map<String, String>>{
         'Нема везе. Провери везу и покушај поново.',
     'Something went wrong. Try again.': 'Нешто није у реду. Покушај поново.',
     'Write a comment…': 'Напиши коментар…',
+    'Earlier comments': 'Старији коментари',
     'Publish comment': 'Објави коментар',
     'Comments are closed while this Page is paused.':
         'Коментари су затворени док је страница паузирана.',
@@ -11120,6 +11139,7 @@ const pagesTranslations = <String, Map<String, String>>{
         'Ingen anslutning. Kontrollera anslutningen och försök igen.',
     'Something went wrong. Try again.': 'Något gick fel. Försök igen.',
     'Write a comment…': 'Skriv en kommentar…',
+    'Earlier comments': 'Tidigare kommentarer',
     'Publish comment': 'Publicera kommentar',
     'Comments are closed while this Page is paused.':
         'Kommentarerna är stängda medan sidan är pausad.',
@@ -11700,6 +11720,7 @@ const pagesTranslations = <String, Map<String, String>>{
         'Ingen forbindelse. Tjek din forbindelse, og prøv igen.',
     'Something went wrong. Try again.': 'Noget gik galt. Prøv igen.',
     'Write a comment…': 'Skriv en kommentar…',
+    'Earlier comments': 'Tidligere kommentarer',
     'Publish comment': 'Udgiv kommentar',
     'Comments are closed while this Page is paused.':
         'Kommentarerne er lukket, mens siden er på pause.',
@@ -12280,6 +12301,7 @@ const pagesTranslations = <String, Map<String, String>>{
         'Ingen tilkobling. Sjekk tilkoblingen og prøv igjen.',
     'Something went wrong. Try again.': 'Noe gikk galt. Prøv igjen.',
     'Write a comment…': 'Skriv en kommentar …',
+    'Earlier comments': 'Tidligere kommentarer',
     'Publish comment': 'Publiser kommentar',
     'Comments are closed while this Page is paused.':
         'Kommentarene er stengt mens siden er satt på pause.',
@@ -12860,6 +12882,7 @@ const pagesTranslations = <String, Map<String, String>>{
         'Ei yhteyttä. Tarkista yhteys ja yritä uudelleen.',
     'Something went wrong. Try again.': 'Jokin meni vikaan. Yritä uudelleen.',
     'Write a comment…': 'Kirjoita kommentti…',
+    'Earlier comments': 'Aiemmat kommentit',
     'Publish comment': 'Julkaise kommentti',
     'Comments are closed while this Page is paused.':
         'Kommentit on suljettu, kun sivu on keskeytetty.',
@@ -13440,6 +13463,7 @@ const pagesTranslations = <String, Map<String, String>>{
         'Nėra ryšio. Patikrinkite ryšį ir bandykite dar kartą.',
     'Something went wrong. Try again.': 'Kažkas nepavyko. Bandykite dar kartą.',
     'Write a comment…': 'Parašykite komentarą…',
+    'Earlier comments': 'Ankstesni komentarai',
     'Publish comment': 'Paskelbti komentarą',
     'Comments are closed while this Page is paused.':
         'Komentarai uždaryti, kol puslapis pristabdytas.',
@@ -14016,6 +14040,7 @@ const pagesTranslations = <String, Map<String, String>>{
     'Something went wrong. Try again.':
         'Kaut kas nogāja greizi. Mēģini vēlreiz.',
     'Write a comment…': 'Uzraksti komentāru…',
+    'Earlier comments': 'Iepriekšējie komentāri',
     'Publish comment': 'Publicēt komentāru',
     'Comments are closed while this Page is paused.':
         'Komentāri ir slēgti, kamēr lapa ir pauzēta.',
@@ -14590,6 +14615,7 @@ const pagesTranslations = <String, Map<String, String>>{
         'Ühendus puudub. Kontrolli ühendust ja proovi uuesti.',
     'Something went wrong. Try again.': 'Midagi läks valesti. Proovi uuesti.',
     'Write a comment…': 'Kirjuta kommentaar…',
+    'Earlier comments': 'Varasemad kommentaarid',
     'Publish comment': 'Avalda kommentaar',
     'Comments are closed while this Page is paused.':
         'Kommentaarid on suletud, kuni leht on peatatud.',
@@ -15165,6 +15191,7 @@ const pagesTranslations = <String, Map<String, String>>{
         'Tidak ada koneksi. Periksa koneksimu lalu coba lagi.',
     'Something went wrong. Try again.': 'Terjadi kesalahan. Coba lagi.',
     'Write a comment…': 'Tulis komentar…',
+    'Earlier comments': 'Komentar sebelumnya',
     'Publish comment': 'Terbitkan komentar',
     'Comments are closed while this Page is paused.':
         'Komentar ditutup selama halaman ini dijeda.',
@@ -15747,6 +15774,7 @@ const pagesTranslations = <String, Map<String, String>>{
         'Không có kết nối. Hãy kiểm tra kết nối và thử lại.',
     'Something went wrong. Try again.': 'Đã xảy ra lỗi. Hãy thử lại.',
     'Write a comment…': 'Viết bình luận…',
+    'Earlier comments': 'Bình luận trước đó',
     'Publish comment': 'Đăng bình luận',
     'Comments are closed while this Page is paused.':
         'Bình luận đã đóng trong lúc trang này tạm dừng.',
@@ -16308,6 +16336,7 @@ const pagesTranslations = <String, Map<String, String>>{
     'Couldn\'t connect. Check your connection and try again.': '无法连接。请检查网络后重试。',
     'Something went wrong. Try again.': '出了点问题，请重试。',
     'Write a comment…': '写评论…',
+    'Earlier comments': '更早的评论',
     'Publish comment': '发布评论',
     'Comments are closed while this Page is paused.': '此主页暂停期间评论已关闭。',
     'The Page turned comments off for this post.': '此主页已关闭该帖子的评论。',
@@ -16828,6 +16857,7 @@ const pagesTranslations = <String, Map<String, String>>{
         '無法連線。請檢查網路後再試一次。',
     'Something went wrong. Try again.': '發生錯誤，請再試一次。',
     'Write a comment…': '寫下留言…',
+    'Earlier comments': '更早的留言',
     'Publish comment': '發布留言',
     'Comments are closed while this Page is paused.': '專頁暫停期間留言已關閉。',
     'The Page turned comments off for this post.': '專頁已關閉這則貼文的留言。',
@@ -17352,6 +17382,7 @@ const pagesTranslations = <String, Map<String, String>>{
         '接続できません。接続を確認して、もう一度お試しください。',
     'Something went wrong. Try again.': '問題が発生しました。もう一度お試しください。',
     'Write a comment…': 'コメントを書く…',
+    'Earlier comments': '以前のコメント',
     'Publish comment': 'コメントを投稿',
     'Comments are closed while this Page is paused.':
         'このページが一時停止中のため、コメントはできません。',
@@ -17889,6 +17920,7 @@ const pagesTranslations = <String, Map<String, String>>{
         '연결할 수 없습니다. 연결을 확인하고 다시 시도하세요.',
     'Something went wrong. Try again.': '문제가 발생했습니다. 다시 시도하세요.',
     'Write a comment…': '댓글 쓰기…',
+    'Earlier comments': '이전 댓글',
     'Publish comment': '댓글 게시',
     'Comments are closed while this Page is paused.':
         '페이지가 일시정지된 동안 댓글이 닫혀 있습니다.',
@@ -18437,6 +18469,7 @@ const pagesTranslations = <String, Map<String, String>>{
         'تعذّر الاتصال. تحقق من اتصالك ثم حاول مرة أخرى.',
     'Something went wrong. Try again.': 'حدث خطأ ما. حاول مرة أخرى.',
     'Write a comment…': 'اكتب تعليقًا…',
+    'Earlier comments': 'التعليقات السابقة',
     'Publish comment': 'نشر التعليق',
     'Comments are closed while this Page is paused.':
         'التعليقات مغلقة أثناء إيقاف هذه الصفحة مؤقتًا.',
@@ -19004,6 +19037,7 @@ const pagesTranslations = <String, Map<String, String>>{
         'เชื่อมต่อไม่ได้ โปรดตรวจสอบการเชื่อมต่อแล้วลองอีกครั้ง',
     'Something went wrong. Try again.': 'เกิดข้อผิดพลาด โปรดลองอีกครั้ง',
     'Write a comment…': 'เขียนความคิดเห็น…',
+    'Earlier comments': 'ความคิดเห็นก่อนหน้า',
     'Publish comment': 'เผยแพร่ความคิดเห็น',
     'Comments are closed while this Page is paused.':
         'ปิดความคิดเห็นอยู่ระหว่างที่เพจนี้หยุดชั่วคราว',
@@ -19574,6 +19608,7 @@ const pagesTranslations = <String, Map<String, String>>{
         'Tiada sambungan. Semak sambungan anda dan cuba lagi.',
     'Something went wrong. Try again.': 'Ada yang tidak kena. Cuba lagi.',
     'Write a comment…': 'Tulis komen…',
+    'Earlier comments': 'Komen terdahulu',
     'Publish comment': 'Terbitkan komen',
     'Comments are closed while this Page is paused.':
         'Komen ditutup semasa halaman ini dijeda.',
@@ -20161,6 +20196,7 @@ const pagesTranslations = <String, Map<String, String>>{
         'Hindi makakonekta. Suriin ang iyong koneksyon at subukan ulit.',
     'Something went wrong. Try again.': 'Nagkaproblema. Subukan ulit.',
     'Write a comment…': 'Sumulat ng komento…',
+    'Earlier comments': 'Mga naunang komento',
     'Publish comment': 'I-publish ang komento',
     'Comments are closed while this Page is paused.':
         'Sarado ang mga komento habang naka-pause ang Page na ito.',
@@ -20738,6 +20774,7 @@ const pagesTranslations = <String, Map<String, String>>{
         'אין חיבור. בדקו את החיבור ונסו שוב.',
     'Something went wrong. Try again.': 'משהו השתבש. נסו שוב.',
     'Write a comment…': 'כתבו תגובה…',
+    'Earlier comments': 'תגובות קודמות',
     'Publish comment': 'פרסום התגובה',
     'Comments are closed while this Page is paused.':
         'התגובות סגורות כל עוד הדף מושהה.',
@@ -21304,6 +21341,7 @@ const pagesTranslations = <String, Map<String, String>>{
         'اتصال برقرار نشد. اتصال را بررسی کنید و دوباره امتحان کنید.',
     'Something went wrong. Try again.': 'مشکلی پیش آمد. دوباره امتحان کنید.',
     'Write a comment…': 'نظری بنویسید…',
+    'Earlier comments': 'نظرهای قبلی',
     'Publish comment': 'انتشار نظر',
     'Comments are closed while this Page is paused.':
         'تا وقتی این صفحه متوقف است، نظرها بسته‌اند.',
@@ -21885,6 +21923,7 @@ const pagesTranslations = <String, Map<String, String>>{
         'Imeshindwa kuunganisha. Kagua muunganisho wako kisha ujaribu tena.',
     'Something went wrong. Try again.': 'Hitilafu imetokea. Jaribu tena.',
     'Write a comment…': 'Andika maoni…',
+    'Earlier comments': 'Maoni ya awali',
     'Publish comment': 'Chapisha maoni',
     'Comments are closed while this Page is paused.':
         'Maoni yamefungwa wakati ukurasa huu umesitishwa.',
@@ -22467,6 +22506,7 @@ const pagesTranslations = <String, Map<String, String>>{
         'कनेक्ट नहीं हो सका। अपना कनेक्शन जाँचें और फिर से कोशिश करें।',
     'Something went wrong. Try again.': 'कुछ गड़बड़ हो गई। फिर से कोशिश करें।',
     'Write a comment…': 'टिप्पणी लिखें…',
+    'Earlier comments': 'पिछली टिप्पणियाँ',
     'Publish comment': 'टिप्पणी प्रकाशित करें',
     'Comments are closed while this Page is paused.':
         'यह पेज रुका होने तक टिप्पणियाँ बंद हैं।',
@@ -23045,6 +23085,7 @@ const pagesTranslations = <String, Map<String, String>>{
     'Something went wrong. Try again.':
         'কিছু একটা সমস্যা হয়েছে। আবার চেষ্টা করুন।',
     'Write a comment…': 'মন্তব্য লিখুন…',
+    'Earlier comments': 'আগের মন্তব্য',
     'Publish comment': 'মন্তব্য প্রকাশ করুন',
     'Comments are closed while this Page is paused.':
         'এই পেজ বিরতিতে থাকা পর্যন্ত মন্তব্য বন্ধ।',
@@ -23618,6 +23659,7 @@ const pagesTranslations = <String, Map<String, String>>{
         'رابطہ نہیں ہو سکا۔ اپنا کنکشن چیک کریں اور دوبارہ کوشش کریں۔',
     'Something went wrong. Try again.': 'کچھ غلط ہو گیا۔ دوبارہ کوشش کریں۔',
     'Write a comment…': 'تبصرہ لکھیں…',
+    'Earlier comments': 'پچھلے تبصرے',
     'Publish comment': 'تبصرہ شائع کریں',
     'Comments are closed while this Page is paused.':
         'یہ پیج رکا رہنے تک تبصرے بند ہیں۔',

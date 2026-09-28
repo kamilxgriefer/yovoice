@@ -97,8 +97,12 @@ class PagesLoadMoreButton extends StatefulWidget {
     required this.onPressed,
     this.visible = true,
     this.height = 48,
+    this.label,
     super.key,
   });
+
+  /// The idle label; null reads "Load more".
+  final String? label;
 
   /// False draws nothing (no more pages) but keeps announcing.
   final bool visible;
@@ -148,7 +152,7 @@ class _PagesLoadMoreButtonState extends State<PagesLoadMoreButton> {
           ? copy.loadingEllipsis
           : widget.failed
           ? copy.tryAgain
-          : copy.loadMore,
+          : widget.label ?? copy.loadMore,
       icon: widget.failed && !loading ? Icons.refresh_rounded : null,
       leading: loading
           ? SizedBox.square(

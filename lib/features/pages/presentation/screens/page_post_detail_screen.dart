@@ -51,8 +51,9 @@ typedef PageOpener =
     });
 
 /// The post detail A "karta + wątek" (approved R3 render, §12): the full
-/// post card, then "Komentarze" with the thread (20 per page, newest
-/// first, "Wczytaj więcej"), and the comment composer docked at the bottom,
+/// post card, then "Komentarze" with the thread (oldest first as rendered;
+/// the newest 20 load first and "Wcześniejsze komentarze" above them loads
+/// the page before), and the comment composer docked at the bottom,
 /// or the line that says why comments are closed (D14, the owner's switch).
 /// No comment hearts in v1 (D15).
 ///
@@ -129,6 +130,10 @@ class _PagePostDetailScreenState extends State<PagePostDetailScreen> {
   final FocusNode _commentFocus = FocusNode();
   bool _focusedOnce = false;
   String? _commentError;
+
+  /// The comment just sent, scrolled into view once it is in the thread.
+  String? _revealCommentId;
+  final GlobalKey _revealKey = GlobalKey(debugLabel: 'page-comment-reveal');
 
   static String _currentUserId() {
     try {
@@ -214,12 +219,34 @@ class _PagePostDetailScreenState extends State<PagePostDetailScreen> {
     if (!mounted) return;
     if (failure == null) {
       _comment.clear();
+      final sent = _controller.comments.firstOrNull;
+      if (sent != null) {
+        setState(() => _revealCommentId = sent.commentId);
+        WidgetsBinding.instance.addPostFrameCallback((_) => _revealSent());
+      }
       return;
     }
     setState(
       () => _commentError = PagePostCopy(
         AppLocalizations.of(context),
       ).commentError(failure),
+    );
+  }
+
+  /// New comments land at the bottom of the thread; bring the one just sent
+  /// into view above the composer.
+  void _revealSent() {
+    final target = _revealKey.currentContext;
+    if (!mounted || target == null) return;
+    unawaited(
+      Scrollable.ensureVisible(
+        target,
+        alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+        duration: MediaQuery.disableAnimationsOf(context)
+            ? Duration.zero
+            : const Duration(milliseconds: 250),
+        curve: Curves.easeOutCubic,
+      ),
     );
   }
 
@@ -809,26 +836,11 @@ class _PagePostDetailScreenState extends State<PagePostDetailScreen> {
       );
       return widgets;
     }
-    final now = _now();
-    for (final comment in comments) {
-      widgets.add(
-        _CommentRow(
-          key: ValueKey('page-comment-${comment.commentId}'),
-          comment: comment,
-          post: post,
-          age: pages.age(comment.createdAt, now),
-          busy: _controller.isDeleting(comment.commentId),
-          copy: copy,
-          onOpenAuthor: () => unawaited(_openAuthor(comment)),
-          onMore: () => unawaited(_showCommentMenu(comment)),
-        ),
-      );
-    }
+    // Earlier pages load above the thread, which reads oldest first.
     final showMore =
         _controller.hasMore ||
         _controller.loadingMore ||
         _controller.loadMoreFailed;
-    if (showMore) widgets.add(const SizedBox(height: 4));
     widgets.add(
       Center(
         key: const ValueKey('page-post-load-more-slot'),
@@ -839,10 +851,30 @@ class _PagePostDetailScreenState extends State<PagePostDetailScreen> {
           failed: _controller.loadMoreFailed,
           itemCount: comments.length,
           height: 44,
+          label: copy.earlierComments,
           onPressed: () => unawaited(_controller.loadMore()),
         ),
       ),
     );
+    if (showMore) widgets.add(const SizedBox(height: 4));
+    final now = _now();
+    for (final comment in _controller.thread) {
+      final row = _CommentRow(
+        key: ValueKey('page-comment-${comment.commentId}'),
+        comment: comment,
+        post: post,
+        age: pages.age(comment.createdAt, now),
+        busy: _controller.isDeleting(comment.commentId),
+        copy: copy,
+        onOpenAuthor: () => unawaited(_openAuthor(comment)),
+        onMore: () => unawaited(_showCommentMenu(comment)),
+      );
+      widgets.add(
+        comment.commentId == _revealCommentId
+            ? KeyedSubtree(key: _revealKey, child: row)
+            : row,
+      );
+    }
     return widgets;
   }
 }

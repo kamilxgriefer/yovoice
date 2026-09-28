@@ -261,6 +261,8 @@ class PagePostCopy {
       copy.contextualText('pages.postTitle', 'Post', 'Post');
   String get commentsTitle =>
       copy.contextualText('pages.commentsTitle', 'Comments', 'Komentarze');
+  String get earlierComments =>
+      copy.text('Earlier comments', 'Wcześniejsze komentarze');
   String get authorBadge =>
       copy.contextualText('pages.authorBadge', 'Author', 'Autor');
   String get writeComment => copy.text('Write a comment…', 'Napisz komentarz…');

@@ -2009,7 +2009,7 @@ class _Header extends StatelessWidget {
           ),
         ),
         Padding(
-          padding: EdgeInsets.fromLTRB(side, 12, side, 0),
+          padding: EdgeInsets.symmetric(horizontal: side),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -2021,12 +2021,14 @@ class _Header extends StatelessWidget {
                   name: header.displayName,
                   maxLines: 3,
                   explainOnTap: true,
+                  // The rosette's 44 px target shares these gaps, so the
+                  // name sits where profile B has it (deviation sheet §13).
+                  headerRoom: const EdgeInsets.only(top: 12, bottom: 4),
                   style: AppTypography.screenTitle.copyWith(
                     color: palette.textPrimary,
                   ),
                 ),
               ),
-              const SizedBox(height: 4),
               Text(
                 PageProfileCopy(
                   copy,
@@ -2039,7 +2041,9 @@ class _Header extends StatelessWidget {
                 ),
               ),
               if (description.isNotEmpty) ...[
-                const SizedBox(height: 10),
+                // The target still reaches ~2 px past the name; the description
+                // keeps profile B's position.
+                const SizedBox(height: 8),
                 Text(
                   description,
                   maxLines: 2,
@@ -2128,6 +2132,7 @@ class _DesktopHeader extends StatelessWidget {
                             name: header.displayName,
                             maxLines: 2,
                             explainOnTap: true,
+                            headerRoom: const EdgeInsets.only(bottom: 4),
                             style: AppTypography.headlineLarge.copyWith(
                               fontSize: 26,
                               fontWeight: FontWeight.w700,
@@ -2136,7 +2141,6 @@ class _DesktopHeader extends StatelessWidget {
                             ),
                           ),
                         ),
-                        const SizedBox(height: 4),
                         Text(
                           meta,
                           key: const ValueKey('page-meta'),

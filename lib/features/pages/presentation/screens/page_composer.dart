@@ -250,7 +250,12 @@ class _PageComposerState extends State<PageComposer> {
       });
     } else if (_kind == PagePostKind.text) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _textFocus.requestFocus();
+        // With large text the field sits low enough that focusing it would
+        // scroll "Nowy post" half under the sheet's top row; the sheet then
+        // opens at its top and the field waits for a tap.
+        if (!mounted) return;
+        final scale = MediaQuery.textScalerOf(context).scale(16) / 16;
+        if (scale < 1.3) _textFocus.requestFocus();
       });
     }
   }

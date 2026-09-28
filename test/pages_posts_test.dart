@@ -791,6 +791,10 @@ void main() {
       PagePhotoPicker? pick,
       PageMediaUploader? uploader,
     }) async {
+      // The sheet opens on the root navigator, above _pump's MediaQuery, so
+      // the text size is set app-wide.
+      tester.platformDispatcher.textScaleFactorTestValue = textScale;
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
       final service = _service(backend);
       await _pump(
         tester,
@@ -842,6 +846,14 @@ void main() {
       expect(find.text('Komentarze włączone'), findsOneWidget);
       final publish = find.byKey(const ValueKey('page-composer-publish'));
       expect(tester.getSize(publish).height, greaterThanOrEqualTo(48));
+      // At the default text size the text field is ready to type in.
+      expect(
+        tester
+            .widget<EditableText>(find.byType(EditableText))
+            .focusNode
+            .hasFocus,
+        isTrue,
+      );
       await tester.enterText(
         find.byKey(const ValueKey('page-composer-text')),
         '  Od poniedziałku otwieramy o 7:00  ',
@@ -1044,6 +1056,23 @@ void main() {
         textScale: 2,
       );
       expect(tester.takeException(), isNull);
+      // Large text opens at the top: no autofocus scrolls the title away.
+      final scroll = tester.state<ScrollableState>(
+        find
+            .descendant(
+              of: find.byKey(const ValueKey('page-composer-scroll')),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
+      expect(scroll.position.pixels, 0);
+      expect(
+        tester
+            .widget<EditableText>(find.byType(EditableText))
+            .focusNode
+            .hasFocus,
+        isFalse,
+      );
       await tester.tap(find.byKey(const ValueKey('page-composer-kind-voice')));
       await _settle(tester);
       expect(tester.takeException(), isNull);
@@ -1121,6 +1150,13 @@ void main() {
       await _settle(tester);
       expect(find.text('Macie wersję z mlekiem owsianym?'), findsOneWidget);
       expect(find.text('13'), findsOneWidget);
+      // The server pages newest first; the thread reads oldest first, and
+      // the comment just sent lands at the bottom (deviation sheet §13).
+      double top(int n) => tester
+          .getTopLeft(find.byKey(ValueKey('page-comment-${_commentId(n)}')))
+          .dy;
+      expect(top(1), lessThan(top(2)));
+      expect(top(2), lessThan(top(3)));
       expect(events.whereType<PagePostUpdated>().last.post.commentCount, 13);
       final send = backend.payloadsOf(PagesService.engagementCallable).single;
       expect(send['op'], 'comment');
@@ -1214,7 +1250,7 @@ void main() {
       expect(find.text('11'), findsOneWidget);
     });
 
-    testWidgets('comments page with Wczytaj więcej', (tester) async {
+    testWidgets('earlier comments load above the thread', (tester) async {
       final backend = _Backend({
         PagesService.postCallable: (p) => p['commentCursor'] == null
             ? _detail(_post(1), comments: [_comment(1)], next: 'cursor-2')
@@ -1234,9 +1270,15 @@ void main() {
             )
             .first,
       );
+      expect(find.text('Wcześniejsze komentarze'), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('page-post-load-more')));
       await _settle(tester);
       expect(find.text('Tomek Zieliński'), findsOneWidget);
+      // The earlier page sits between the button and the first page.
+      expect(
+        tester.getTopLeft(find.text('Tomek Zieliński')).dy,
+        lessThan(tester.getTopLeft(find.text('Ola Wiśniewska')).dy),
+      );
       expect(
         backend.payloadsOf(PagesService.postCallable).last['commentCursor'],
         'cursor-2',

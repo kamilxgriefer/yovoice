@@ -134,6 +134,7 @@ class NameWithVipMark extends StatefulWidget {
     this.explainOnTap = false,
     this.onExplain,
     this.textAlign = TextAlign.start,
+    this.headerRoom = EdgeInsets.zero,
     super.key,
   });
 
@@ -166,6 +167,14 @@ class NameWithVipMark extends StatefulWidget {
   /// Alignment of a wrapping name (a centred rail tile). A one-line name is
   /// sized to its glyphs, so its parent positions it.
   final TextAlign textAlign;
+
+  /// The header's own gaps above and below the name (only [EdgeInsets.top]
+  /// and [EdgeInsets.bottom] are read). A wrapping name's 44 px target
+  /// shares them instead of adding height of its own: it lifts into the gap
+  /// above (never past this widget's top), so the name keeps the approved
+  /// render's position and the header below it moves as little as it can
+  /// (deviation sheet §13). Always applied, VIP or not.
+  final EdgeInsets headerRoom;
 
   @override
   State<NameWithVipMark> createState() => _NameWithVipMarkState();
@@ -221,6 +230,17 @@ class _NameWithVipMarkState extends State<NameWithVipMark> {
 
   @override
   Widget build(BuildContext context) {
+    final room = EdgeInsets.only(
+      top: widget.headerRoom.top,
+      bottom: widget.headerRoom.bottom,
+    );
+    final name = _name(context, room);
+    // A wrapping VIP name spends the room itself (around its target).
+    if (name is _MultiLineVipName || room == EdgeInsets.zero) return name;
+    return Padding(padding: room, child: name);
+  }
+
+  Widget _name(BuildContext context, EdgeInsets room) {
     final vip = widget.isVip ?? _vip;
     final style = widget.style;
     final maxLines = widget.maxLines;
@@ -321,6 +341,7 @@ class _NameWithVipMarkState extends State<NameWithVipMark> {
       markGap: gap,
       onExplain: explain ? onExplain : null,
       textAlign: widget.textAlign,
+      room: room,
     );
   }
 }
@@ -337,10 +358,14 @@ class _MultiLineVipName extends StatelessWidget {
     this.announceVip = true,
     this.onExplain,
     this.textAlign = TextAlign.start,
+    this.room = EdgeInsets.zero,
   });
 
   final String name;
   final String? semanticsLabel;
+
+  /// [NameWithVipMark.headerRoom], vertical only.
+  final EdgeInsets room;
 
   /// Appends "VIP" to the paragraph's label.
   final bool announceVip;
@@ -393,7 +418,7 @@ class _MultiLineVipName extends StatelessWidget {
     final boxes = painter.inlinePlaceholderBoxes ?? const <TextBox>[];
     final height = painter.height;
     painter.dispose();
-    if (boxes.isEmpty) return text;
+    if (boxes.isEmpty) return Padding(padding: room, child: text);
     final box = boxes.first.toRect();
     final diameter = markSize.height;
     // The rosette sits after the start gap, inside the placeholder box.
@@ -401,12 +426,25 @@ class _MultiLineVipName extends StatelessWidget {
         ? box.left + markGap
         : box.right - markGap - diameter;
     final markCenter = Offset(markLeft + diameter / 2, box.center.dy);
-    final padTop = math.max(0.0, target / 2 - markCenter.dy);
-    final padBottom = math.max(0.0, markCenter.dy + target / 2 - height);
+    // Centred on the mark, the target reaches past the paragraph by
+    // -centredTop above and overhang below. It lifts only into [room]'s top
+    // gap (keeping the mark inside it) to take height off the bottom; with
+    // no room it stays centred on the mark.
+    final centredTop = markCenter.dy - target / 2;
+    final overhang = math.max(0.0, markCenter.dy + target / 2 - height);
+    final lift = math.min(
+      overhang,
+      math.min(
+        math.max(0.0, math.min(room.top, room.top + centredTop)),
+        (target - diameter) / 2,
+      ),
+    );
+    final padTop = math.max(room.top, lift - centredTop);
+    final padBottom = math.max(room.bottom, overhang - lift);
     final left = (markCenter.dx - target / 2)
         .clamp(0.0, math.max(0.0, width - target))
         .toDouble();
-    final top = markCenter.dy - target / 2 + padTop;
+    final top = centredTop - lift + padTop;
     return SizedBox(
       width: width,
       child: Stack(
@@ -533,7 +571,9 @@ class _MultiLineVipName extends StatelessWidget {
           child: ExcludeSemantics(child: text),
         );
         final onTap = onExplain;
-        if (onTap == null || !constraints.maxWidth.isFinite) return text;
+        if (onTap == null || !constraints.maxWidth.isFinite) {
+          return Padding(padding: room, child: text);
+        }
         return _withExplainTarget(
           text: text,
           shown: shown,

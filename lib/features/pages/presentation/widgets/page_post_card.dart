@@ -87,7 +87,9 @@ class PagePostCard extends StatelessWidget {
   /// Desktop caps a single photo's height (the wall A desktop render: 420).
   final double? photoMaxHeight;
 
-  /// The Page's own wall marks its pinned post "Przypięty" (profile B).
+  /// The Page's own wall marks its pinned post "Przypięty" and sets post
+  /// text at profile B's line heights (1.35 short, 1.4 long); Treści and the
+  /// post detail keep wall A's 1.45.
   final bool showPinnedLabel;
 
   /// Non-null while comments are closed for everyone (a read-only Page,
@@ -128,7 +130,10 @@ class PagePostCard extends StatelessWidget {
             text: post.text,
             style:
                 (shortText ? AppTypography.titleLarge : AppTypography.bodyLarge)
-                    .copyWith(color: palette.textPrimary, height: 1.45),
+                    .copyWith(
+                      color: palette.textPrimary,
+                      height: showPinnedLabel ? (shortText ? 1.35 : 1.4) : 1.45,
+                    ),
           ),
         ),
       if (images.isNotEmpty) ...[
