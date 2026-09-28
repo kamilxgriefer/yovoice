@@ -488,6 +488,27 @@ malformed on report"` / `"… on resolve"`, `"pages deletion removed a
 malformed post"` / `"… comment"` and `"pages evidence retention row
 malformed"` (page).
 
+**Alerts created 2026-09-28 (20:48-20:49 UTC, REST; evidence
+yovoice-evidence/2026-09-28/pages-alerts):** log-based counters over
+`cloud_run_revision` with exact `jsonPayload.message="…"` filters —
+`pages_page_events` (label `message`; the page lines above plus three ERROR
+lines this list omitted: `pages report found a malformed post`, `pages
+evidence retention names a live post`, `pages visibility index malformed on a
+safety action`; `pages malformed record skipped` pages at either level),
+`pages_warn_events` (label `message`; the warn lines above plus `pages post
+cleanup retry`; `pages media deletion generation superseded` is deliberately
+not alerted), `pages_info_events` (labels `message`, `outcome`, `targetType`)
+and `pages_budget_exhausted` (label `limit`). Policies, all to "Kamil (phone
+via Gmail)", auto-close 1 day, missing data = inactive: **Pages: page-level
+event** (`5639022942881270408`, any occurrence in 5 min, per message),
+**Pages: warning repeated** (`3876324340327741477`, > 0 in every trailing
+30 min for 60 min, per message), **Pages: budget exhausted spike**
+(`5639022942881271531`, any occurrence in 5 min, per limit), **Pages: lapse
+readOnly spike** (`5639022942881268558`, `pages lapse transition`
+`outcome=readOnly` > 20 in 1 h; brake: re-run set_pages_activation.js with the
+current values and `--lapse false`). Metrics count from creation (no
+backfill). Error-level lines also trip the older "Backend ERROR logs" policy.
+
 ### Rollback
 
 - **Everything Pages:** `node scripts/set_pages_activation.js --project
@@ -693,6 +714,16 @@ jsonPayload.scope="likers.listDaily"` over `cloud_run_revision`, alerting on
 any occurrence: one account paged through 500 lists in a day. The log line
 carries the scope and no uid; find the account through the request log of
 the same trace if action is needed.
+
+**Alert created 2026-09-28 (20:48-20:49 UTC; evidence
+yovoice-evidence/2026-09-28/pages-alerts):** metric `likers_budget_exhausted`
+= `resource.type="cloud_run_revision" AND jsonPayload.message="likers budget
+exhausted" AND jsonPayload.scope="likers.listDaily"` (all list callables,
+including `listPagePostLikersV1`); policy **Likers: daily list budget
+exhausted** (`5639022942881269681`), any occurrence in 5 min, to "Kamil (phone
+via Gmail)", auto-close 1 day; its text carries the one-VIP revoke and the
+`set_likers_activation.js --enabled false --server-messages false --apply`
+rollback. No match in the 24 h before creation.
 
 ### 7. Activation (Kamil's go)
 
