@@ -4,7 +4,19 @@ What deploys automatically, what's manual, and exactly how — for both
 deployables described in
 [ADR-014](Decisions.md#adr-014-two-deployables-one-firebase-project).
 
-## "See who liked" (ADR-230) — source only, NOTHING DEPLOYED
+## "See who liked" (ADR-230) — backend DEPLOYED 2026-09-28, lists switched OFF
+
+**Deploy record (2026-09-28, from `a68a3396`):** census 14/14 canonical
+tester grants (after admitting their `note`); indexes deployed 10:59 UTC,
+53 composites READY, `likerPageCursors.expiresAt` TTL ACTIVE and the other
+five TTLs unchanged; rules released 11:06 UTC, byte-identical to
+`firestore.rules` (ruleset `a45c488b-…`; previous `bd88c7bc-…` saved in
+yovoice-evidence/2026-09-28/likers-deploy/pre-firestore.rules); functions in
+four batches of ≤ 3, 11:08-11:13 UTC, no quota error: 277 functions, all
+ACTIVE (6 created, 4 updated), the six new callables answer an
+unauthenticated POST with 401, and no ERROR log since. Not yet done: the
+controlled-account read-back (step 3.2) and the index smoke (3.3) need a
+signed-in tester; steps 4-7 below.
 
 Source: branch `vip/likers` on `main` 3.3.0+38 (`b492ca0c`). What it is:
 [ADR-230](Decisions.md#adr-230-see-who-liked-is-a-premium-or-vip-capability-behind-an-activation-switch-comment-likes-live-in-a-flat-server-only-store);
