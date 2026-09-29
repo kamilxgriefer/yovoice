@@ -178,6 +178,21 @@ class _CreatePageScreenState extends State<CreatePageScreen> {
   /// already has them.
   int get _followerCount => _profile?.accountFollowerCount ?? 0;
 
+  /// A Creator's public follower list is open now and closes with the Page
+  /// (ADR-234: the create transaction switches Creator audience off).
+  ///
+  /// `creatorAudienceVisible`, not `creatorAudienceEnabled`: the enabled
+  /// flag is only the owner's stored preference, and the list is public only
+  /// when the server also confirmed Creator Premium and age (the same gate
+  /// every public follower surface reads). An account with the preference on
+  /// but no public list has nothing to hide; for it the news is that the
+  /// count becomes public, so it gets that sentence instead.
+  bool get _audienceListOpen => _profile?.creatorAudienceVisible ?? false;
+
+  /// Step 3 discloses the carry-over only when something changes for the
+  /// account's audience: followers to carry, or a public list to close.
+  bool get _discloseCarry => _followerCount > 0 || _audienceListOpen;
+
   String get _name => _profile?.displayName.trim().isNotEmpty == true
       ? _profile!.displayName
       : _copy.yourPage;
@@ -1372,6 +1387,31 @@ class _CreatePageScreenState extends State<CreatePageScreen> {
           ),
         ),
       ),
+      // The count is already in the preview ("Firma · 1,2 tys.
+      // obserwujących"); the caption under it, as wide as the preview, says
+      // where it comes from (ADR-234, variant C, owner decision 2026-09-29).
+      // With no followers and no public list nothing changes for the
+      // audience, and step 3 stays as it was.
+      if (_discloseCarry)
+        Center(
+          child: ConstrainedBox(
+            // The preview is its 390 layout, fitted down, never scaled up.
+            constraints: const BoxConstraints(
+              maxWidth: _InertHeader.layoutWidth,
+            ),
+            child: PageFootnote(
+              copy.carryCaption(_followerCount, listClosing: _audienceListOpen),
+              key: const ValueKey('create-carry'),
+              icon: Icons.arrow_upward_rounded,
+              padding: const EdgeInsets.fromLTRB(4, 12, 4, 0),
+              scaleIcon: true,
+              semanticsLabel: copy.carryCaptionLabel(
+                _followerCount,
+                listClosing: _audienceListOpen,
+              ),
+            ),
+          ),
+        ),
       const SizedBox(height: 24),
       _overline(context, copy.whatHappens),
       _WhatRow(Icons.public_rounded, copy.whatFollow),
@@ -1871,6 +1911,10 @@ class _InertHeader extends StatelessWidget {
   final int followerCount;
   final String description;
 
+  /// The phone width the header is laid out at before it is fitted to the
+  /// card; step 3's caption under it is never wider.
+  static const double layoutWidth = 390;
+
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
@@ -1879,7 +1923,7 @@ class _InertHeader extends StatelessWidget {
     const face = 80.0;
     final tonal = AppFinish.tonalNeutral(palette);
     final header = SizedBox(
-      width: 390,
+      width: layoutWidth,
       child: ColoredBox(
         color: palette.background,
         child: Column(

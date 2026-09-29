@@ -517,6 +517,63 @@ extension PageProfileCopy on PagesCopy {
     'Anyone can follow the Page and see its posts. Only you publish posts.',
     'Każdy może obserwować stronę i widzieć jej posty. Posty publikujesz tylko Ty.',
   );
+
+  /// Step 3's caption under the profile preview (ADR-234, variant C,
+  /// owner decision 2026-09-29). The count the preview shows ("Firma · 1,2
+  /// tys. obserwujących") is the account's own followers, who move to the
+  /// Page; then either the public follower list closes ([listClosing]) or the
+  /// count, private until now, becomes public. With no followers only the
+  /// list sentence is left.
+  ///
+  /// No number is printed, so the words agree with "exactly one" or "more
+  /// than one" follower, not with a CLDR plural category: in Russian,
+  /// Ukrainian, Croatian, Serbian or Lithuanian the category `one` also
+  /// covers 21, 31, 101…, where a sentence without the number is plural.
+  /// Every variant is one whole catalog entry, so no language has to join
+  /// sentences (Chinese and Japanese put no space between them).
+  String carryCaption(int count, {required bool listClosing}) {
+    if (count <= 0) {
+      return copy.text(
+        'Your public follower list will be hidden.',
+        'Publiczna lista obserwujących zostanie ukryta.',
+      );
+    }
+    final one = count == 1;
+    if (listClosing) {
+      return one
+          ? copy.text(
+              'Your current follower will move to the Page and see its posts in Content. Your public follower list will be hidden.',
+              'Obecny obserwujący przejdzie na stronę i zobaczy jej posty w Treściach. Publiczna lista obserwujących zostanie ukryta.',
+            )
+          : copy.text(
+              'Your current followers will move to the Page and see its posts in Content. Your public follower list will be hidden.',
+              'Obecni obserwujący przejdą na stronę i zobaczą jej posty w Treściach. Publiczna lista obserwujących zostanie ukryta.',
+            );
+    }
+    return one
+        ? copy.text(
+            'Your current follower will move to the Page and see its posts in Content. Everyone will see the follower count.',
+            'Obecny obserwujący przejdzie na stronę i zobaczy jej posty w Treściach. Liczbę obserwujących zobaczy każdy.',
+          )
+        : copy.text(
+            'Your current followers will move to the Page and see its posts in Content. Everyone will see how many there are.',
+            'Obecni obserwujący przejdą na stronę i zobaczą jej posty w Treściach. Ich liczbę zobaczy każdy.',
+          );
+  }
+
+  /// [carryCaption] as a screen reader hears it: the preview it points at is
+  /// excluded from semantics, so the count leads, in the preview's own words
+  /// ([followers]: the same compact figure and plural form).
+  String carryCaptionLabel(int count, {required bool listClosing}) =>
+      copy.template(
+        '{followers}. {details}',
+        '{followers}. {details}',
+        values: <String, Object>{
+          'followers': followers(count),
+          'details': carryCaption(count, listClosing: listClosing),
+        },
+      );
+
   String get whatProfile => copy.text(
     'Your profile will show as a Page. You can pause it any time in Page settings.',
     'Twój profil wyświetli się jako strona. Wstrzymasz ją w każdej chwili w ustawieniach strony.',

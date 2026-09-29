@@ -469,6 +469,8 @@ class PageFootnote extends StatelessWidget {
     this.text, {
     this.icon = Icons.info_outline_rounded,
     this.padding = const EdgeInsets.fromLTRB(16, 10, 16, 0),
+    this.semanticsLabel,
+    this.scaleIcon = false,
     super.key,
   });
 
@@ -476,28 +478,55 @@ class PageFootnote extends StatelessWidget {
   final IconData icon;
   final EdgeInsets padding;
 
+  /// What a screen reader hears instead of [text], for a line that leans on
+  /// something it cannot perceive (create step 3's caption points up at a
+  /// preview excluded from semantics). Null reads [text].
+  final String? semanticsLabel;
+
+  /// The glyph follows the reader's text size as the words beside it do, so
+  /// it stays one line tall at 200 %.
+  final bool scaleIcon;
+
+  static const double _fontSize = 13;
+  static const double _iconSize = 18;
+
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    return Padding(
+    // The ratio the words themselves grow by (a nonlinear scaler grows
+    // 13 px text by its own factor, not by the 18 px glyph's).
+    final iconSize = scaleIcon
+        ? _iconSize *
+              MediaQuery.textScalerOf(context).scale(_fontSize) /
+              _fontSize
+        : _iconSize;
+    final Widget line = Padding(
       padding: padding,
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 18, color: palette.textSecondary),
+          Icon(icon, size: iconSize, color: palette.textSecondary),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
               text,
               style: AppTypography.bodySmall.copyWith(
                 color: palette.textSecondary,
-                fontSize: 13,
+                fontSize: _fontSize,
                 height: 1.4,
               ),
             ),
           ),
         ],
       ),
+    );
+    final label = semanticsLabel;
+    if (label == null) return line;
+    return Semantics(
+      container: true,
+      label: label,
+      excludeSemantics: true,
+      child: line,
     );
   }
 }

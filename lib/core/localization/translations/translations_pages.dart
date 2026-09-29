@@ -483,6 +483,13 @@ const pagesTranslationKeys = <String>[
   'Description or transcript (recommended)',
   "A text version lets people who can't listen follow your post.",
   'Remove the number from the Page',
+  // ADR-234: create step 3's carry-over caption (variant C, 2026-09-29).
+  'Your public follower list will be hidden.',
+  'Your current followers will move to the Page and see its posts in Content. Your public follower list will be hidden.',
+  'Your current follower will move to the Page and see its posts in Content. Your public follower list will be hidden.',
+  'Your current followers will move to the Page and see its posts in Content. Everyone will see how many there are.',
+  'Your current follower will move to the Page and see its posts in Content. Everyone will see the follower count.',
+  '{followers}. {details}',
 ];
 
 const pagesTranslations = <String, Map<String, String>>{
@@ -1080,6 +1087,17 @@ const pagesTranslations = <String, Map<String, String>>{
     "A text version lets people who can't listen follow your post.":
         'Mit einer Textversion können auch Menschen, die nicht zuhören können, deinem Beitrag folgen.',
     'Remove the number from the Page': 'Nummer von der Seite entfernen',
+    'Your public follower list will be hidden.':
+        'Deine öffentliche Follower-Liste wird ausgeblendet.',
+    'Your current followers will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Deine aktuellen Follower wechseln zur Seite und sehen ihre Beiträge im Tab „Inhalte“. Deine öffentliche Follower-Liste wird ausgeblendet.',
+    'Your current follower will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Dein aktueller Follower wechselt zur Seite und sieht ihre Beiträge im Tab „Inhalte“. Deine öffentliche Follower-Liste wird ausgeblendet.',
+    'Your current followers will move to the Page and see its posts in Content. Everyone will see how many there are.':
+        'Deine aktuellen Follower wechseln zur Seite und sehen ihre Beiträge im Tab „Inhalte“. Wie viele es sind, sehen dann alle.',
+    'Your current follower will move to the Page and see its posts in Content. Everyone will see the follower count.':
+        'Dein aktueller Follower wechselt zur Seite und sieht ihre Beiträge im Tab „Inhalte“. Die Follower-Zahl sehen dann alle.',
+    '{followers}. {details}': '{followers}. {details}',
   },
   'es': <String, String>{
     "VIP doesn't mean verified": 'VIP no significa verificado',
@@ -1675,6 +1693,17 @@ const pagesTranslations = <String, Map<String, String>>{
     "A text version lets people who can't listen follow your post.":
         'Una versión en texto permite seguir tu publicación a quienes no pueden escucharla.',
     'Remove the number from the Page': 'Quitar el número de la página',
+    'Your public follower list will be hidden.':
+        'Tu lista pública de seguidores se ocultará.',
+    'Your current followers will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Tus seguidores actuales pasarán a la página y verán sus publicaciones en Contenido. Tu lista pública de seguidores se ocultará.',
+    'Your current follower will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Tu seguidor actual pasará a la página y verá sus publicaciones en Contenido. Tu lista pública de seguidores se ocultará.',
+    'Your current followers will move to the Page and see its posts in Content. Everyone will see how many there are.':
+        'Tus seguidores actuales pasarán a la página y verán sus publicaciones en Contenido. Todos verán cuántos son.',
+    'Your current follower will move to the Page and see its posts in Content. Everyone will see the follower count.':
+        'Tu seguidor actual pasará a la página y verá sus publicaciones en Contenido. Todos verán el número de seguidores.',
+    '{followers}. {details}': '{followers}. {details}',
   },
   'pt': <String, String>{
     "VIP doesn't mean verified": 'VIP não significa verificado',
@@ -2266,6 +2295,17 @@ const pagesTranslations = <String, Map<String, String>>{
     "A text version lets people who can't listen follow your post.":
         'Uma versão em texto permite que quem não pode ouvir acompanhe a tua publicação.',
     'Remove the number from the Page': 'Remover o número da página',
+    'Your public follower list will be hidden.':
+        'A tua lista pública de seguidores vai ficar oculta.',
+    'Your current followers will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Os teus seguidores atuais vão passar para a página e ver as publicações dela em Conteúdos. A tua lista pública de seguidores vai ficar oculta.',
+    'Your current follower will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'O teu seguidor atual vai passar para a página e ver as publicações dela em Conteúdos. A tua lista pública de seguidores vai ficar oculta.',
+    'Your current followers will move to the Page and see its posts in Content. Everyone will see how many there are.':
+        'Os teus seguidores atuais vão passar para a página e ver as publicações dela em Conteúdos. Todos vão ver quantos são.',
+    'Your current follower will move to the Page and see its posts in Content. Everyone will see the follower count.':
+        'O teu seguidor atual vai passar para a página e ver as publicações dela em Conteúdos. Todos vão ver o número de seguidores.',
+    '{followers}. {details}': '{followers}. {details}',
   },
   'pt_BR': <String, String>{
     "VIP doesn't mean verified": 'VIP não significa verificado',
@@ -2857,6 +2897,17 @@ const pagesTranslations = <String, Map<String, String>>{
     "A text version lets people who can't listen follow your post.":
         'Uma versão em texto permite que quem não pode ouvir acompanhe seu post.',
     'Remove the number from the Page': 'Remover o número da página',
+    'Your public follower list will be hidden.':
+        'Sua lista pública de seguidores vai ficar oculta.',
+    'Your current followers will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Seus seguidores atuais vão passar para a página e ver as publicações dela em Conteúdo. Sua lista pública de seguidores vai ficar oculta.',
+    'Your current follower will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Seu seguidor atual vai passar para a página e ver as publicações dela em Conteúdo. Sua lista pública de seguidores vai ficar oculta.',
+    'Your current followers will move to the Page and see its posts in Content. Everyone will see how many there are.':
+        'Seus seguidores atuais vão passar para a página e ver as publicações dela em Conteúdo. Todo mundo vai ver quantos são.',
+    'Your current follower will move to the Page and see its posts in Content. Everyone will see the follower count.':
+        'Seu seguidor atual vai passar para a página e ver as publicações dela em Conteúdo. Todo mundo vai ver o número de seguidores.',
+    '{followers}. {details}': '{followers}. {details}',
   },
   'fr': <String, String>{
     "VIP doesn't mean verified": 'VIP ne veut pas dire vérifié',
@@ -3449,6 +3500,17 @@ const pagesTranslations = <String, Map<String, String>>{
     "A text version lets people who can't listen follow your post.":
         'Une version texte permet aux personnes qui ne peuvent pas écouter de suivre ta publication.',
     'Remove the number from the Page': 'Retirer le numéro de la page',
+    'Your public follower list will be hidden.':
+        'Ta liste publique d’abonnés sera masquée.',
+    'Your current followers will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Tes abonnés actuels passeront sur la page et verront ses publications dans Contenus. Ta liste publique d’abonnés sera masquée.',
+    'Your current follower will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Ton abonné actuel passera sur la page et verra ses publications dans Contenus. Ta liste publique d’abonnés sera masquée.',
+    'Your current followers will move to the Page and see its posts in Content. Everyone will see how many there are.':
+        'Tes abonnés actuels passeront sur la page et verront ses publications dans Contenus. Tout le monde verra combien ils sont.',
+    'Your current follower will move to the Page and see its posts in Content. Everyone will see the follower count.':
+        'Ton abonné actuel passera sur la page et verra ses publications dans Contenus. Tout le monde verra le nombre d’abonnés.',
+    '{followers}. {details}': '{followers}. {details}',
   },
   'it': <String, String>{
     "VIP doesn't mean verified": 'VIP non significa verificato',
@@ -4039,6 +4101,17 @@ const pagesTranslations = <String, Map<String, String>>{
     "A text version lets people who can't listen follow your post.":
         'Una versione testuale permette a chi non può ascoltare di seguire il tuo post.',
     'Remove the number from the Page': 'Rimuovi il numero dalla pagina',
+    'Your public follower list will be hidden.':
+        'Il tuo elenco pubblico di follower verrà nascosto.',
+    'Your current followers will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'I tuoi follower attuali passeranno alla pagina e ne vedranno i post in Contenuti. Il tuo elenco pubblico di follower verrà nascosto.',
+    'Your current follower will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Il tuo follower attuale passerà alla pagina e ne vedrà i post in Contenuti. Il tuo elenco pubblico di follower verrà nascosto.',
+    'Your current followers will move to the Page and see its posts in Content. Everyone will see how many there are.':
+        'I tuoi follower attuali passeranno alla pagina e ne vedranno i post in Contenuti. Tutti vedranno quanti sono.',
+    'Your current follower will move to the Page and see its posts in Content. Everyone will see the follower count.':
+        'Il tuo follower attuale passerà alla pagina e ne vedrà i post in Contenuti. Tutti vedranno il numero di follower.',
+    '{followers}. {details}': '{followers}. {details}',
   },
   'nl': <String, String>{
     "VIP doesn't mean verified": 'VIP betekent niet geverifieerd',
@@ -4628,6 +4701,17 @@ const pagesTranslations = <String, Map<String, String>>{
     "A text version lets people who can't listen follow your post.":
         'Met een tekstversie kunnen mensen die niet kunnen luisteren je bericht volgen.',
     'Remove the number from the Page': 'Nummer van de pagina verwijderen',
+    'Your public follower list will be hidden.':
+        'Je openbare lijst met volgers wordt verborgen.',
+    'Your current followers will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Je huidige volgers gaan over naar de pagina en zien de berichten ervan in Inhoud. Je openbare lijst met volgers wordt verborgen.',
+    'Your current follower will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Je huidige volger gaat over naar de pagina en ziet de berichten ervan in Inhoud. Je openbare lijst met volgers wordt verborgen.',
+    'Your current followers will move to the Page and see its posts in Content. Everyone will see how many there are.':
+        'Je huidige volgers gaan over naar de pagina en zien de berichten ervan in Inhoud. Iedereen ziet hoeveel het er zijn.',
+    'Your current follower will move to the Page and see its posts in Content. Everyone will see the follower count.':
+        'Je huidige volger gaat over naar de pagina en ziet de berichten ervan in Inhoud. Iedereen ziet het aantal volgers.',
+    '{followers}. {details}': '{followers}. {details}',
   },
   'ro': <String, String>{
     "VIP doesn't mean verified": 'VIP nu înseamnă verificat',
@@ -5218,6 +5302,17 @@ const pagesTranslations = <String, Map<String, String>>{
     "A text version lets people who can't listen follow your post.":
         'O versiune text le permite celor care nu pot asculta să urmărească postarea ta.',
     'Remove the number from the Page': 'Elimină numărul de pe pagină',
+    'Your public follower list will be hidden.':
+        'Lista ta publică de urmăritori va fi ascunsă.',
+    'Your current followers will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Urmăritorii tăi actuali vor trece pe pagină și îi vor vedea postările în Conținut. Lista ta publică de urmăritori va fi ascunsă.',
+    'Your current follower will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Urmăritorul tău actual va trece pe pagină și îi va vedea postările în Conținut. Lista ta publică de urmăritori va fi ascunsă.',
+    'Your current followers will move to the Page and see its posts in Content. Everyone will see how many there are.':
+        'Urmăritorii tăi actuali vor trece pe pagină și îi vor vedea postările în Conținut. Toată lumea va vedea câți sunt.',
+    'Your current follower will move to the Page and see its posts in Content. Everyone will see the follower count.':
+        'Urmăritorul tău actual va trece pe pagină și îi va vedea postările în Conținut. Toată lumea va vedea numărul de urmăritori.',
+    '{followers}. {details}': '{followers}. {details}',
   },
   'tr': <String, String>{
     "VIP doesn't mean verified": 'VIP, doğrulanmış anlamına gelmez',
@@ -5797,6 +5892,17 @@ const pagesTranslations = <String, Map<String, String>>{
     "A text version lets people who can't listen follow your post.":
         'Metin sürümü, dinleyemeyen kişilerin de gönderini takip etmesini sağlar.',
     'Remove the number from the Page': 'Numarayı sayfadan kaldır',
+    'Your public follower list will be hidden.':
+        'Herkese açık takipçi listen gizlenecek.',
+    'Your current followers will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Mevcut takipçilerin sayfaya geçecek ve sayfanın gönderilerini İçerik sekmesinde görecek. Herkese açık takipçi listen gizlenecek.',
+    'Your current follower will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Mevcut takipçin sayfaya geçecek ve sayfanın gönderilerini İçerik sekmesinde görecek. Herkese açık takipçi listen gizlenecek.',
+    'Your current followers will move to the Page and see its posts in Content. Everyone will see how many there are.':
+        'Mevcut takipçilerin sayfaya geçecek ve sayfanın gönderilerini İçerik sekmesinde görecek. Kaç kişi olduklarını herkes görecek.',
+    'Your current follower will move to the Page and see its posts in Content. Everyone will see the follower count.':
+        'Mevcut takipçin sayfaya geçecek ve sayfanın gönderilerini İçerik sekmesinde görecek. Takipçi sayısını herkes görecek.',
+    '{followers}. {details}': '{followers}. {details}',
   },
   'el': <String, String>{
     "VIP doesn't mean verified": 'Το VIP δεν σημαίνει επαληθευμένο',
@@ -6394,6 +6500,17 @@ const pagesTranslations = <String, Map<String, String>>{
     "A text version lets people who can't listen follow your post.":
         'Μια εκδοχή κειμένου επιτρέπει σε όσους δεν μπορούν να ακούσουν να παρακολουθούν την ανάρτησή σου.',
     'Remove the number from the Page': 'Αφαίρεση του αριθμού από τη σελίδα',
+    'Your public follower list will be hidden.':
+        'Η δημόσια λίστα ακολούθων σου θα κρυφτεί.',
+    'Your current followers will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Οι τωρινοί ακόλουθοί σου θα μεταφερθούν στη σελίδα και θα βλέπουν τις αναρτήσεις της στο Περιεχόμενο. Η δημόσια λίστα ακολούθων σου θα κρυφτεί.',
+    'Your current follower will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Ο τωρινός ακόλουθός σου θα μεταφερθεί στη σελίδα και θα βλέπει τις αναρτήσεις της στο Περιεχόμενο. Η δημόσια λίστα ακολούθων σου θα κρυφτεί.',
+    'Your current followers will move to the Page and see its posts in Content. Everyone will see how many there are.':
+        'Οι τωρινοί ακόλουθοί σου θα μεταφερθούν στη σελίδα και θα βλέπουν τις αναρτήσεις της στο Περιεχόμενο. Όλοι θα βλέπουν πόσοι είναι.',
+    'Your current follower will move to the Page and see its posts in Content. Everyone will see the follower count.':
+        'Ο τωρινός ακόλουθός σου θα μεταφερθεί στη σελίδα και θα βλέπει τις αναρτήσεις της στο Περιεχόμενο. Όλοι θα βλέπουν τον αριθμό ακολούθων.',
+    '{followers}. {details}': '{followers}. {details}',
   },
   'hu': <String, String>{
     "VIP doesn't mean verified": 'A VIP nem jelent hitelesítést',
@@ -6979,6 +7096,17 @@ const pagesTranslations = <String, Map<String, String>>{
     "A text version lets people who can't listen follow your post.":
         'A szöveges változattal azok is követhetik a bejegyzésedet, akik nem tudják meghallgatni.',
     'Remove the number from the Page': 'Telefonszám eltávolítása az oldalról',
+    'Your public follower list will be hidden.':
+        'A nyilvános követőlistád el lesz rejtve.',
+    'Your current followers will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'A jelenlegi követőid átkerülnek az oldalra, és a Tartalom lapon látják a bejegyzéseit. A nyilvános követőlistád el lesz rejtve.',
+    'Your current follower will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'A jelenlegi követőd átkerül az oldalra, és a Tartalom lapon látja a bejegyzéseit. A nyilvános követőlistád el lesz rejtve.',
+    'Your current followers will move to the Page and see its posts in Content. Everyone will see how many there are.':
+        'A jelenlegi követőid átkerülnek az oldalra, és a Tartalom lapon látják a bejegyzéseit. A számukat mindenki látni fogja.',
+    'Your current follower will move to the Page and see its posts in Content. Everyone will see the follower count.':
+        'A jelenlegi követőd átkerül az oldalra, és a Tartalom lapon látja a bejegyzéseit. A követők számát mindenki látni fogja.',
+    '{followers}. {details}': '{followers}. {details}',
   },
   'uk': <String, String>{
     "VIP doesn't mean verified": 'VIP не означає верифікацію',
@@ -7560,6 +7688,17 @@ const pagesTranslations = <String, Map<String, String>>{
     "A text version lets people who can't listen follow your post.":
         'Текстова версія дозволяє стежити за дописом тим, хто не може слухати.',
     'Remove the number from the Page': 'Видалити номер зі сторінки',
+    'Your public follower list will be hidden.':
+        'Ваш публічний список читачів буде приховано.',
+    'Your current followers will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Ваші поточні читачі перейдуть на сторінку й бачитимуть її дописи в «Контенті». Ваш публічний список читачів буде приховано.',
+    'Your current follower will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Ваш поточний читач перейде на сторінку й бачитиме її дописи в «Контенті». Ваш публічний список читачів буде приховано.',
+    'Your current followers will move to the Page and see its posts in Content. Everyone will see how many there are.':
+        'Ваші поточні читачі перейдуть на сторінку й бачитимуть її дописи в «Контенті». Їхню кількість бачитимуть усі.',
+    'Your current follower will move to the Page and see its posts in Content. Everyone will see the follower count.':
+        'Ваш поточний читач перейде на сторінку й бачитиме її дописи в «Контенті». Кількість читачів бачитимуть усі.',
+    '{followers}. {details}': '{followers}. {details}',
   },
   'ru': <String, String>{
     "VIP doesn't mean verified": 'VIP не означает верификацию',
@@ -8145,6 +8284,17 @@ const pagesTranslations = <String, Map<String, String>>{
     "A text version lets people who can't listen follow your post.":
         'Текстовая версия позволяет следить за публикацией тем, кто не может слушать.',
     'Remove the number from the Page': 'Удалить номер со страницы',
+    'Your public follower list will be hidden.':
+        'Ваш публичный список подписчиков будет скрыт.',
+    'Your current followers will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Ваши текущие подписчики перейдут на страницу и будут видеть её посты в «Контенте». Ваш публичный список подписчиков будет скрыт.',
+    'Your current follower will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Ваш текущий подписчик перейдёт на страницу и будет видеть её посты в «Контенте». Ваш публичный список подписчиков будет скрыт.',
+    'Your current followers will move to the Page and see its posts in Content. Everyone will see how many there are.':
+        'Ваши текущие подписчики перейдут на страницу и будут видеть её посты в «Контенте». Их число увидят все.',
+    'Your current follower will move to the Page and see its posts in Content. Everyone will see the follower count.':
+        'Ваш текущий подписчик перейдёт на страницу и будет видеть её посты в «Контенте». Число подписчиков увидят все.',
+    '{followers}. {details}': '{followers}. {details}',
   },
   'cs': <String, String>{
     "VIP doesn't mean verified": 'VIP neznamená ověření',
@@ -8725,6 +8875,17 @@ const pagesTranslations = <String, Map<String, String>>{
     "A text version lets people who can't listen follow your post.":
         'Textová verze umožní sledovat tvůj příspěvek i lidem, kteří nemohou poslouchat.',
     'Remove the number from the Page': 'Odebrat číslo ze stránky',
+    'Your public follower list will be hidden.':
+        'Tvůj veřejný seznam sledujících bude skrytý.',
+    'Your current followers will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Tví současní sledující přejdou na stránku a uvidí její příspěvky v Obsahu. Tvůj veřejný seznam sledujících bude skrytý.',
+    'Your current follower will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Tvůj současný sledující přejde na stránku a uvidí její příspěvky v Obsahu. Tvůj veřejný seznam sledujících bude skrytý.',
+    'Your current followers will move to the Page and see its posts in Content. Everyone will see how many there are.':
+        'Tví současní sledující přejdou na stránku a uvidí její příspěvky v Obsahu. Jejich počet uvidí každý.',
+    'Your current follower will move to the Page and see its posts in Content. Everyone will see the follower count.':
+        'Tvůj současný sledující přejde na stránku a uvidí její příspěvky v Obsahu. Počet sledujících uvidí každý.',
+    '{followers}. {details}': '{followers}. {details}',
   },
   'sk': <String, String>{
     "VIP doesn't mean verified": 'VIP neznamená overenie',
@@ -9307,6 +9468,17 @@ const pagesTranslations = <String, Map<String, String>>{
     "A text version lets people who can't listen follow your post.":
         'Textová verzia umožní sledovať tvoj príspevok aj ľuďom, ktorí nemôžu počúvať.',
     'Remove the number from the Page': 'Odstrániť číslo zo stránky',
+    'Your public follower list will be hidden.':
+        'Tvoj verejný zoznam sledovateľov bude skrytý.',
+    'Your current followers will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Tvoji súčasní sledovatelia prejdú na stránku a uvidia jej príspevky v Obsahu. Tvoj verejný zoznam sledovateľov bude skrytý.',
+    'Your current follower will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Tvoj súčasný sledovateľ prejde na stránku a uvidí jej príspevky v Obsahu. Tvoj verejný zoznam sledovateľov bude skrytý.',
+    'Your current followers will move to the Page and see its posts in Content. Everyone will see how many there are.':
+        'Tvoji súčasní sledovatelia prejdú na stránku a uvidia jej príspevky v Obsahu. Ich počet uvidí každý.',
+    'Your current follower will move to the Page and see its posts in Content. Everyone will see the follower count.':
+        'Tvoj súčasný sledovateľ prejde na stránku a uvidí jej príspevky v Obsahu. Počet sledovateľov uvidí každý.',
+    '{followers}. {details}': '{followers}. {details}',
   },
   'bg': <String, String>{
     "VIP doesn't mean verified": 'VIP не означава потвърден',
@@ -9898,6 +10070,17 @@ const pagesTranslations = <String, Map<String, String>>{
     "A text version lets people who can't listen follow your post.":
         'Текстовата версия позволява на хората, които не могат да слушат, да следят публикацията ти.',
     'Remove the number from the Page': 'Премахни номера от страницата',
+    'Your public follower list will be hidden.':
+        'Публичният ти списък с последователи ще бъде скрит.',
+    'Your current followers will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Сегашните ти последователи ще преминат към страницата и ще виждат публикациите ѝ в „Съдържание“. Публичният ти списък с последователи ще бъде скрит.',
+    'Your current follower will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Сегашният ти последовател ще премине към страницата и ще вижда публикациите ѝ в „Съдържание“. Публичният ти списък с последователи ще бъде скрит.',
+    'Your current followers will move to the Page and see its posts in Content. Everyone will see how many there are.':
+        'Сегашните ти последователи ще преминат към страницата и ще виждат публикациите ѝ в „Съдържание“. Всички ще виждат колко са.',
+    'Your current follower will move to the Page and see its posts in Content. Everyone will see the follower count.':
+        'Сегашният ти последовател ще премине към страницата и ще вижда публикациите ѝ в „Съдържание“. Всички ще виждат броя на последователите.',
+    '{followers}. {details}': '{followers}. {details}',
   },
   'hr': <String, String>{
     "VIP doesn't mean verified": 'VIP ne znači provjereno',
@@ -10481,6 +10664,17 @@ const pagesTranslations = <String, Map<String, String>>{
     "A text version lets people who can't listen follow your post.":
         'Tekstna verzija omogućuje onima koji ne mogu slušati da prate tvoju objavu.',
     'Remove the number from the Page': 'Ukloni broj sa stranice',
+    'Your public follower list will be hidden.':
+        'Tvoj javni popis pratitelja bit će skriven.',
+    'Your current followers will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Tvoji sadašnji pratitelji prijeći će na stranicu i vidjeti njezine objave u Sadržaju. Tvoj javni popis pratitelja bit će skriven.',
+    'Your current follower will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Tvoj sadašnji pratitelj prijeći će na stranicu i vidjeti njezine objave u Sadržaju. Tvoj javni popis pratitelja bit će skriven.',
+    'Your current followers will move to the Page and see its posts in Content. Everyone will see how many there are.':
+        'Tvoji sadašnji pratitelji prijeći će na stranicu i vidjeti njezine objave u Sadržaju. Njihov broj vidjet će svi.',
+    'Your current follower will move to the Page and see its posts in Content. Everyone will see the follower count.':
+        'Tvoj sadašnji pratitelj prijeći će na stranicu i vidjeti njezine objave u Sadržaju. Broj pratitelja vidjet će svi.',
+    '{followers}. {details}': '{followers}. {details}',
   },
   'sr': <String, String>{
     "VIP doesn't mean verified": 'VIP не значи верификовано',
@@ -11064,6 +11258,17 @@ const pagesTranslations = <String, Map<String, String>>{
     "A text version lets people who can't listen follow your post.":
         'Текстуална верзија омогућава онима који не могу да слушају да прате твоју објаву.',
     'Remove the number from the Page': 'Уклони број са странице',
+    'Your public follower list will be hidden.':
+        'Твоја јавна листа пратилаца биће скривена.',
+    'Your current followers will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Твоји садашњи пратиоци прећи ће на страницу и видеће њене објаве у Садржају. Твоја јавна листа пратилаца биће скривена.',
+    'Your current follower will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Твој садашњи пратилац прећи ће на страницу и видеће њене објаве у Садржају. Твоја јавна листа пратилаца биће скривена.',
+    'Your current followers will move to the Page and see its posts in Content. Everyone will see how many there are.':
+        'Твоји садашњи пратиоци прећи ће на страницу и видеће њене објаве у Садржају. Њихов број видеће сви.',
+    'Your current follower will move to the Page and see its posts in Content. Everyone will see the follower count.':
+        'Твој садашњи пратилац прећи ће на страницу и видеће њене објаве у Садржају. Број пратилаца видеће сви.',
+    '{followers}. {details}': '{followers}. {details}',
   },
   'sv': <String, String>{
     "VIP doesn't mean verified": 'VIP betyder inte verifierad',
@@ -11648,6 +11853,17 @@ const pagesTranslations = <String, Map<String, String>>{
     "A text version lets people who can't listen follow your post.":
         'En textversion gör att den som inte kan lyssna kan följa ditt inlägg.',
     'Remove the number from the Page': 'Ta bort numret från sidan',
+    'Your public follower list will be hidden.':
+        'Din offentliga följarlista döljs.',
+    'Your current followers will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Dina nuvarande följare flyttar över till sidan och ser dess inlägg i Innehåll. Din offentliga följarlista döljs.',
+    'Your current follower will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Din nuvarande följare flyttar över till sidan och ser dess inlägg i Innehåll. Din offentliga följarlista döljs.',
+    'Your current followers will move to the Page and see its posts in Content. Everyone will see how many there are.':
+        'Dina nuvarande följare flyttar över till sidan och ser dess inlägg i Innehåll. Alla kommer att se hur många de är.',
+    'Your current follower will move to the Page and see its posts in Content. Everyone will see the follower count.':
+        'Din nuvarande följare flyttar över till sidan och ser dess inlägg i Innehåll. Alla kommer att se antalet följare.',
+    '{followers}. {details}': '{followers}. {details}',
   },
   'da': <String, String>{
     "VIP doesn't mean verified": 'VIP betyder ikke verificeret',
@@ -12230,6 +12446,17 @@ const pagesTranslations = <String, Map<String, String>>{
     "A text version lets people who can't listen follow your post.":
         'En tekstversion gør det muligt for dem, der ikke kan lytte, at følge dit opslag.',
     'Remove the number from the Page': 'Fjern nummeret fra siden',
+    'Your public follower list will be hidden.':
+        'Din offentlige følgerliste bliver skjult.',
+    'Your current followers will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Dine nuværende følgere flytter over til siden og ser dens opslag i Indhold. Din offentlige følgerliste bliver skjult.',
+    'Your current follower will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Din nuværende følger flytter over til siden og ser dens opslag i Indhold. Din offentlige følgerliste bliver skjult.',
+    'Your current followers will move to the Page and see its posts in Content. Everyone will see how many there are.':
+        'Dine nuværende følgere flytter over til siden og ser dens opslag i Indhold. Alle kan se, hvor mange de er.',
+    'Your current follower will move to the Page and see its posts in Content. Everyone will see the follower count.':
+        'Din nuværende følger flytter over til siden og ser dens opslag i Indhold. Alle kan se antallet af følgere.',
+    '{followers}. {details}': '{followers}. {details}',
   },
   'nb': <String, String>{
     "VIP doesn't mean verified": 'VIP betyr ikke verifisert',
@@ -12813,6 +13040,17 @@ const pagesTranslations = <String, Map<String, String>>{
     "A text version lets people who can't listen follow your post.":
         'En tekstversjon lar dem som ikke kan lytte, følge innlegget ditt.',
     'Remove the number from the Page': 'Fjern nummeret fra siden',
+    'Your public follower list will be hidden.':
+        'Den offentlige følgerlisten din blir skjult.',
+    'Your current followers will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'De nåværende følgerne dine flyttes over til siden og ser innleggene i Innhold. Den offentlige følgerlisten din blir skjult.',
+    'Your current follower will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Den nåværende følgeren din flyttes over til siden og ser innleggene i Innhold. Den offentlige følgerlisten din blir skjult.',
+    'Your current followers will move to the Page and see its posts in Content. Everyone will see how many there are.':
+        'De nåværende følgerne dine flyttes over til siden og ser innleggene i Innhold. Alle kan se hvor mange de er.',
+    'Your current follower will move to the Page and see its posts in Content. Everyone will see the follower count.':
+        'Den nåværende følgeren din flyttes over til siden og ser innleggene i Innhold. Alle kan se antallet følgere.',
+    '{followers}. {details}': '{followers}. {details}',
   },
   'fi': <String, String>{
     "VIP doesn't mean verified": 'VIP ei tarkoita vahvistettua',
@@ -13394,6 +13632,17 @@ const pagesTranslations = <String, Map<String, String>>{
     "A text version lets people who can't listen follow your post.":
         'Tekstiversion avulla myös ne, jotka eivät voi kuunnella, voivat seurata julkaisuasi.',
     'Remove the number from the Page': 'Poista numero sivulta',
+    'Your public follower list will be hidden.':
+        'Julkinen seuraajaluettelosi piilotetaan.',
+    'Your current followers will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Nykyiset seuraajasi siirtyvät sivulle ja näkevät sen julkaisut Sisällössä. Julkinen seuraajaluettelosi piilotetaan.',
+    'Your current follower will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Nykyinen seuraajasi siirtyy sivulle ja näkee sen julkaisut Sisällössä. Julkinen seuraajaluettelosi piilotetaan.',
+    'Your current followers will move to the Page and see its posts in Content. Everyone will see how many there are.':
+        'Nykyiset seuraajasi siirtyvät sivulle ja näkevät sen julkaisut Sisällössä. Kaikki näkevät, kuinka monta heitä on.',
+    'Your current follower will move to the Page and see its posts in Content. Everyone will see the follower count.':
+        'Nykyinen seuraajasi siirtyy sivulle ja näkee sen julkaisut Sisällössä. Kaikki näkevät seuraajien määrän.',
+    '{followers}. {details}': '{followers}. {details}',
   },
   'lt': <String, String>{
     "VIP doesn't mean verified": 'VIP nereiškia patvirtinimo',
@@ -13976,6 +14225,17 @@ const pagesTranslations = <String, Map<String, String>>{
     "A text version lets people who can't listen follow your post.":
         'Teksto versija leidžia jūsų įrašą sekti tiems, kurie negali klausytis.',
     'Remove the number from the Page': 'Pašalinti numerį iš puslapio',
+    'Your public follower list will be hidden.':
+        'Jūsų viešas sekėjų sąrašas bus paslėptas.',
+    'Your current followers will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Dabartiniai jūsų sekėjai pereis į puslapį ir matys jo įrašus skiltyje „Turinys“. Jūsų viešas sekėjų sąrašas bus paslėptas.',
+    'Your current follower will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Dabartinis jūsų sekėjas pereis į puslapį ir matys jo įrašus skiltyje „Turinys“. Jūsų viešas sekėjų sąrašas bus paslėptas.',
+    'Your current followers will move to the Page and see its posts in Content. Everyone will see how many there are.':
+        'Dabartiniai jūsų sekėjai pereis į puslapį ir matys jo įrašus skiltyje „Turinys“. Jų skaičių matys visi.',
+    'Your current follower will move to the Page and see its posts in Content. Everyone will see the follower count.':
+        'Dabartinis jūsų sekėjas pereis į puslapį ir matys jo įrašus skiltyje „Turinys“. Sekėjų skaičių matys visi.',
+    '{followers}. {details}': '{followers}. {details}',
   },
   'lv': <String, String>{
     "VIP doesn't mean verified": 'VIP nenozīmē verificēts',
@@ -14553,6 +14813,17 @@ const pagesTranslations = <String, Map<String, String>>{
     "A text version lets people who can't listen follow your post.":
         'Teksta versija ļauj sekot tavai ziņai arī tiem, kas nevar klausīties.',
     'Remove the number from the Page': 'Noņemt numuru no lapas',
+    'Your public follower list will be hidden.':
+        'Tavs publiskais sekotāju saraksts tiks paslēpts.',
+    'Your current followers will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Tavi pašreizējie sekotāji pāries uz lapu un redzēs tās ziņas cilnē “Saturs”. Tavs publiskais sekotāju saraksts tiks paslēpts.',
+    'Your current follower will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Tavs pašreizējais sekotājs pāries uz lapu un redzēs tās ziņas cilnē “Saturs”. Tavs publiskais sekotāju saraksts tiks paslēpts.',
+    'Your current followers will move to the Page and see its posts in Content. Everyone will see how many there are.':
+        'Tavi pašreizējie sekotāji pāries uz lapu un redzēs tās ziņas cilnē “Saturs”. Viņu skaitu redzēs visi.',
+    'Your current follower will move to the Page and see its posts in Content. Everyone will see the follower count.':
+        'Tavs pašreizējais sekotājs pāries uz lapu un redzēs tās ziņas cilnē “Saturs”. Sekotāju skaitu redzēs visi.',
+    '{followers}. {details}': '{followers}. {details}',
   },
   'et': <String, String>{
     "VIP doesn't mean verified": 'VIP ei tähenda kinnitatud',
@@ -15129,6 +15400,17 @@ const pagesTranslations = <String, Map<String, String>>{
     "A text version lets people who can't listen follow your post.":
         'Tekstiversioon võimaldab sinu postitust jälgida ka neil, kes ei saa kuulata.',
     'Remove the number from the Page': 'Eemalda number lehelt',
+    'Your public follower list will be hidden.':
+        'Sinu avalik jälgijate loend peidetakse.',
+    'Your current followers will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Sinu praegused jälgijad liiguvad lehele ja näevad selle postitusi Sisus. Sinu avalik jälgijate loend peidetakse.',
+    'Your current follower will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Sinu praegune jälgija liigub lehele ja näeb selle postitusi Sisus. Sinu avalik jälgijate loend peidetakse.',
+    'Your current followers will move to the Page and see its posts in Content. Everyone will see how many there are.':
+        'Sinu praegused jälgijad liiguvad lehele ja näevad selle postitusi Sisus. Nende arvu näevad kõik.',
+    'Your current follower will move to the Page and see its posts in Content. Everyone will see the follower count.':
+        'Sinu praegune jälgija liigub lehele ja näeb selle postitusi Sisus. Jälgijate arvu näevad kõik.',
+    '{followers}. {details}': '{followers}. {details}',
   },
   'id': <String, String>{
     "VIP doesn't mean verified": 'VIP bukan berarti terverifikasi',
@@ -15715,6 +15997,17 @@ const pagesTranslations = <String, Map<String, String>>{
     "A text version lets people who can't listen follow your post.":
         'Versi teks memungkinkan orang yang tidak dapat mendengar mengikuti postinganmu.',
     'Remove the number from the Page': 'Hapus nomor dari Halaman',
+    'Your public follower list will be hidden.':
+        'Daftar pengikut publikmu akan disembunyikan.',
+    'Your current followers will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Pengikutmu saat ini akan pindah ke halaman dan melihat postingannya di Konten. Daftar pengikut publikmu akan disembunyikan.',
+    'Your current follower will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Pengikutmu saat ini akan pindah ke halaman dan melihat postingannya di Konten. Daftar pengikut publikmu akan disembunyikan.',
+    'Your current followers will move to the Page and see its posts in Content. Everyone will see how many there are.':
+        'Pengikutmu saat ini akan pindah ke halaman dan melihat postingannya di Konten. Semua orang akan melihat jumlahnya.',
+    'Your current follower will move to the Page and see its posts in Content. Everyone will see the follower count.':
+        'Pengikutmu saat ini akan pindah ke halaman dan melihat postingannya di Konten. Semua orang akan melihat jumlah pengikut.',
+    '{followers}. {details}': '{followers}. {details}',
   },
   'vi': <String, String>{
     "VIP doesn't mean verified": 'VIP không có nghĩa là đã xác minh',
@@ -16296,6 +16589,17 @@ const pagesTranslations = <String, Map<String, String>>{
     "A text version lets people who can't listen follow your post.":
         'Bản văn bản giúp những người không thể nghe vẫn theo dõi được bài đăng của bạn.',
     'Remove the number from the Page': 'Xóa số khỏi Trang',
+    'Your public follower list will be hidden.':
+        'Danh sách người theo dõi công khai của bạn sẽ bị ẩn.',
+    'Your current followers will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Những người theo dõi hiện tại của bạn sẽ chuyển sang trang và xem bài đăng của trang trong Nội dung. Danh sách người theo dõi công khai của bạn sẽ bị ẩn.',
+    'Your current follower will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Người theo dõi hiện tại của bạn sẽ chuyển sang trang và xem bài đăng của trang trong Nội dung. Danh sách người theo dõi công khai của bạn sẽ bị ẩn.',
+    'Your current followers will move to the Page and see its posts in Content. Everyone will see how many there are.':
+        'Những người theo dõi hiện tại của bạn sẽ chuyển sang trang và xem bài đăng của trang trong Nội dung. Mọi người sẽ thấy số lượng của họ.',
+    'Your current follower will move to the Page and see its posts in Content. Everyone will see the follower count.':
+        'Người theo dõi hiện tại của bạn sẽ chuyển sang trang và xem bài đăng của trang trong Nội dung. Mọi người sẽ thấy số người theo dõi.',
+    '{followers}. {details}': '{followers}. {details}',
   },
   'zh_CN': <String, String>{
     "VIP doesn't mean verified": 'VIP 不代表已认证',
@@ -16817,6 +17121,16 @@ const pagesTranslations = <String, Map<String, String>>{
     "A text version lets people who can't listen follow your post.":
         '提供文字版本，让无法收听的人也能了解你的帖子。',
     'Remove the number from the Page': '从主页中移除号码',
+    'Your public follower list will be hidden.': '你的公开关注者列表将被隐藏。',
+    'Your current followers will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        '你现有的关注者将转到主页，并在“内容”中看到主页的帖子。你的公开关注者列表将被隐藏。',
+    'Your current follower will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        '你现有的关注者将转到主页，并在“内容”中看到主页的帖子。你的公开关注者列表将被隐藏。',
+    'Your current followers will move to the Page and see its posts in Content. Everyone will see how many there are.':
+        '你现有的关注者将转到主页，并在“内容”中看到主页的帖子。所有人都会看到关注者人数。',
+    'Your current follower will move to the Page and see its posts in Content. Everyone will see the follower count.':
+        '你现有的关注者将转到主页，并在“内容”中看到主页的帖子。所有人都会看到关注者人数。',
+    '{followers}. {details}': '{followers}。{details}',
   },
   'zh_TW': <String, String>{
     "VIP doesn't mean verified": 'VIP 不代表已驗證',
@@ -17341,6 +17655,16 @@ const pagesTranslations = <String, Map<String, String>>{
     "A text version lets people who can't listen follow your post.":
         '提供文字版本，讓無法收聽的人也能了解你的貼文。',
     'Remove the number from the Page': '從專頁移除號碼',
+    'Your public follower list will be hidden.': '你的公開追蹤者名單將會隱藏。',
+    'Your current followers will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        '你現有的追蹤者將轉到專頁，並在「內容」中看到專頁的貼文。你的公開追蹤者名單將會隱藏。',
+    'Your current follower will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        '你現有的追蹤者將轉到專頁，並在「內容」中看到專頁的貼文。你的公開追蹤者名單將會隱藏。',
+    'Your current followers will move to the Page and see its posts in Content. Everyone will see how many there are.':
+        '你現有的追蹤者將轉到專頁，並在「內容」中看到專頁的貼文。所有人都會看到追蹤者人數。',
+    'Your current follower will move to the Page and see its posts in Content. Everyone will see the follower count.':
+        '你現有的追蹤者將轉到專頁，並在「內容」中看到專頁的貼文。所有人都會看到追蹤者人數。',
+    '{followers}. {details}': '{followers}。{details}',
   },
   'ja': <String, String>{
     "VIP doesn't mean verified": 'VIP は認証済みという意味ではありません',
@@ -17880,6 +18204,16 @@ const pagesTranslations = <String, Map<String, String>>{
     "A text version lets people who can't listen follow your post.":
         'テキスト版があれば、音声を聞けない人も投稿の内容を理解できます。',
     'Remove the number from the Page': 'ページから番号を削除',
+    'Your public follower list will be hidden.': '公開中のフォロワー一覧は非表示になります。',
+    'Your current followers will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        '現在のフォロワーはページに移行し、「コンテンツ」でページの投稿を見られるようになります。公開中のフォロワー一覧は非表示になります。',
+    'Your current follower will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        '現在のフォロワーはページに移行し、「コンテンツ」でページの投稿を見られるようになります。公開中のフォロワー一覧は非表示になります。',
+    'Your current followers will move to the Page and see its posts in Content. Everyone will see how many there are.':
+        '現在のフォロワーはページに移行し、「コンテンツ」でページの投稿を見られるようになります。フォロワー数は誰でも見られるようになります。',
+    'Your current follower will move to the Page and see its posts in Content. Everyone will see the follower count.':
+        '現在のフォロワーはページに移行し、「コンテンツ」でページの投稿を見られるようになります。フォロワー数は誰でも見られるようになります。',
+    '{followers}. {details}': '{followers}。{details}',
   },
   'ko': <String, String>{
     "VIP doesn't mean verified": 'VIP는 인증을 의미하지 않습니다',
@@ -18424,6 +18758,16 @@ const pagesTranslations = <String, Map<String, String>>{
     "A text version lets people who can't listen follow your post.":
         '텍스트 버전이 있으면 들을 수 없는 사람도 게시물을 따라갈 수 있습니다.',
     'Remove the number from the Page': '페이지에서 번호 삭제',
+    'Your public follower list will be hidden.': '공개 팔로워 목록은 숨겨집니다.',
+    'Your current followers will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        '현재 팔로워는 페이지로 옮겨지며 콘텐츠 탭에서 페이지의 게시물을 보게 됩니다. 공개 팔로워 목록은 숨겨집니다.',
+    'Your current follower will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        '현재 팔로워는 페이지로 옮겨지며 콘텐츠 탭에서 페이지의 게시물을 보게 됩니다. 공개 팔로워 목록은 숨겨집니다.',
+    'Your current followers will move to the Page and see its posts in Content. Everyone will see how many there are.':
+        '현재 팔로워는 페이지로 옮겨지며 콘텐츠 탭에서 페이지의 게시물을 보게 됩니다. 팔로워 수는 누구나 볼 수 있게 됩니다.',
+    'Your current follower will move to the Page and see its posts in Content. Everyone will see the follower count.':
+        '현재 팔로워는 페이지로 옮겨지며 콘텐츠 탭에서 페이지의 게시물을 보게 됩니다. 팔로워 수는 누구나 볼 수 있게 됩니다.',
+    '{followers}. {details}': '{followers}. {details}',
   },
   'ar': <String, String>{
     "VIP doesn't mean verified": 'VIP لا يعني أن الحساب موثّق',
@@ -18991,6 +19335,16 @@ const pagesTranslations = <String, Map<String, String>>{
     "A text version lets people who can't listen follow your post.":
         'تتيح النسخة النصية لمن لا يستطيع الاستماع متابعة منشورك.',
     'Remove the number from the Page': 'إزالة الرقم من الصفحة',
+    'Your public follower list will be hidden.': 'ستُخفى قائمة متابعيك العامة.',
+    'Your current followers will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'سينتقل متابعوك الحاليون إلى الصفحة ويرون منشوراتها في المحتوى. ستُخفى قائمة متابعيك العامة.',
+    'Your current follower will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'سينتقل متابعك الحالي إلى الصفحة ويرى منشوراتها في المحتوى. ستُخفى قائمة متابعيك العامة.',
+    'Your current followers will move to the Page and see its posts in Content. Everyone will see how many there are.':
+        'سينتقل متابعوك الحاليون إلى الصفحة ويرون منشوراتها في المحتوى. سيرى الجميع عددهم.',
+    'Your current follower will move to the Page and see its posts in Content. Everyone will see the follower count.':
+        'سينتقل متابعك الحالي إلى الصفحة ويرى منشوراتها في المحتوى. سيرى الجميع عدد المتابعين.',
+    '{followers}. {details}': '{followers}. {details}',
   },
   'th': <String, String>{
     "VIP doesn't mean verified": 'VIP ไม่ได้หมายถึงการยืนยันตัวตน',
@@ -19561,6 +19915,17 @@ const pagesTranslations = <String, Map<String, String>>{
     "A text version lets people who can't listen follow your post.":
         'เวอร์ชันข้อความช่วยให้ผู้ที่ฟังไม่ได้ติดตามโพสต์ของคุณได้',
     'Remove the number from the Page': 'ลบหมายเลขออกจากเพจ',
+    'Your public follower list will be hidden.':
+        'รายชื่อผู้ติดตามสาธารณะของคุณจะถูกซ่อน',
+    'Your current followers will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'ผู้ติดตามปัจจุบันของคุณจะย้ายไปที่เพจและเห็นโพสต์ของเพจในแท็บเนื้อหา รายชื่อผู้ติดตามสาธารณะของคุณจะถูกซ่อน',
+    'Your current follower will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'ผู้ติดตามปัจจุบันของคุณจะย้ายไปที่เพจและเห็นโพสต์ของเพจในแท็บเนื้อหา รายชื่อผู้ติดตามสาธารณะของคุณจะถูกซ่อน',
+    'Your current followers will move to the Page and see its posts in Content. Everyone will see how many there are.':
+        'ผู้ติดตามปัจจุบันของคุณจะย้ายไปที่เพจและเห็นโพสต์ของเพจในแท็บเนื้อหา ทุกคนจะเห็นจำนวนผู้ติดตาม',
+    'Your current follower will move to the Page and see its posts in Content. Everyone will see the follower count.':
+        'ผู้ติดตามปัจจุบันของคุณจะย้ายไปที่เพจและเห็นโพสต์ของเพจในแท็บเนื้อหา ทุกคนจะเห็นจำนวนผู้ติดตาม',
+    '{followers}. {details}': '{followers} {details}',
   },
   'ms': <String, String>{
     "VIP doesn't mean verified": 'VIP tidak bermaksud disahkan',
@@ -20150,6 +20515,17 @@ const pagesTranslations = <String, Map<String, String>>{
     "A text version lets people who can't listen follow your post.":
         'Versi teks membolehkan orang yang tidak dapat mendengar mengikuti siaran anda.',
     'Remove the number from the Page': 'Alih keluar nombor daripada Halaman',
+    'Your public follower list will be hidden.':
+        'Senarai pengikut awam anda akan disembunyikan.',
+    'Your current followers will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Pengikut semasa anda akan berpindah ke halaman dan melihat hantarannya dalam Kandungan. Senarai pengikut awam anda akan disembunyikan.',
+    'Your current follower will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Pengikut semasa anda akan berpindah ke halaman dan melihat hantarannya dalam Kandungan. Senarai pengikut awam anda akan disembunyikan.',
+    'Your current followers will move to the Page and see its posts in Content. Everyone will see how many there are.':
+        'Pengikut semasa anda akan berpindah ke halaman dan melihat hantarannya dalam Kandungan. Semua orang akan melihat bilangan mereka.',
+    'Your current follower will move to the Page and see its posts in Content. Everyone will see the follower count.':
+        'Pengikut semasa anda akan berpindah ke halaman dan melihat hantarannya dalam Kandungan. Semua orang akan melihat bilangan pengikut.',
+    '{followers}. {details}': '{followers}. {details}',
   },
   'fil': <String, String>{
     "VIP doesn't mean verified": 'Hindi ibig sabihin ng VIP na verified',
@@ -20739,6 +21115,17 @@ const pagesTranslations = <String, Map<String, String>>{
     "A text version lets people who can't listen follow your post.":
         'Sa bersyong teksto, masusundan ng mga hindi makapakinig ang iyong post.',
     'Remove the number from the Page': 'Alisin ang numero sa Page',
+    'Your public follower list will be hidden.':
+        'Itatago ang iyong pampublikong listahan ng mga follower.',
+    'Your current followers will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Lilipat sa Page ang iyong mga kasalukuyang follower at makikita nila ang mga post nito sa Nilalaman. Itatago ang iyong pampublikong listahan ng mga follower.',
+    'Your current follower will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Lilipat sa Page ang iyong kasalukuyang follower at makikita niya ang mga post nito sa Nilalaman. Itatago ang iyong pampublikong listahan ng mga follower.',
+    'Your current followers will move to the Page and see its posts in Content. Everyone will see how many there are.':
+        'Lilipat sa Page ang iyong mga kasalukuyang follower at makikita nila ang mga post nito sa Nilalaman. Makikita ng lahat kung ilan sila.',
+    'Your current follower will move to the Page and see its posts in Content. Everyone will see the follower count.':
+        'Lilipat sa Page ang iyong kasalukuyang follower at makikita niya ang mga post nito sa Nilalaman. Makikita ng lahat ang bilang ng follower.',
+    '{followers}. {details}': '{followers}. {details}',
   },
   'he': <String, String>{
     "VIP doesn't mean verified": 'VIP לא אומר שהחשבון מאומת',
@@ -21303,6 +21690,17 @@ const pagesTranslations = <String, Map<String, String>>{
     "A text version lets people who can't listen follow your post.":
         'גרסה כתובה מאפשרת גם למי שלא יכול להאזין לעקוב אחרי הפוסט שלכם.',
     'Remove the number from the Page': 'הסרת המספר מהדף',
+    'Your public follower list will be hidden.':
+        'רשימת העוקבים הציבורית שלכם תוסתר.',
+    'Your current followers will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        "העוקבים הנוכחיים שלכם יעברו לדף ויראו את הפוסטים שלו ב'תוכן'. רשימת העוקבים הציבורית שלכם תוסתר.",
+    'Your current follower will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        "העוקב הנוכחי שלכם יעבור לדף ויראה את הפוסטים שלו ב'תוכן'. רשימת העוקבים הציבורית שלכם תוסתר.",
+    'Your current followers will move to the Page and see its posts in Content. Everyone will see how many there are.':
+        "העוקבים הנוכחיים שלכם יעברו לדף ויראו את הפוסטים שלו ב'תוכן'. כולם יראו כמה הם.",
+    'Your current follower will move to the Page and see its posts in Content. Everyone will see the follower count.':
+        "העוקב הנוכחי שלכם יעבור לדף ויראה את הפוסטים שלו ב'תוכן'. כולם יראו את מספר העוקבים.",
+    '{followers}. {details}': '{followers}. {details}',
   },
   'fa': <String, String>{
     "VIP doesn't mean verified": 'VIP به معنای تأییدشده نیست',
@@ -21883,6 +22281,17 @@ const pagesTranslations = <String, Map<String, String>>{
     "A text version lets people who can't listen follow your post.":
         'نسخهٔ متنی به کسانی که نمی‌توانند گوش دهند امکان می‌دهد پست شما را دنبال کنند.',
     'Remove the number from the Page': 'حذف شماره از صفحه',
+    'Your public follower list will be hidden.':
+        'فهرست عمومی دنبال‌کنندگان شما پنهان می‌شود.',
+    'Your current followers will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'دنبال‌کنندگان فعلی شما به صفحه منتقل می‌شوند و پست‌هایش را در «مواد» می‌بینند. فهرست عمومی دنبال‌کنندگان شما پنهان می‌شود.',
+    'Your current follower will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'دنبال‌کننده فعلی شما به صفحه منتقل می‌شود و پست‌هایش را در «مواد» می‌بیند. فهرست عمومی دنبال‌کنندگان شما پنهان می‌شود.',
+    'Your current followers will move to the Page and see its posts in Content. Everyone will see how many there are.':
+        'دنبال‌کنندگان فعلی شما به صفحه منتقل می‌شوند و پست‌هایش را در «مواد» می‌بینند. همه تعدادشان را می‌بینند.',
+    'Your current follower will move to the Page and see its posts in Content. Everyone will see the follower count.':
+        'دنبال‌کننده فعلی شما به صفحه منتقل می‌شود و پست‌هایش را در «مواد» می‌بیند. همه تعداد دنبال‌کنندگان را می‌بینند.',
+    '{followers}. {details}': '{followers}. {details}',
   },
   'sw': <String, String>{
     "VIP doesn't mean verified": 'VIP haimaanishi kuthibitishwa',
@@ -22470,6 +22879,17 @@ const pagesTranslations = <String, Map<String, String>>{
     "A text version lets people who can't listen follow your post.":
         'Toleo la maandishi huwasaidia wasioweza kusikiliza kufuatilia chapisho lako.',
     'Remove the number from the Page': 'Ondoa nambari kwenye Ukurasa',
+    'Your public follower list will be hidden.':
+        'Orodha yako ya umma ya wafuasi itafichwa.',
+    'Your current followers will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Wafuasi wako wa sasa watahamia kwenye ukurasa na kuona machapisho yake kwenye Maudhui. Orodha yako ya umma ya wafuasi itafichwa.',
+    'Your current follower will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'Mfuasi wako wa sasa atahamia kwenye ukurasa na kuona machapisho yake kwenye Maudhui. Orodha yako ya umma ya wafuasi itafichwa.',
+    'Your current followers will move to the Page and see its posts in Content. Everyone will see how many there are.':
+        'Wafuasi wako wa sasa watahamia kwenye ukurasa na kuona machapisho yake kwenye Maudhui. Kila mtu ataona idadi yao.',
+    'Your current follower will move to the Page and see its posts in Content. Everyone will see the follower count.':
+        'Mfuasi wako wa sasa atahamia kwenye ukurasa na kuona machapisho yake kwenye Maudhui. Kila mtu ataona idadi ya wafuasi.',
+    '{followers}. {details}': '{followers}. {details}',
   },
   'hi': <String, String>{
     "VIP doesn't mean verified": 'VIP का मतलब सत्यापित नहीं है',
@@ -23051,6 +23471,17 @@ const pagesTranslations = <String, Map<String, String>>{
     "A text version lets people who can't listen follow your post.":
         'टेक्स्ट संस्करण से वे लोग भी आपकी पोस्ट समझ सकते हैं जो सुन नहीं सकते।',
     'Remove the number from the Page': 'पेज से नंबर हटाएं',
+    'Your public follower list will be hidden.':
+        'आपकी सार्वजनिक फ़ॉलोअर सूची छिपा दी जाएगी।',
+    'Your current followers will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'आपके मौजूदा फ़ॉलोअर्स पेज पर चले जाएँगे और सामग्री में उसकी पोस्ट देखेंगे। आपकी सार्वजनिक फ़ॉलोअर सूची छिपा दी जाएगी।',
+    'Your current follower will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'आपका मौजूदा फ़ॉलोअर पेज पर चला जाएगा और सामग्री में उसकी पोस्ट देखेगा। आपकी सार्वजनिक फ़ॉलोअर सूची छिपा दी जाएगी।',
+    'Your current followers will move to the Page and see its posts in Content. Everyone will see how many there are.':
+        'आपके मौजूदा फ़ॉलोअर्स पेज पर चले जाएँगे और सामग्री में उसकी पोस्ट देखेंगे। उनकी संख्या सबको दिखेगी।',
+    'Your current follower will move to the Page and see its posts in Content. Everyone will see the follower count.':
+        'आपका मौजूदा फ़ॉलोअर पेज पर चला जाएगा और सामग्री में उसकी पोस्ट देखेगा। फ़ॉलोअर्स की संख्या सबको दिखेगी।',
+    '{followers}. {details}': '{followers}। {details}',
   },
   'bn': <String, String>{
     "VIP doesn't mean verified": 'VIP মানে যাচাইকৃত নয়',
@@ -23629,6 +24060,17 @@ const pagesTranslations = <String, Map<String, String>>{
     "A text version lets people who can't listen follow your post.":
         'টেক্সট সংস্করণ থাকলে যাঁরা শুনতে পারেন না তাঁরাও আপনার পোস্ট অনুসরণ করতে পারেন।',
     'Remove the number from the Page': 'পেজ থেকে নম্বর সরান',
+    'Your public follower list will be hidden.':
+        'আপনার পাবলিক ফলোয়ার তালিকা লুকানো হবে।',
+    'Your current followers will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'আপনার বর্তমান ফলোয়াররা পেজে চলে যাবেন এবং কনটেন্টে এর পোস্ট দেখবেন। আপনার পাবলিক ফলোয়ার তালিকা লুকানো হবে।',
+    'Your current follower will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'আপনার বর্তমান ফলোয়ার পেজে চলে যাবেন এবং কনটেন্টে এর পোস্ট দেখবেন। আপনার পাবলিক ফলোয়ার তালিকা লুকানো হবে।',
+    'Your current followers will move to the Page and see its posts in Content. Everyone will see how many there are.':
+        'আপনার বর্তমান ফলোয়াররা পেজে চলে যাবেন এবং কনটেন্টে এর পোস্ট দেখবেন। সবাই তাঁদের সংখ্যা দেখতে পাবেন।',
+    'Your current follower will move to the Page and see its posts in Content. Everyone will see the follower count.':
+        'আপনার বর্তমান ফলোয়ার পেজে চলে যাবেন এবং কনটেন্টে এর পোস্ট দেখবেন। সবাই ফলোয়ারের সংখ্যা দেখতে পাবেন।',
+    '{followers}. {details}': '{followers}। {details}',
   },
   'ur': <String, String>{
     "VIP doesn't mean verified": 'VIP کا مطلب تصدیق شدہ نہیں',
@@ -24206,5 +24648,16 @@ const pagesTranslations = <String, Map<String, String>>{
     "A text version lets people who can't listen follow your post.":
         'متنی ورژن کی مدد سے وہ لوگ بھی آپ کی پوسٹ سمجھ سکتے ہیں جو سن نہیں سکتے۔',
     'Remove the number from the Page': 'پیج سے نمبر ہٹائیں',
+    'Your public follower list will be hidden.':
+        'آپ کی عوامی فالوورز فہرست چھپا دی جائے گی۔',
+    'Your current followers will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'آپ کے موجودہ فالوورز پیج پر منتقل ہو جائیں گے اور مواد میں اس کی پوسٹس دیکھیں گے۔ آپ کی عوامی فالوورز فہرست چھپا دی جائے گی۔',
+    'Your current follower will move to the Page and see its posts in Content. Your public follower list will be hidden.':
+        'آپ کا موجودہ فالوور پیج پر منتقل ہو جائے گا اور مواد میں اس کی پوسٹس دیکھے گا۔ آپ کی عوامی فالوورز فہرست چھپا دی جائے گی۔',
+    'Your current followers will move to the Page and see its posts in Content. Everyone will see how many there are.':
+        'آپ کے موجودہ فالوورز پیج پر منتقل ہو جائیں گے اور مواد میں اس کی پوسٹس دیکھیں گے۔ ان کی تعداد سب کو نظر آئے گی۔',
+    'Your current follower will move to the Page and see its posts in Content. Everyone will see the follower count.':
+        'آپ کا موجودہ فالوور پیج پر منتقل ہو جائے گا اور مواد میں اس کی پوسٹس دیکھے گا۔ فالوورز کی تعداد سب کو نظر آئے گی۔',
+    '{followers}. {details}': '{followers}۔ {details}',
   },
 };

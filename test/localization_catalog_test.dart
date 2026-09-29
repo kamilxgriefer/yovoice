@@ -1120,6 +1120,9 @@ void main() {
         '{name}, {age}',
         '{name}, {kind}, {age}',
         '{size} MB',
+        // Create step 3's spoken caption: the follower count, then the
+        // caption; only the sentence mark differs between languages.
+        '{followers}. {details}',
       };
       const naturallyUnchangedPairs = <String>{
         // Established Malay and Filipino media-editor loanwords, not fallback.
