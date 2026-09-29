@@ -859,6 +859,29 @@ day, lists switched off). Built on Kamil's Mac from a clean worktree.
   owner decision: no extra wait).
 
 
+## Build 41 release round — web, TestFlight and Play internal (2026-09-29)
+
+Source: `main` at `426f860f` (`pubspec.yaml` `3.6.0+41`): the Yeels fit and
+"Obróć" (ADR-235) and the ADR-234 client (step-3 follower caption, create
+form above the keyboard, Treści sheets over the dock, paid-Premium
+pre-gate). Built on Kamil's Mac from a clean worktree (`tmp/deploy-41`).
+
+- **Web:** `flutter build web --release` with CI's dart-defines,
+  `firebase deploy --only hosting`; `version.json` reads `3.6.0` / `41` on
+  app.yovoice.app and yovoice-ec54a.web.app, and the live `main.dart.js` is
+  byte-identical to the build (sha256 `c6a02e0e…`).
+- **iOS:** IPA sha256 `7a0c4763…`, `altool` upload, ASC build
+  `19cb62e9-b35d-4338-bfb8-d4a16c2c8be3` VALID; internal group
+  IN_BETA_TESTING; What to Test (en-US) stored and read back; external group
+  attached and beta review submitted (WAITING_FOR_BETA_REVIEW).
+- **Android:** AAB sha256 `5b5b5907…`, signed with the registered upload
+  key; Play internal testing "41 (3.6.0)", 40 not included, devices
+  unchanged (phones 12 317, tablets 6 745); published 22:56 CEST, read back
+  "Dostępna dla testerów wewnętrznych".
+- Before the build the Yeels fix was checked in the real app on the iOS
+  Simulator with the production landscape Yeel (whole frame on the blurred
+  backdrop). Evidence: `yovoice-evidence/2026-09-29/release-41/`.
+
 ## Build 40 release round — web, TestFlight and Play internal (2026-09-28)
 
 Source: `main` at `ec4607bb` (`pubspec.yaml` `3.5.0+40`): Premium Pages
