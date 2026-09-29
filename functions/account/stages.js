@@ -126,6 +126,10 @@ const UID_KEYED_DOCUMENTS = Object.freeze([
   "pageFollowIndex",
   "pagePostMediaLeases",
   "pageAdultRefusals",
+  // ADR-234: the follower carry-over job of the account's Page. Belt and
+  // braces: the worker also deletes a job whose Page is gone, but a deleted
+  // account must leave no uid-keyed residue.
+  "pageFollowCarryJobs",
 ]);
 
 // Every Storage prefix owned by exactly one uid (storage.rules).
@@ -376,6 +380,12 @@ function createAccountDeletionStages({
     const own = side === "following" ? "following" : "followers";
     const mirror = side === "following" ? "followers" : "following";
     const counter = side === "following" ? "followerCount" : "followingCount";
+    // Premium Pages (ADR-234): each follower's Treści hint
+    // (pageFollowIndex/{peer}) may name this account, because a live Page
+    // follow and the carry-over at Page creation put it there. The hint
+    // goes in the same transaction as the edge, so no follower keeps the
+    // uid of a deleted account. Loaded lazily, like the Pages stages.
+    const pageHints = side === "followers" ? require("../pages/follows") : null;
     const snapshot = await db
       .collection("users").doc(uid).collection(own)
       .limit(limits.edgePage).get();
@@ -386,8 +396,13 @@ function createAccountDeletionStages({
         continue;
       }
       const peerReference = db.collection("users").doc(peer);
+      const indexReference = pageHints === null
+        ? null
+        : pageHints.pageFollowIndexReference(db, peer);
       await db.runTransaction(async (transaction) => {
-        const peerSnapshot = await transaction.get(peerReference);
+        const [peerSnapshot, indexSnapshot] = indexReference === null
+          ? [await transaction.get(peerReference), null]
+          : await transaction.getAll(peerReference, indexReference);
         transaction.delete(document.ref);
         transaction.delete(peerReference.collection(mirror).doc(uid));
         if (peerSnapshot.exists) {
@@ -395,6 +410,15 @@ function createAccountDeletionStages({
           transaction.update(peerReference, {
             [counter]: Math.max(0, current - 1),
           });
+        }
+        if (indexSnapshot?.exists) {
+          const index = pageHints.canonicalPageFollowIndex(indexSnapshot, peer);
+          if (index.pageIds.includes(uid)) {
+            transaction.set(indexReference, pageHints.pageFollowIndexDocument(
+              pageHints.pageIdsAfterUnfollow(index.pageIds, uid),
+              FieldValue.serverTimestamp(),
+            ));
+          }
         }
       });
     }

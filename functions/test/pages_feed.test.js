@@ -23,6 +23,7 @@ const {
   createPagesReadService,
   pagesFeedReadBudget,
 } = require("../pages/reads");
+const { createPagesLifecycleService } = require("../pages/lifecycle");
 const {
   PAGES_FEED_RESPONSE_KEYS,
   PAGE_CARD_KEYS,
@@ -33,12 +34,14 @@ const {
 const {
   DAY_MS,
   clearActivation,
+  createInput,
   freshUid,
   newPostId,
   postDoc,
   request,
   seedAccount,
   seedFollowEdge,
+  seedOwner,
   seedPage,
   setActivation,
   setFollowIndex,
@@ -401,4 +404,33 @@ test("an inactive viewer is refused; an empty index is an empty feed", async () 
   const other = await viewerAccount();
   const response = await feed(other, encodeItemCursor({ t: nowMs, id: newPostId() }));
   assert.equal(response.suggestions, null);
+});
+
+// ADR-234: an account that already had followers creates a Page; they are
+// carried over at creation, so its first post reaches them in Treści.
+test("a follower carried over at creation sees the Page's first post in Treści", async () => {
+  const lifecycle = createPagesLifecycleService({
+    firestore: db,
+    TimestampImpl: Timestamp,
+    clock: () => nowMs,
+    logger: silentLogger(),
+  });
+  const pageId = freshUid("pgfcarry");
+  const follower = await viewerAccount();
+  await seedOwner(db, pageId, { nowMs, user: { followerCount: 1 } });
+  await seedFollowEdge(db, follower, pageId, nowMs);
+  await lifecycle.managePageV1(request(pageId, createInput()));
+  assert.deepEqual((await db.doc(`pageFollowIndex/${follower}`).get()).data().pageIds, [pageId]);
+
+  const postId = newPostId();
+  await db.doc(`pagePosts/${postId}`).set(postDoc(pageId, postId, nowMs - 1_000));
+  assert.deepEqual((await feed(follower)).posts.map((post) => post.postId), [postId]);
+
+  // Paused: the post is hidden, but the hint is not pruned (the edge and the
+  // Page still exist), so resuming brings it back.
+  await lifecycle.managePageV1(request(pageId, { requestId: `req-pause-${pageId}`, op: "pause" }));
+  assert.deepEqual((await feed(follower)).posts, []);
+  assert.deepEqual((await db.doc(`pageFollowIndex/${follower}`).get()).data().pageIds, [pageId]);
+  await lifecycle.managePageV1(request(pageId, { requestId: `req-resume-${pageId}`, op: "resume" }));
+  assert.deepEqual((await feed(follower)).posts.map((post) => post.postId), [postId]);
 });

@@ -20,6 +20,10 @@ if (getApps().length === 0) initializeApp();
 
 const { PAGES_READ_QUERIES } = require("../pages/reads");
 const { PAGES_MAINTENANCE_QUERIES } = require("../pages/maintenance");
+const {
+  PAGE_FOLLOW_CARRY_QUERIES,
+  pageFollowCarryJobDocument,
+} = require("../pages/follow_carry");
 const { pageMediaDeletionJob, pagePostCleanupJob } = require("../pages/media_contract");
 const {
   EXPECTED_PROJECT,
@@ -182,6 +186,42 @@ test("every pagesMaintenance query runs on real documents with a startAfter page
   await db.doc(`pagePostMediaReservations/${unheld.mediaId}`).delete();
 });
 
+// ADR-234: the follower carry-over worker's two queries need automatic
+// single-field indexes only, so no composite is declared for either.
+test("the follow carry-over queries run on real documents with a startAfter page", async () => {
+  const now = Timestamp.fromMillis(NOW);
+  const due = freshUid("pgcarryq");
+  const later = freshUid("pgcarryq");
+  await db.doc(`pageFollowCarryJobs/${due}`).set(pageFollowCarryJobDocument({
+    pageId: due, now, nextAttemptAt: Timestamp.fromMillis(NOW - 1000) }));
+  await db.doc(`pageFollowCarryJobs/${later}`).set(pageFollowCarryJobDocument({
+    pageId: later, now, nextAttemptAt: Timestamp.fromMillis(NOW + 60_000) }));
+  const followers = [`${due}-a`, `${due}-b`, `${due}-c`];
+  await Promise.all(followers.map((follower) => db.doc(`users/${due}/followers/${follower}`)
+    .set({ uid: follower, followedAt: now })));
+
+  const jobs = await PAGE_FOLLOW_CARRY_QUERIES.dueJobs(db, now).limit(50).get();
+  const ids = jobs.docs.map((doc) => doc.id);
+  assert.equal(ids.includes(due), true);
+  assert.equal(ids.includes(later), false, "a future job is not due yet");
+  const firstJob = await PAGE_FOLLOW_CARRY_QUERIES.dueJobs(db, now).limit(1).get();
+  await PAGE_FOLLOW_CARRY_QUERIES.dueJobs(db, now).startAfter(firstJob.docs[0]).limit(10).get();
+
+  const first = await PAGE_FOLLOW_CARRY_QUERIES.followers(db, due).limit(2).get();
+  assert.deepEqual(first.docs.map((doc) => doc.id), followers.slice(0, 2));
+  const rest = await PAGE_FOLLOW_CARRY_QUERIES.followers(db, due)
+    .startAfter(first.docs[1].id).limit(10).get();
+  assert.deepEqual(rest.docs.map((doc) => doc.id), followers.slice(2));
+  assert.equal(indexes.some((index) => index.collectionGroup === "pageFollowCarryJobs" ||
+    index.collectionGroup === "followers"), false, "no composite index is needed");
+
+  await Promise.all([
+    db.doc(`pageFollowCarryJobs/${due}`).delete(),
+    db.doc(`pageFollowCarryJobs/${later}`).delete(),
+    ...followers.map((follower) => db.doc(`users/${due}/followers/${follower}`).delete()),
+  ]);
+});
+
 // B4: listPagePostLikersV1's candidate query, through the ADR-230 fetcher,
 // on real edges with a startAfter page (no composite index: single-field).
 test("the post likers candidates page newest first with the id tiebreak", async () => {
@@ -227,7 +267,7 @@ test("the smoke runs every production shape and prints no identity", async () =>
     args: parseArgs(["--project", EXPECTED_PROJECT, "--page", pageId, "--post", postId]),
   });
   assert.equal(report.ok, true, JSON.stringify(report));
-  assert.equal(report.results.length, 22);
+  assert.equal(report.results.length, 24);
   assert.equal(report.results.every((row) => row.result === "PASS"), true);
   const printed = JSON.stringify(report);
   assert.equal(printed.includes(pageId), false);

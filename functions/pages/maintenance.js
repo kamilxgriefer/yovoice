@@ -25,13 +25,24 @@
 //   5. lapse         (package B5) hourly, cursor-resumable, <= 5 x 200 Pages:
 //                    the §2.8 transitions (pages/lapse_service.js), each in
 //                    its own re-deriving transaction.
-//   6. orphans       once a day (cursor-resumable, <= 1000 objects a run):
+//   6. followCarry   (ADR-234) pageFollowCarryJobs that are due: an
+//                    account's EXISTING followers carried over to its new
+//                    Page (pageFollowIndex hints only; pages/follow_carry.js),
+//                    <= 10 x 100 followers a run across <= 5 jobs,
+//                    cursor-resumable, backing off on failure. AFTER lapse:
+//                    its follower transactions can take a while, and the
+//                    lapse sweep is the backstop that must never wait on
+//                    them. It does not read appConfig/pagesV1: it only
+//                    writes hints, and every reader re-checks the Page, the
+//                    edge and blocks.
+//   7. orphans       once a day (cursor-resumable, <= 1000 objects a run):
 //                    page_posts/ objects older than 1 h that no post
 //                    references, no reservation covers and no job owns.
 //
 // Only the lapse slice reads appConfig/pagesV1, for `lapseEnabled` (missing
 // or malformed = downgrades frozen, restores still run). Every other slice
-// only removes what is already unreferenced, expired, released or queued, so
+// only removes what is already unreferenced, expired, released or queued,
+// or (followCarry) writes follow hints that grant nothing by themselves, so
 // the worker keeps running with the kill switch on (an owner's delete is a
 // safety action). With nothing to do it costs one empty query per slice.
 
@@ -53,6 +64,7 @@ const { PAGE_COMMENT_ID_PATTERN } = require("./contract");
 const { pageCommentNotificationId } = require("./engagement_contract");
 const { createPagesAccountDeletion } = require("./account_deletion");
 const { createPagesLapseService } = require("./lapse_service");
+const { createPagesFollowCarryService } = require("./follow_carry");
 
 const REGION = "europe-west1";
 const RESERVATIONS = "pagePostMediaReservations";
@@ -119,6 +131,7 @@ function createPagesMaintenanceService({
   limits = PAGES_MAINTENANCE_LIMITS,
   lapse = null,
   deletion = null,
+  followCarry = null,
 }) {
   if (!firestore?.doc || !storage?.deleteObject || !storage?.getMetadata ||
       !storage?.listObjects || typeof TimestampImpl?.fromMillis !== "function" ||
@@ -136,6 +149,9 @@ function createPagesMaintenanceService({
   });
   const deletionService = deletion ?? createPagesAccountDeletion({
     db: firestore, TimestampImpl, clock, logger,
+  });
+  const followCarryService = followCarry ?? createPagesFollowCarryService({
+    firestore, TimestampImpl, clock, logger,
   });
 
   // ------------------------------------------------ evidence retention
@@ -450,6 +466,9 @@ function createPagesMaintenanceService({
       ["deletionJobs", () => processDeletionJobs()],
       ["cleanupJobs", () => processCleanupJobs()],
       ["lapse", () => lapseService.sweep()],
+      // After the lapse backstop: bounded, but its follower transactions
+      // must never delay a lapse transition (ADR-234).
+      ["followCarry", () => followCarryService.processDueJobs()],
       ["orphans", () => sweepOrphans()],
     ];
     const results = {};

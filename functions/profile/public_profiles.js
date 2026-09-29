@@ -1305,6 +1305,7 @@ module.exports = {
   SOCIAL_PRESENCE_FIELDS,
   SOCIAL_PRESENCE_SCHEMA_VERSION,
   USER_AVAILABILITY_VALUES,
+  applyProjectionInTransaction,
   canonicalUid,
   creatorAudienceVisibleFromSource,
   derivePublicProfile,

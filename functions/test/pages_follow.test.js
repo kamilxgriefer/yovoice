@@ -122,17 +122,32 @@ test("a grant that expired by time refuses follows before any sweep runs", async
   // The stored Page still says active: only the live capability knows.
   assert.equal((await db.doc(`pages/${pageId}`).get()).data().status, "active");
   await assert.rejects(follow(viewer, pageId), refusedUniformly);
-  // A paid entitlement does not count while PAGES_ALLOW_PAID_SOURCE is false.
+  // An expired paid entitlement is no capability either.
   await db.doc(`entitlements/${pageId}`).set({
     isPremium: true,
     status: "active",
     premiumIdentityEnabled: true,
-    currentPeriodEnd: Timestamp.fromMillis(Date.now() + 30 * DAY_MS),
+    currentPeriodEnd: Timestamp.fromMillis(Date.now() - 1000),
   });
   await assert.rejects(follow(viewer, pageId), refusedUniformly);
   // lapseEnabled:false freezes the downgrade: the stored status rules.
   await setActivation(db, { lapseEnabled: false });
   assert.equal((await follow(viewer, pageId)).changed, true);
+});
+
+test("an expired grant plus a live paid entitlement accepts follows (ADR-234)", async () => {
+  const { pageId, viewer } = await scenario({
+    grant: testerGrant({ expiresAt: Timestamp.fromMillis(Date.now() - 1000) }),
+  });
+  await db.doc(`entitlements/${pageId}`).set({
+    isPremium: true,
+    status: "active",
+    premiumIdentityEnabled: true,
+    currentPeriodEnd: Timestamp.fromMillis(Date.now() + 30 * DAY_MS),
+    source: "admin",
+  });
+  assert.deepEqual(await follow(viewer, pageId), { changed: true, following: true });
+  assert.deepEqual((await indexOf(viewer)).pageIds, [pageId]);
 });
 
 test("the fourth follow of one Page in 24 h is refused; unfollows never are", async () => {

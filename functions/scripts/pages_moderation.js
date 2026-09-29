@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 //
-// Tester-phase moderation of Premium Pages (ADR-233 §2.10). The Moderation
-// Center does not render Page reports yet (Roadmap 0o gates flipping
-// PAGES_ALLOW_PAID_SOURCE, not the tester launch), so the owner works the
+// Moderation of Premium Pages (ADR-233 §2.10). The Moderation Center does
+// not render Page reports yet (Roadmap 0o; ADR-234 opened Pages to paid
+// Premium before it exists, an accepted risk), so the owner works the
 // queue from here. Every decision goes through handleModerateReport, the
 // SAME function the moderateReport callable runs after its staff check: one
 // transaction moves the report, writes the adminAuditLogs row and acts on

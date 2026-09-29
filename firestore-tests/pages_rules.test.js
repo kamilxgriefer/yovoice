@@ -117,6 +117,7 @@ const SERVER_ONLY = Object.freeze([
   [`pagePosts/${POST}/likes/${STRANGER}`, { schemaVersion: 1, userId: STRANGER, postId: POST }],
   [`pagePostComments/${COMMENT}`, { schemaVersion: 1, commentId: COMMENT, postId: POST, pageId: OWNER, authorId: STRANGER }],
   [`pageFollowIndex/${STRANGER}`, { schemaVersion: 1, pageIds: [OWNER] }],
+  [`pageFollowCarryJobs/${OWNER}`, { schemaVersion: 1, pageId: OWNER, afterId: null }],
   ['pageVisibility/v1', { schemaVersion: 1, notViewable: {}, readOnlySince: {} }],
   [`pagePostMediaReservations/${MEDIA}`, { schemaVersion: 1, ownerId: OWNER, mediaId: MEDIA }],
   [`pagePostMediaLeases/${OWNER}`, { schemaVersion: 1, ownerId: OWNER }],

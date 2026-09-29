@@ -31,6 +31,17 @@ function testerGrant(overrides = {}) {
   };
 }
 
+/// A live paid Premium entitlement (ADR-234: paid counts for Pages).
+function paidEntitlement(nowMs, overrides = {}) {
+  return {
+    status: "active",
+    isPremium: true,
+    premiumIdentityEnabled: true,
+    currentPeriodEnd: Timestamp.fromMillis(nowMs + 30 * DAY_MS),
+    ...overrides,
+  };
+}
+
 function publicProfileDoc(uid, nowMs, overrides = {}) {
   return {
     accountType: "personal",
@@ -277,9 +288,15 @@ async function seedAccount(db, uid, nowMs, { user = {}, displayName = "Ola Nowak
   ]);
 }
 
-/// A running Page owned by `uid`: owner account + grant + canonical Page.
-async function seedPage(db, uid, nowMs, { page = {}, user = {}, grant = testerGrant() } = {}) {
-  await seedOwner(db, uid, { nowMs, user, grant });
+/// A running Page owned by `uid`: owner account + grant (or entitlement) +
+/// canonical Page.
+async function seedPage(db, uid, nowMs, {
+  page = {},
+  user = {},
+  grant = testerGrant(),
+  entitlement = null,
+} = {}) {
+  await seedOwner(db, uid, { nowMs, user, grant, entitlement });
   await db.doc(`pages/${uid}`).set(pageDoc(uid, nowMs, page));
 }
 
@@ -325,6 +342,7 @@ module.exports = {
   ownerUser,
   pageDoc,
   pagesActivation,
+  paidEntitlement,
   publicProfileDoc,
   request,
   seedOwner,

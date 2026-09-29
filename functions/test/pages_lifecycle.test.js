@@ -17,9 +17,12 @@ const {
   PAGES_LIFECYCLE_RATE_LIMITS,
   createPagesLifecycleService,
 } = require("../pages/lifecycle");
-const { PAGE_KEYS, pageNameSearch } = require("../pages/contract");
+const { PAGE_ERRORS, PAGE_KEYS, pageNameSearch } = require("../pages/contract");
+const { PAGE_FOLLOW_CARRY_HANDOFF_MS } = require("../pages/follow_carry");
+const { PAGE_FOLLOW_INDEX_KEYS } = require("../pages/follows");
 const { createDisplayNameService } = require("../profile/display_name");
 const {
+  derivePublicProfile,
   setCreatorAudienceEnabledHandler,
 } = require("../profile/public_profiles");
 const { operationIdentity } = require("../integrity/guards");
@@ -30,9 +33,13 @@ const {
   createInput,
   freshUid,
   pageDoc,
+  paidEntitlement,
   request,
+  seedAccount,
+  seedFollowEdge,
   seedOwner,
   setActivation,
+  setFollowIndex,
   silentLogger,
 } = require("./helpers/pages_fixture");
 
@@ -40,14 +47,52 @@ const db = getFirestore();
 const BASE_MS = 1_900_000_000_000;
 let nowMs = BASE_MS;
 
-function service({ logger = silentLogger(), rateLimits = PAGES_LIFECYCLE_RATE_LIMITS } = {}) {
+function service({
+  logger = silentLogger(),
+  rateLimits = PAGES_LIFECYCLE_RATE_LIMITS,
+  followCarry = undefined,
+} = {}) {
   return createPagesLifecycleService({
     firestore: db,
     TimestampImpl: Timestamp,
     clock: () => nowMs,
     logger,
     rateLimits,
+    ...(followCarry ? { followCarry } : {}),
   });
+}
+
+async function dataOf(pathName) {
+  const snapshot = await db.doc(pathName).get();
+  return snapshot.exists ? snapshot.data() : null;
+}
+
+/// A Creator whose audience is ON, backed by paid Premium (no VIP grant),
+/// with a projection that matches the user record exactly.
+async function creatorWithAudience({ followerCount = 2, publicDoc = {} } = {}) {
+  const uid = freshUid("pgcr");
+  const user = {
+    accountType: "creator",
+    premiumIdentity: true,
+    creatorAgeVerified: true,
+    creatorAudienceEnabled: true,
+    followerCount,
+    followingCount: 0,
+  };
+  await seedOwner(db, uid, {
+    nowMs,
+    grant: null,
+    user,
+    entitlement: paidEntitlement(nowMs, { creatorEnabled: true }),
+    publicDoc: {
+      accountType: "creator",
+      premiumIdentity: true,
+      creatorAudienceVisible: true,
+      followerCount,
+      ...publicDoc,
+    },
+  });
+  return uid;
 }
 
 async function pageOf(uid) {
@@ -165,7 +210,7 @@ test("create input is exact per op", async () => {
     (error) => error.code === "unauthenticated");
 });
 
-test("create refuses a non-public profile, a reserved name and an existing audience", async () => {
+test("create refuses a non-public profile, a reserved name and a missing projection", async () => {
   const privateUid = await owner({ user: { profileVisibility: "friends" } });
   await assert.rejects(service().managePageV1(request(privateUid, createInput())),
     reason("pageProfileNotPublic"));
@@ -177,39 +222,47 @@ test("create refuses a non-public profile, a reserved name and an existing audie
   await assert.rejects(service().managePageV1(request(tickUid, createInput())),
     reason("pageNameReserved"));
 
-  const followedUid = await owner({ user: { followerCount: 3 } });
-  await assert.rejects(service().managePageV1(request(followedUid, createInput())),
-    reason("pageHasAudience"));
-  const creatorUid = await owner({ user: { creatorAudienceEnabled: true } });
-  await assert.rejects(service().managePageV1(request(creatorUid, createInput())),
-    reason("pageHasAudience"));
-
   const noProjection = await owner();
   await db.doc(`publicProfiles/${noProjection}`).delete();
   await assert.rejects(service().managePageV1(request(noProjection, createInput())),
     (error) => error.code === "failed-precondition");
-  for (const uid of [privateUid, reservedUid, tickUid, followedUid, creatorUid, noProjection]) {
+  for (const uid of [privateUid, reservedUid, tickUid, noProjection]) {
     assert.equal(await pageOf(uid), null);
+    assert.equal(await dataOf(`pageFollowCarryJobs/${uid}`), null);
   }
 });
 
-test("the gate admits canonical grants only: paid, staff preview and no grant are refused", async () => {
+test("the gate admits canonical grants and paid Premium; staff preview and no grant are refused", async () => {
   const noGrant = await owner({ grant: null });
   await assert.rejects(service().managePageV1(request(noGrant, createInput())),
     reason("pageAccessRequired"));
 
+  // ADR-234: paid Premium (Stripe) and an admin-granted entitlement create.
   const paidOnly = await owner({
     grant: null,
-    entitlement: {
-      status: "active",
-      isPremium: true,
-      premiumIdentityEnabled: true,
-      currentPeriodEnd: Timestamp.fromMillis(nowMs + DAY_MS),
-    },
+    entitlement: paidEntitlement(nowMs, { source: "stripe" }),
     user: { premiumIdentity: true },
   });
-  await assert.rejects(service().managePageV1(request(paidOnly, createInput())),
-    reason("pageAccessRequired"));
+  const paid = await service().managePageV1(request(paidOnly, createInput()));
+  assert.equal(paid.status, "active");
+  assert.notEqual(await pageOf(paidOnly), null);
+  const adminPaid = await owner({
+    grant: null,
+    entitlement: paidEntitlement(nowMs, { source: "admin", plan: "monthly" }),
+  });
+  await service().managePageV1(request(adminPaid, createInput()));
+  assert.notEqual(await pageOf(adminPaid), null);
+  // An expired or identity-less entitlement still refuses.
+  for (const entitlement of [
+    paidEntitlement(nowMs, { currentPeriodEnd: Timestamp.fromMillis(nowMs - 1) }),
+    paidEntitlement(nowMs, { status: "expired", isPremium: false }),
+    paidEntitlement(nowMs, { premiumIdentityEnabled: false }),
+  ]) {
+    const lapsed = await owner({ grant: null, entitlement });
+    await assert.rejects(service().managePageV1(request(lapsed, createInput())),
+      reason("pageAccessRequired"), JSON.stringify(entitlement));
+    assert.equal(await pageOf(lapsed), null);
+  }
 
   const moderator = await owner({ grant: null, user: { role: "moderator" } });
   await assert.rejects(
@@ -222,6 +275,151 @@ test("the gate admits canonical grants only: paid, staff preview and no grant ar
   });
   await assert.rejects(service().managePageV1(request(expired, createInput())),
     reason("pageAccessRequired"));
+});
+
+// ------------------------------------------------ followers (ADR-234)
+
+test("create succeeds on an account with followers and carries every follower over", async () => {
+  assert.equal("hasAudience" in PAGE_ERRORS, false, "the refusal is retired");
+  const uid = await owner({ user: { followerCount: 4 } });
+  const [f1, f2, f3, f4] = [freshUid("pgf1"), freshUid("pgf2"), freshUid("pgf3"),
+    freshUid("pgf4")];
+  for (const follower of [f1, f2, f3, f4]) {
+    await seedAccount(db, follower, nowMs);
+    await seedFollowEdge(db, follower, uid, nowMs);
+  }
+  // f1 follows other Pages already (order kept, the new Page appended); f2
+  // has no index; f3 already holds the Page (no write); f4 is an old pair
+  // that is blocked (edge plus block): never carried.
+  await setFollowIndex(db, f1, ["page-a", "page-b"], nowMs - 5_000);
+  await setFollowIndex(db, f3, ["page-c", uid], nowMs - 7_000);
+  await db.doc(`users/${uid}/blocked/${f4}`).set({ blockedAt: Timestamp.fromMillis(nowMs) });
+  const logger = silentLogger();
+
+  const result = await service({ logger }).managePageV1(request(uid, createInput()));
+  assert.deepEqual(result, { pageId: uid, kind: "business", status: "active", ownerPaused: false });
+
+  const f1Index = await dataOf(`pageFollowIndex/${f1}`);
+  assert.deepEqual(Object.keys(f1Index).sort(), [...PAGE_FOLLOW_INDEX_KEYS]);
+  assert.deepEqual(f1Index.pageIds, ["page-a", "page-b", uid]);
+  assert.deepEqual((await dataOf(`pageFollowIndex/${f2}`)).pageIds, [uid]);
+  const f3Index = await dataOf(`pageFollowIndex/${f3}`);
+  assert.deepEqual(f3Index.pageIds, ["page-c", uid]);
+  assert.equal(f3Index.updatedAt.toMillis(), nowMs - 7_000, "an index that holds the Page is not rewritten");
+  assert.equal(await dataOf(`pageFollowIndex/${f4}`), null, "a blocked pair is never carried");
+
+  // Nothing about the edges or the counter changes: they are shared.
+  assert.equal((await dataOf(`users/${uid}`)).followerCount, 4);
+  for (const follower of [f1, f2, f3, f4]) {
+    assert.equal((await dataOf(`users/${follower}/following/${uid}`)).uid, uid);
+  }
+  assert.equal(await dataOf(`pageFollowCarryJobs/${uid}`), null, "a small account completes at once");
+  const done = logger.entries.find((entry) => entry.args[0] === "pages follow carry-over completed");
+  assert.deepEqual(done.args[1], {
+    outcome: "completed", scanned: 4, carried: 2, already: 1, skipped: 1, evicted: 0,
+  });
+  const printed = JSON.stringify(logger.entries);
+  for (const id of [uid, f1, f2, f3, f4]) assert.equal(printed.includes(id), false);
+  // No follow notification or rate-limit row is written for a carry-over.
+  const notifications = await db.collection(`users/${uid}/notifications`).get();
+  assert.equal(notifications.size, 0);
+});
+
+test("create on a Creator with audience on switches it off in the same commit", async () => {
+  const uid = await creatorWithAudience({ followerCount: 1 });
+  const follower = freshUid("pgcf");
+  await seedAccount(db, follower, nowMs);
+  await seedFollowEdge(db, follower, uid, nowMs);
+  // Before: a paid Creator whose followers are publicly listable.
+  assert.equal((await dataOf(`publicProfiles/${uid}`)).creatorAudienceVisible, true);
+
+  await service().managePageV1(request(uid, createInput()));
+  const user = await dataOf(`users/${uid}`);
+  assert.equal(user.creatorAudienceEnabled, false);
+  assert.equal(user.followerCount, 1, "the counter moves to the Page as is");
+  const projection = await dataOf(`publicProfiles/${uid}`);
+  const { updatedAt, ...projected } = projection;
+  assert.notEqual(updatedAt, undefined);
+  assert.deepEqual(projected, derivePublicProfile(uid, user));
+  assert.equal(projection.creatorAudienceVisible, false);
+  assert.equal(projection.followerCount, 0);
+  assert.equal(projection.followingCount, 0);
+  assert.equal(projection.accountType, "creator", "the Creator identity itself stays");
+  assert.deepEqual((await dataOf(`pageFollowIndex/${follower}`)).pageIds, [uid]);
+  assert.notEqual(await pageOf(uid), null);
+
+  // Re-enabling stays refused while the Page exists.
+  await assert.rejects(
+    setCreatorAudienceEnabledHandler(
+      request(uid, { enabled: true, requestId: "req-creator-back-on" }),
+      { database: db, now: Timestamp.fromMillis(nowMs) },
+    ),
+    reason("pageActive"),
+  );
+  assert.equal((await dataOf(`users/${uid}`)).creatorAudienceEnabled, false);
+});
+
+test("a refused create on a Creator-audience account changes nothing", async () => {
+  const reserved = await creatorWithAudience({ publicDoc: { displayName: "YO Voice Support" } });
+  await assert.rejects(service().managePageV1(request(reserved, createInput())),
+    reason("pageNameReserved"));
+  const today = new Date(nowMs);
+  const minor = await creatorWithAudience();
+  await db.doc(`users/${minor}`).update({ creatorAgeVerified: false });
+  await assert.rejects(
+    service().managePageV1(request(minor, createInput({
+      birthDate: `${today.getUTCFullYear() - 16}-01-01`,
+    }))),
+    reason("pageAdultRequired"),
+  );
+  for (const uid of [reserved, minor]) {
+    assert.equal((await dataOf(`users/${uid}`)).creatorAudienceEnabled, true);
+    assert.equal((await dataOf(`publicProfiles/${uid}`)).creatorAudienceVisible, true);
+    assert.equal(await dataOf(`pageFollowCarryJobs/${uid}`), null);
+    assert.equal(await pageOf(uid), null);
+  }
+});
+
+test("a replayed create writes no second job and runs no second slice", async () => {
+  const uid = await owner({ user: { followerCount: 1 } });
+  const calls = [];
+  const followCarry = { runJob: async (pageId, options) => {
+    calls.push([pageId, options]);
+    return { outcome: "progress", batches: 1 };
+  } };
+  const input = createInput();
+  const result = await service({ followCarry }).managePageV1(request(uid, input));
+  assert.deepEqual(calls, [[uid, { maxBatches: 1 }]]);
+  const job = await dataOf(`pageFollowCarryJobs/${uid}`);
+  assert.equal(job.schemaVersion, 1);
+  assert.equal(job.pageId, uid);
+  assert.equal(job.afterId, null);
+  assert.equal(job.createdAt.toMillis(), nowMs);
+  assert.equal(job.nextAttemptAt.toMillis(), nowMs + PAGE_FOLLOW_CARRY_HANDOFF_MS);
+  await db.doc(`pageFollowCarryJobs/${uid}`).delete();
+
+  nowMs += 1_000;
+  assert.deepEqual(await service({ followCarry }).managePageV1(request(uid, input)), result);
+  assert.equal(calls.length, 1, "a replay runs no slice");
+  assert.equal(await dataOf(`pageFollowCarryJobs/${uid}`), null, "a replay writes no job");
+});
+
+test("a failing first slice never fails the create: the job waits for the worker", async () => {
+  const uid = await owner({ user: { followerCount: 2 } });
+  const logger = silentLogger();
+  const followCarry = { runJob: async () => {
+    throw Object.assign(new Error("unavailable"), { code: 14 });
+  } };
+  const result = await service({ logger, followCarry }).managePageV1(request(uid, createInput()));
+  assert.equal(result.status, "active");
+  assert.notEqual(await pageOf(uid), null);
+  const job = await dataOf(`pageFollowCarryJobs/${uid}`);
+  assert.equal(job.nextAttemptAt.toMillis(), nowMs + PAGE_FOLLOW_CARRY_HANDOFF_MS);
+  assert.equal(job.attempts, 0);
+  const deferred = logger.entries.find((entry) => entry.args[0] === "pages follow carry-over deferred");
+  assert.equal(deferred.level, "warn");
+  assert.deepEqual(deferred.args[1], { code: 14 });
+  await db.doc(`pageFollowCarryJobs/${uid}`).delete();
 });
 
 test("activation: disabled and non-tester callers get pagesNotEnabled", async () => {

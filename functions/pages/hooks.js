@@ -12,6 +12,9 @@
 //     safety action (D5).
 //   * setCreatorAudienceEnabled: enabling it while pages/{uid} exists is
 //     refused, because every Page follower's edge would become listable.
+//     managePageV1 create switches an enabled Creator audience OFF in its
+//     own transaction (ADR-234), so a Page never starts with one; this
+//     refusal keeps it off.
 //   * managePageV1 {op:"pause"} uses the same pause change.
 
 const defaultLogger = require("firebase-functions/logger");

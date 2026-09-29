@@ -4941,7 +4941,7 @@ service cloud.firestore {
 
     // Premium Pages (ADR-233). Server-written; reached through the
     // functions/pages callables, which re-read the capability (canonical VIP
-    // grant; paid is off in code), the activation switch appConfig/pagesV1,
+    // grant or paid Premium, ADR-234), the activation switch appConfig/pagesV1,
     // blocks and the Page state on every request. The owner may GET their
     // own Page record (settings, lapse notices) while their account is
     // active; nobody may list, create, update or delete one. The rules have
@@ -4962,6 +4962,11 @@ service cloud.firestore {
       allow read, write: if false;
     }
     match /pageFollowIndex/{userId} {
+      allow read, write: if false;
+    }
+    // ADR-234: the job that carries an account's existing followers over to
+    // its new Page (pageFollowIndex hints), keyed by the Page id.
+    match /pageFollowCarryJobs/{pageId} {
       allow read, write: if false;
     }
     match /pageVisibility/{docId} {

@@ -456,10 +456,10 @@ exports.getPublicBadges = getPublicBadges;
 */
 
 // Every non-safety Pages path answers `pagesNotEnabled` until an operator
-// writes appConfig/pagesV1 (fail closed). Only canonical-grant VIPs can run
-// a Page: paid Premium is off in code (pages/access.js,
-// PAGES_ALLOW_PAID_SOURCE). No Pages export keeps a warm instance or is a
-// keep-warm target.
+// writes appConfig/pagesV1 (fail closed). Canonical-grant VIPs AND paid or
+// admin-granted Premium can run a Page (ADR-234, pages/access.js
+// PAGES_ALLOW_PAID_SOURCE); staff preview cannot. No Pages export keeps a
+// warm instance or is a keep-warm target.
 const { managePageV1 } = require("./pages/lifecycle");
 const {
   findPagesV1,

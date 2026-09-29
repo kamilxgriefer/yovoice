@@ -30,6 +30,7 @@ const {
   DAY_MS,
   freshUid,
   pageDoc,
+  paidEntitlement,
   seedPage,
   setActivation,
   clearActivation,
@@ -197,6 +198,77 @@ test("a returning grant restores a hidden Page completely, trigger and sweep ali
   const index = await visibility();
   assert.equal(index.notViewable[uid], undefined);
   assert.equal(index.readOnlySince[other], undefined);
+});
+
+test("a paid-only Page lapses exactly like a VIP one (ADR-234)", async () => {
+  const uid = freshUid("lapsepaid");
+  await seedPage(db, uid, nowMs, {
+    grant: null,
+    entitlement: paidEntitlement(nowMs, { source: "stripe" }),
+    page: { postCount: 1, listed: true, lastPostAt: Timestamp.fromMillis(nowMs) },
+  });
+  const { lapse } = service();
+  assert.deepEqual(await lapse.handleCapabilityChange(uid), { outcome: "none" },
+    "paid Premium is a live capability");
+  // What the premium expiry worker (or a Stripe webhook) writes; the write
+  // fires onPageCapabilityEntitlementChanged.
+  await db.doc(`entitlements/${uid}`).set({
+    isPremium: false,
+    status: "expired",
+    premiumIdentityEnabled: false,
+    creatorEnabled: false,
+    canCreateClubs: false,
+  }, { merge: true });
+  assert.deepEqual(await lapse.handleCapabilityChange(uid), { outcome: "readOnly" });
+  let page = await dataOf(`pages/${uid}`);
+  assert.equal(page.status, "readOnly");
+  assert.equal(page.lapsedAt.toMillis(), nowMs);
+  assert.equal(page.listed, false);
+  const dayZero = await notificationsOf(uid);
+  assert.equal(dayZero.length, 1);
+  assert.equal(dayZero[0].lapsePhase, "readOnly");
+
+  const lapsedAtMs = nowMs;
+  nowMs = lapsedAtMs + PAGE_LAPSE_WARNING_AFTER_MS;
+  assert.deepEqual(await lapse.reconcilePage(uid), { outcome: "warned" });
+  assert.equal((await notificationsOf(uid)).filter((row) => row.lapsePhase === "hidingSoon").length, 1);
+  nowMs = lapsedAtMs + PAGE_READ_ONLY_WINDOW_MS;
+  assert.deepEqual(await lapse.reconcilePage(uid), { outcome: "hidden" });
+  assert.equal((await visibility()).notViewable[uid], "hidden");
+
+  // Renewal restores the Page completely.
+  await db.doc(`entitlements/${uid}`).set(paidEntitlement(nowMs, { source: "stripe" }));
+  assert.deepEqual(await lapse.handleCapabilityChange(uid), { outcome: "restored" });
+  page = await dataOf(`pages/${uid}`);
+  assert.equal(page.status, "active");
+  assert.equal(page.lapsedAt, null);
+  assert.equal(page.listed, true);
+  assert.equal((await visibility()).notViewable[uid], undefined);
+});
+
+test("a paid period that ends with no write lapses through the sweep; grace stays active", async () => {
+  const ended = freshUid("lapsepaid");
+  const grace = freshUid("lapsepaid");
+  const admin = freshUid("lapsepaid");
+  await seedPage(db, ended, nowMs, {
+    grant: null,
+    entitlement: paidEntitlement(nowMs, { currentPeriodEnd: Timestamp.fromMillis(nowMs + 1000) }),
+  });
+  await seedPage(db, grace, nowMs, {
+    grant: null,
+    entitlement: paidEntitlement(nowMs, { status: "grace" }),
+  });
+  await seedPage(db, admin, nowMs, {
+    grant: null,
+    entitlement: paidEntitlement(nowMs, { source: "admin", plan: "monthly" }),
+  });
+  nowMs += 2000;
+  const { lapse } = service();
+  const line = await lapse.sweep();
+  assert.equal(line.transitions, 1);
+  assert.equal((await dataOf(`pages/${ended}`)).status, "readOnly");
+  assert.equal((await dataOf(`pages/${grace}`)).status, "active");
+  assert.equal((await dataOf(`pages/${admin}`)).status, "active");
 });
 
 test("lapseEnabled false freezes every downgrade and still restores", async () => {

@@ -23,6 +23,10 @@ if (getApps().length === 0) initializeApp({ projectId: SUITE_PROJECT });
 const { createAccountDeletionStages, UID_KEYED_DOCUMENTS } = require("../account/stages");
 const { createPagesAccountDeletion, PAGES_DELETION_QUERIES } = require("../pages/account_deletion");
 const { createPagesMaintenanceService } = require("../pages/maintenance");
+const {
+  createPagesFollowCarryService,
+  pageFollowCarryJobDocument,
+} = require("../pages/follow_carry");
 const { createPagesMediaStorageAdapter } = require("../pages/media_storage");
 const { PAGE_EVIDENCE_RETENTION_MS } = require("../pages/report_contract");
 const {
@@ -40,7 +44,9 @@ const {
   photoMedia,
   postDoc,
   seedAccount,
+  seedFollowEdge,
   seedPage,
+  setFollowIndex,
   silentLogger,
 } = require("./helpers/pages_fixture");
 const { FakeBucket } = require("./helpers/pages_media_fixture");
@@ -169,6 +175,9 @@ async function seedPageAccount() {
   await db.doc(`pagePostBudgets/${uid}_20300101`).set({ schemaVersion: 1, pageId: uid });
   await db.doc(`pageAdultRefusals/${uid}`).set({ schemaVersion: 1, refusedAt: now });
   await db.doc(`pageFollowIndex/${uid}`).set({ schemaVersion: 1, pageIds: [otherPage], updatedAt: now });
+  // ADR-234: a follower carry-over still in progress when the account goes.
+  await db.doc(`pageFollowCarryJobs/${uid}`).set(pageFollowCarryJobDocument({
+    pageId: uid, now, nextAttemptAt: now }));
   return {
     uid, visitor, otherPage, clean, cleanMedia, visitorComment, reported, reportedMedia,
     tombstone, tombstoneMedia, theirPost, ownComment, reservation,
@@ -222,7 +231,8 @@ test("content, storage and records remove a Page account and keep only open-repo
   assert.equal(await dataOf(`pagePostMediaReservations/${s.reservation.mediaId}`), null);
 
   await runToEnd(stages, "records", s.uid);
-  for (const name of ["pageFollowIndex", "pagePostMediaLeases", "pageAdultRefusals"]) {
+  for (const name of ["pageFollowIndex", "pagePostMediaLeases", "pageAdultRefusals",
+    "pageFollowCarryJobs"]) {
     assert.equal(UID_KEYED_DOCUMENTS.includes(name), true);
     assert.equal(await dataOf(`${name}/${s.uid}`), null, name);
   }
@@ -230,6 +240,49 @@ test("content, storage and records remove a Page account and keep only open-repo
   // Somebody else's Page is untouched.
   assert.notEqual(await dataOf(`pages/${s.otherPage}`), null);
 });
+
+test("the social stage drops a deleted Page owner from every follower's Treści hint (ADR-234)",
+  async () => {
+    const uid = freshUid("delhint");
+    const otherPage = freshUid("delhintp");
+    const withOther = freshUid("delhinta");
+    const onlyThis = freshUid("delhintb");
+    const unrelated = freshUid("delhintc");
+    await seedPage(db, uid, nowMs, { user: { followerCount: 3 } });
+    for (const follower of [withOther, onlyThis, unrelated]) {
+      await seedAccount(db, follower, nowMs, { user: { followingCount: 1 } });
+      await seedFollowEdge(db, follower, uid, nowMs);
+    }
+    await setFollowIndex(db, withOther, [otherPage], nowMs);
+    // The followers the carry-over wrote the Page into at creation.
+    const now = Timestamp.fromMillis(nowMs);
+    await db.doc(`pageFollowCarryJobs/${uid}`).set(pageFollowCarryJobDocument({
+      pageId: uid, now, nextAttemptAt: now }));
+    const carry = createPagesFollowCarryService({
+      firestore: db, TimestampImpl: Timestamp, clock: () => nowMs, logger: silentLogger() });
+    assert.equal((await carry.runJob(uid)).outcome, "completed");
+    assert.deepEqual((await dataOf(`pageFollowIndex/${withOther}`)).pageIds, [otherPage, uid]);
+    assert.deepEqual((await dataOf(`pageFollowIndex/${onlyThis}`)).pageIds, [uid]);
+    // A follower whose hint no longer names the account is left alone.
+    await setFollowIndex(db, unrelated, [otherPage], nowMs);
+    const untouched = (await db.doc(`pageFollowIndex/${unrelated}`).get()).updateTime.toMillis();
+
+    const stages = stagesFor(recordingBucket());
+    await runToEnd(stages, "content", uid);
+    await runToEnd(stages, "social", uid);
+    assert.deepEqual((await dataOf(`pageFollowIndex/${withOther}`)).pageIds, [otherPage]);
+    assert.deepEqual((await dataOf(`pageFollowIndex/${onlyThis}`)).pageIds, []);
+    assert.equal((await db.doc(`pageFollowIndex/${unrelated}`).get()).updateTime.toMillis(),
+      untouched, "no write for a hint that does not name the account");
+    for (const follower of [withOther, onlyThis, unrelated]) {
+      assert.equal(await dataOf(`users/${follower}/following/${uid}`), null);
+      assert.equal(await dataOf(`users/${uid}/followers/${follower}`), null);
+      assert.equal((await dataOf(`users/${follower}`)).followingCount, 0);
+      const hint = await dataOf(`pageFollowIndex/${follower}`);
+      assert.equal(hint.pageIds.includes(uid), false, follower);
+      assert.deepEqual(Object.keys(hint).sort(), ["pageIds", "schemaVersion", "updatedAt"]);
+    }
+  });
 
 test("retained evidence is purged after 90 days by pagesMaintenance, media released", async () => {
   const s = await seedPageAccount();

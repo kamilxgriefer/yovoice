@@ -99,9 +99,9 @@ const PAGE_ERRORS = Object.freeze({
     "A Page needs a public profile.", "pageProfileNotPublic"),
   nameReserved: () => pagesError("failed-precondition",
     "This name can't be used for a Page.", "pageNameReserved"),
-  hasAudience: () => pagesError("failed-precondition",
-    "Pages can't be created on an account that already has followers yet.",
-    "pageHasAudience"),
+  // `pageHasAudience` is retired (ADR-234, 2026-09-29): an account with
+  // followers creates a Page and they are carried over (follow_carry.js).
+  // Build 40 clients keep their mapping for the reason; nothing sends it.
   adultRequired: () => pagesError("failed-precondition",
     "You must be 18 or older to run a Page.", "pageAdultRequired"),
   suspended: () => pagesError("failed-precondition",

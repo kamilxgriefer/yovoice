@@ -20,8 +20,11 @@
 //             exact path and generation; objects named by a HELD job are
 //             skipped. Anything unnamed is an orphan the daily sweep removes.
 //   records   pagePostBudgets rows (by pageId). pageFollowIndex/{uid},
-//             pagePostMediaLeases/{uid} and pageAdultRefusals/{uid} are in
-//             the stages' uid-keyed document list.
+//             pagePostMediaLeases/{uid}, pageAdultRefusals/{uid} and
+//             pageFollowCarryJobs/{uid} (ADR-234) are in the stages'
+//             uid-keyed document list. The carry-over worker also deletes a
+//             job whose Page the `content` stage removed, and never writes
+//             a follower's index once the `social` stage removed the edges.
 //
 // Likes the account gave stay (as in ADR-230); reports it filed are re-keyed
 // by the existing records step; reports ABOUT its content keep their

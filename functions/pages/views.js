@@ -23,8 +23,14 @@
 //
 // `onYoVoiceSinceMs` is the Page's server-written creation time
 // (pages.createdAt), never the client-written users.createdAt.
-// `followerCount` is read from users/{P} at read time (exact for a Page: it
-// can only be created with zero followers and Creator audience stays off).
+// `followerCount` is read from users/{P} at read time: the account's own
+// counter, SHARED with its Page, because a Page shares its follow edges with
+// the account (existing followers are carried over at creation,
+// follow_carry.js, ADR-234; Creator audience is switched off at creation and
+// cannot be re-enabled while pages/{P} exists). It is exact only as far as
+// that counter is: pre-existing drift is not repaired (ADR-234), and
+// followers the carry-over skips (a blocked legacy pair, a gone account, a
+// mismatched mirror) are still counted.
 // A PostView's `state` is "held" only for the owner; readers see "published".
 // A PageHeader's `state` is "active" | "readOnly" for visitors and one of
 // "suspended" > "hidden" > "paused" > "readOnly" > "active" (first match) for

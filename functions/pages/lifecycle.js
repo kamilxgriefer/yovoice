@@ -9,7 +9,8 @@
 // filter costs the caller.
 //
 //   op      activation  rate           gate  preconditions            notes
-//   create  write       pages.create   yes   active, !muted, verified  adult check before the transaction
+//   create  write       pages.create   yes   active, !muted, verified  adult check before the transaction;
+//                                                                     followers carried over (below)
 //   update  write       pages.update   yes   active, !muted, verified  allowed while paused; not while suspended
 //   pause   NONE        none           NO    none (allowed while muted, unverified)  a safety action (§2.1)
 //   resume  write       pages.update   yes   active, !muted, verified  public profile + current name re-checked
@@ -22,6 +23,22 @@
 // never hashed (the ledger's inputHash covers {adultEligibility:true}), never
 // logged. An under-18 answer writes pageAdultRefusals/{uid} with no date and
 // blocks another attempt for 30 days.
+//
+// Followers (ADR-234, owner decision 2026-09-29): an account that has or had
+// followers creates a Page like any other (the `pageHasAudience` refusal is
+// retired). The create transaction also
+//   * switches Creator audience OFF when it is on, re-projecting
+//     publicProfiles/{uid} in the same commit (publicProfiles reads are
+//     allowed only while the projection matches the user record, so a
+//     trigger lag would leave the profile unreadable). Re-enabling stays
+//     refused while pages/{uid} exists (hooks.js), so a Page's follower
+//     edges are never publicly listable;
+//   * writes pageFollowCarryJobs/{uid} (follow_carry.js), due 5 minutes
+//     later. After the commit, and only for a NEW Page (never a ledger
+//     replay), one batch of <= 100 followers is carried over right here; a
+//     failure there is logged and left to the pagesMaintenance worker, and
+//     the create still succeeds. A new Page has no posts, so no follower can
+//     miss anything before the first batch lands.
 
 const { Timestamp } = require("firebase-admin/firestore");
 const { onCall } = require("firebase-functions/v2/https");
@@ -45,7 +62,12 @@ const {
 } = require("../integrity/guards");
 const { likersAccountIsActive } = require("../utils/likers_access");
 const { normalizeProfileVisibility } = require("../profile/profile_visibility");
-const { requireAdultBirthDate } = require("../profile/public_profiles");
+const {
+  PUBLIC_PROFILE_FIELDS,
+  applyProjectionInTransaction,
+  derivePublicProfile,
+  requireAdultBirthDate,
+} = require("../profile/public_profiles");
 const { admitsPublicJoin, canonicalServer } = require("../servers/authority");
 const {
   derivePagesCapability,
@@ -69,6 +91,13 @@ const {
   pageForSafetyAction,
   pageReference,
 } = require("./hooks");
+const {
+  PAGE_FOLLOW_CARRY_HANDOFF_MS,
+  PAGE_FOLLOW_CARRY_LIMITS,
+  createPagesFollowCarryService,
+  pageFollowCarryJobDocument,
+  pageFollowCarryJobReference,
+} = require("./follow_carry");
 const { restoredPageFields } = require("./lapse");
 const {
   applyPageVisibilityInTransaction,
@@ -125,6 +154,10 @@ function accountNotActive() {
   fail("permission-denied", "Your account is not active.");
 }
 
+function errorCode(error) {
+  return typeof error?.code === "string" || Number.isSafeInteger(error?.code) ? error.code : null;
+}
+
 function refusalIsActive(snapshot, nowMs) {
   if (!snapshot?.exists) return false;
   const refusedAtMs = timestampMillis(snapshot.data()?.refusedAt);
@@ -140,11 +173,15 @@ function createPagesLifecycleService({
   logger = defaultLogger,
   rateLimits = PAGES_LIFECYCLE_RATE_LIMITS,
   adultCheck = requireAdultBirthDate,
+  followCarry = null,
 }) {
   if (!firestore || typeof TimestampImpl?.fromMillis !== "function" ||
       typeof clock !== "function" || typeof adultCheck !== "function") {
     throw new TypeError("firestore, Timestamp, clock and adultCheck are required.");
   }
+  const carry = followCarry ?? createPagesFollowCarryService({
+    firestore, TimestampImpl, clock, logger,
+  });
 
   function timing() {
     const nowMs = clock();
@@ -265,15 +302,16 @@ function createPagesLifecycleService({
       adultEligibility: true,
     });
     const pageRef = pageReference(firestore, uid);
+    const publicRef = firestore.doc(`publicProfiles/${uid}`);
     const ledgerRef = firestore.doc(`integrityOperationLedgers/${identity.id}`);
-    return firestore.runTransaction(async (transaction) => {
+    const outcome = await firestore.runTransaction(async (transaction) => {
       const [user, entitlement, grant, restriction, pageSnapshot, publicSnapshot,
         ledgerSnapshot, visibilitySnapshot] = await transactionGetAll(
         transaction,
         ...pagesCapabilityReferences(firestore, uid),
         firestore.doc(`restrictions/${uid}`),
         pageRef,
-        firestore.doc(`publicProfiles/${uid}`),
+        publicRef,
         ledgerRef,
         pageVisibilityReference(firestore),
       );
@@ -283,18 +321,28 @@ function createPagesLifecycleService({
         uid,
         inputHash: identity.inputHash,
       });
-      if (prior) return prior;
+      if (prior) return { result: prior, created: false };
       gate({ userSnapshot: user, entitlementSnapshot: entitlement, grantSnapshot: grant },
         auth, timed.nowMs);
       if (pageSnapshot.exists) throw PAGE_ERRORS.exists();
       assertPublicProfile(profile);
       const displayName = publicPageName(publicSnapshot, uid);
-      const followerCount = profile.followerCount ?? 0;
-      if (followerCount !== 0 || profile.creatorAudienceEnabled === true) {
-        throw PAGE_ERRORS.hasAudience();
-      }
+      // Followers never refuse a Page (ADR-234): they are carried over.
       await assertLinkedServer(transaction, uid, fields.community);
 
+      // Every read is done; the writes follow.
+      if (profile.creatorAudienceEnabled === true) {
+        // A Page's followers are Page followers: the Creator audience (a
+        // publicly listable edge set) closes in the same commit.
+        transaction.update(firestore.doc(`users/${uid}`), { creatorAudienceEnabled: false });
+        applyProjectionInTransaction(
+          transaction,
+          publicRef,
+          publicSnapshot,
+          derivePublicProfile(uid, { ...profile, creatorAudienceEnabled: false }),
+          PUBLIC_PROFILE_FIELDS,
+        );
+      }
       const page = newPageDocument({ pageId: uid, fields, displayName, now: timed.now });
       const result = pageLifecycleResult(page);
       transaction.create(pageRef, page);
@@ -306,6 +354,12 @@ function createPagesLifecycleService({
         now: timed.now,
         logger,
       });
+      // Always written: edges, not the (possibly drifted) counter, decide.
+      transaction.set(pageFollowCarryJobReference(firestore, uid), pageFollowCarryJobDocument({
+        pageId: uid,
+        now: timed.now,
+        nextAttemptAt: TimestampImpl.fromMillis(timed.nowMs + PAGE_FOLLOW_CARRY_HANDOFF_MS),
+      }));
       transaction.create(ledgerRef, ledgerData({
         kind: LEDGER_KINDS.create,
         uid,
@@ -314,8 +368,17 @@ function createPagesLifecycleService({
         result,
         now: timed.now,
       }));
-      return result;
+      return { result, created: true };
     });
+    if (outcome.created) {
+      try {
+        await carry.runJob(uid, { maxBatches: PAGE_FOLLOW_CARRY_LIMITS.createBatches });
+      } catch (error) {
+        // The job stays; pagesMaintenance carries the followers over.
+        logger.warn("pages follow carry-over deferred", { code: errorCode(error) });
+      }
+    }
+    return outcome.result;
   }
 
   // ------------------------------------------------------- update + resume

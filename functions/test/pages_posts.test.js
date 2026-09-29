@@ -46,6 +46,7 @@ const {
   newCommentId,
   newPostId,
   pageDoc,
+  paidEntitlement,
   photoMedia,
   postDoc,
   request,
@@ -476,6 +477,33 @@ test("publish: text rules, and the gate is re-derived at publish time", async ()
   await rejectsWith(h.posts.publishPagePostV1(request(uid, publishData("photo", {
     postId: reserved.postId, mediaIds: [reserved.items[0].mediaId],
   }))), "deadline-exceeded", "pageUploadExpired");
+});
+
+test("publish: a paid-only owner, Stripe or admin-granted, posts; an expired one cannot (ADR-234)", async () => {
+  const h = harness({ rateLimits: RELAXED });
+  const stripe = await pageWithOwner({}, {
+    grant: null,
+    entitlement: paidEntitlement(nowMs, { source: "stripe" }),
+  });
+  const admin = await pageWithOwner({}, {
+    grant: null,
+    entitlement: paidEntitlement(nowMs, { source: "admin", plan: "monthly" }),
+  });
+  for (const uid of [stripe, admin]) {
+    await h.posts.publishPagePostV1(request(uid, publishData("text", { text: "Paid and posting." })));
+    assert.equal((await dataOf(`pages/${uid}`)).postCount, 1);
+    const reserved = await reservedPhotos(h, uid, 1);
+    await h.posts.publishPagePostV1(request(uid, publishData("photo", {
+      postId: reserved.postId, mediaIds: [reserved.items[0].mediaId],
+    })));
+    assert.equal((await dataOf(`pages/${uid}`)).postCount, 2);
+  }
+  // The period ends: the live gate refuses before any sweep runs.
+  await db.doc(`entitlements/${stripe}`).update({
+    currentPeriodEnd: Timestamp.fromMillis(nowMs - 1),
+  });
+  await rejectsWith(h.posts.publishPagePostV1(request(stripe,
+    publishData("text", { text: "Lapsed." }))), "failed-precondition", "pageAccessRequired");
 });
 
 test("publish restores a lapsed Page whose capability is live again", async () => {

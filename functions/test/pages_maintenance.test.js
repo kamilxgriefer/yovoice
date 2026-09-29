@@ -311,12 +311,16 @@ test("run: every slice reports, and one failing slice never stops the next", asy
   const h = harness();
   const results = await h.maintenance.run();
   assert.deepEqual(Object.keys(results), [
-    "reservations", "evidenceRetention", "deletionJobs", "cleanupJobs", "lapse", "orphans",
+    "reservations", "evidenceRetention", "deletionJobs", "cleanupJobs", "lapse", "followCarry",
+    "orphans",
   ]);
   // Package B5: the lapse slice runs hourly; with no activation document the
   // brake is on (downgrades frozen) and the slice still reports.
   assert.equal(typeof results.lapse.ran, "boolean");
   assert.equal(typeof results.evidenceRetention.processed, "number");
+  // ADR-234: the follower carry-over slice reports its bounded run.
+  assert.equal(typeof results.followCarry.processed, "number");
+  assert.equal(results.followCarry.batches <= 10, true);
   const broken = createPagesMaintenanceService({
     firestore: db,
     storage: {
@@ -332,4 +336,34 @@ test("run: every slice reports, and one failing slice never stops the next", asy
   assert.equal(typeof line.deletionJobs.processed, "number");
   assert.equal(h.logger.entries.some((entry) => entry.level === "error" &&
     entry.args[0] === "pages maintenance slice failed" && entry.args[1].slice === "orphans"), true);
+});
+
+test("run: the lapse backstop runs before followCarry, and a failing followCarry slice never "
+  + "stops the orphan slice", async () => {
+  const h = harness();
+  const calls = [];
+  const maintenance = createPagesMaintenanceService({
+    firestore: db,
+    storage: createPagesMediaStorageAdapter(h.bucket),
+    TimestampImpl: Timestamp,
+    clock: () => nowMs,
+    logger: h.logger,
+    followCarry: { processDueJobs: async () => {
+      calls.push("followCarry");
+      throw Object.assign(new Error("down"), { code: 14 });
+    } },
+    lapse: { sweep: async () => {
+      calls.push("lapse");
+      return { ran: true };
+    } },
+  });
+  const line = await maintenance.run();
+  assert.deepEqual(line.followCarry, { failed: true });
+  assert.deepEqual(line.lapse, { ran: true });
+  assert.equal(typeof line.orphans.ran, "boolean");
+  assert.deepEqual(calls, ["lapse", "followCarry"],
+    "a slow carry-over never delays a lapse transition");
+  assert.equal(h.logger.entries.some((entry) => entry.level === "error" &&
+    entry.args[0] === "pages maintenance slice failed" && entry.args[1].slice === "followCarry" &&
+    entry.args[1].code === 14), true);
 });

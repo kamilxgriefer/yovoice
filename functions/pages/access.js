@@ -1,4 +1,4 @@
-// Who may RUN a Premium Page (ADR-233 §2.2, decision D3).
+// Who may RUN a Premium Page (ADR-233 §2.2, decision D3; ADR-234).
 //
 // Pure: no SDK import beyond the error type. The capability reuses the
 // ADR-230 "See who liked" derivation (utils/likers_access.js) so there is one
@@ -6,10 +6,15 @@
 //
 //   * staffPreview is REFUSED. A moderator preview is a way to look at a paid
 //     surface, not a way to publish to the public under YO Voice's trust.
-//   * paid Premium is refused while PAGES_ALLOW_PAID_SOURCE is false. Paid is
-//     self-service and images are not screened automatically yet, so Pages
-//     stay grant-only (owner-granted testers) until screening AND the
-//     Moderation Center (Roadmap 0o) exist. Flipping it needs an ADR.
+//   * paid Premium COUNTS (PAGES_ALLOW_PAID_SOURCE = true). Owner decision
+//     2026-09-29 (ADR-234) overrides ADR-233's condition (automated image
+//     screening plus the Moderation Center, Roadmap 0o), with the accepted
+//     risk recorded there. "Paid" is entitlements/{uid} with isPremium,
+//     status active | trialing | grace, a Firestore Timestamp
+//     currentPeriodEnd in the future, and premiumIdentityEnabled: Stripe and
+//     adminSetPremiumEntitlements (source "admin") alike. The lapse rules
+//     (§2.8) do not care where the capability came from, so a paid expiry
+//     takes the same 30-day read-only-then-hidden path as a VIP lapse.
 //
 // The grant is checked INDEPENDENTLY of deriveLikersAccess's precedence:
 // that function reports source "paid" for an account holding both a paid
@@ -30,8 +35,9 @@ const {
   likersAccountIsActive,
 } = require("../utils/likers_access");
 
-// D3: grant-only until images are screened. Changing it needs an ADR.
-const PAGES_ALLOW_PAID_SOURCE = false;
+// ADR-234 (owner decision 2026-09-29): paid and admin-granted Premium run a
+// Page too. Read by every capability consumer; deploy them together.
+const PAGES_ALLOW_PAID_SOURCE = true;
 
 const PAGE_ACCESS_REQUIRED_MESSAGE = "YO Voice VIP is required to run a Page.";
 const PAGE_ACCESS_REQUIRED_REASON = "pageAccessRequired";
@@ -44,8 +50,8 @@ function snapshotData(snapshot) {
 
 /**
  * The Pages capability from already-read documents.
- * `allowPaid` exists for the test that proves the constant is what refuses
- * paid; production callers never pass it.
+ * `allowPaid` exists for the test that proves the constant is the switch
+ * for paid Premium; production callers never pass it.
  */
 function derivePagesCapabilityFromData({
   user = null,
