@@ -456,6 +456,31 @@ logs in the following minutes. Evidence:
 yovoice-evidence/2026-09-28/pages-activation/. The controlled-account
 read-backs and the B5 operator smoke below are still to do with a tester.
 
+**ADR-234 deploy and opening, 2026-09-29 (from `7ae05f7a`; evidence
+yovoice-evidence/2026-09-29/pages-adr234/):** functions 3016/3016, rules
+and Flutter 6963 green on the commit. Rules released 00:10 UTC and read back
+byte-identical (`edca1a3f-…`, previous `52375563-…`; only the explicit deny
+for `pageFollowCarryJobs`). Functions in 7 batches of ≤ 3, 00:10-00:20 UTC,
+each on its first attempt, `managePageV1` last: `getPagesFeedV1`,
+`getPageV1`, `getPagePostV1`, `findPagesV1`, `getPagePostMediaAccessV1`,
+`pagePostEngagementV1`, `listPagePostLikersV1`, `reservePagePostMediaV1`,
+`publishPagePostV1`, `managePagePostV1`, `onPageCapabilityEntitlementChanged`,
+`onPageCapabilityGrantChanged`, `pagesMaintenance`, `setFollow`,
+`onAccountDeletionOutboxCreated`, `processAccountDeletionOutboxSchedule`,
+`deleteAccountSelfV1`, `managePageV1`. The set was computed from the static
+require graph of every export (54 touch a changed file; only `access.js`,
+`lifecycle.js`, `follow_carry.js`, `maintenance.js` and `account/stages.js`
+changed behaviour — the rest were comments, one added export and a removed
+error constant). All functions ACTIVE; 0 `severity>=ERROR` after the deploy;
+the production index smoke passes **24/24** (the two new carry-over queries
+included). The alert metrics gained the six carry-over lines (`stuck` and
+`job malformed` page, `retry`, `deferred`, `index full` warn, `completed`
+info). **Opened at 00:22:17 UTC** (owner decision 2026-09-29: create for
+every Premium or VIP account, read for everyone): `appConfig/pagesV1` read
+`all`, write `all`, no tester list, `lapseEnabled: true`, revision 1 → 2.
+Clients from build 40 show Treści; build 40's create pre-gate still admits
+VIP only (paid-only Premium gets the upsell until the next build).
+
 B5 operator smoke in testers mode (spec §7 step 6): a controlled tester
 reports a post of another controlled Page → `pages_moderation.js list`,
 `show`, `show --media --apply` (audit rows appear), `hold` then `restore`
