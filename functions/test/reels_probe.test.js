@@ -1316,3 +1316,56 @@ test("malicious atom chains fail closed within the duration range-read budget", 
   assert.equal(durationMs, null);
   assert.equal(calls.length, MAX_ISO_BMFF_DURATION_RANGE_READS);
 });
+
+// ADR-235. The composer's "Obróć" rewrites only the 36-byte tkhd matrix of
+// each video track in a local copy. Same size, same header, same timeline:
+// the trusted probe must reach exactly the verdict it reaches for the file
+// as picked, so finalizeReelDraftV2 needs no change at all.
+test("a rotated tkhd matrix does not change the trusted probe", async () => {
+  const appFixtures = path.join(__dirname, "..", "..", "test", "fixtures", "reels");
+  const pairs = [
+    ["reel_landscape_faststart.mp4", "reel_landscape_faststart.rot1.mp4"],
+    ["reel_landscape_av_moovlast.mp4", "reel_landscape_av_moovlast.rot3.mp4"],
+    ["reel_iphone_rot90.mov", "reel_iphone_rot90.rot1.mov"],
+  ].map(([source, golden]) => [
+    path.join(appFixtures, source),
+    path.join(appFixtures, golden),
+  ]);
+  pairs.push([
+    path.join(__dirname, "fixtures", "chromium_mediarecorder_fragmented.mp4"),
+    path.join(appFixtures, "chromium_mediarecorder_fragmented.rot1.mp4"),
+  ]);
+
+  async function verdict(file) {
+    const bytes = fs.readFileSync(file);
+    const contentType = file.endsWith(".mov") ? "video/quicktime" : "video/mp4";
+    const probe = createReelMediaProbe({ file: () => rangedFile(bytes) });
+    const result = await probe({
+      storagePath: "reels/user/reel/media",
+      generation: "7",
+      contentType,
+      size: bytes.length,
+    });
+    const durationMs = await readTrustedIsoBmffDurationMs(
+      rangedFile(bytes),
+      bytes.length,
+    );
+    return { bytes, result, durationMs };
+  }
+
+  for (const [source, golden] of pairs) {
+    const original = await verdict(source);
+    const rotated = await verdict(golden);
+    assert.equal(rotated.bytes.length, original.bytes.length, golden);
+    assert.deepEqual(
+      rotated.bytes.subarray(0, 64),
+      original.bytes.subarray(0, 64),
+      golden,
+    );
+    assert.notDeepEqual(rotated.bytes, original.bytes, golden);
+    assert.deepEqual(rotated.result, original.result, golden);
+    assert.equal(rotated.durationMs, original.durationMs, golden);
+    assert.equal(original.result.hasVideo, true, source);
+    assert.ok(original.durationMs > 0, source);
+  }
+});

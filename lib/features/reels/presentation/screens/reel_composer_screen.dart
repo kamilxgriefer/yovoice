@@ -15,9 +15,13 @@ import 'package:yovoice/features/reels/data/models/reel.dart';
 import 'package:yovoice/features/reels/data/models/reel_composition.dart';
 import 'package:yovoice/features/reels/data/services/reel_service.dart';
 import 'package:yovoice/features/reels/data/services/reel_upload.dart';
+import 'package:yovoice/features/reels/data/services/reel_video_orientation.dart';
 import 'package:yovoice/features/reels/data/services/reel_video_probe.dart';
+import 'package:yovoice/features/reels/data/services/reel_video_rotation_bake.dart';
 import 'package:yovoice/features/reels/data/services/yeels_posted_flag.dart';
+import 'package:yovoice/features/reels/presentation/reel_media_fit.dart';
 import 'package:yovoice/features/reels/presentation/reel_visuals.dart';
+import 'package:yovoice/features/reels/presentation/widgets/reel_composition_canvas.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_draft_preview.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_trim_strip.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_button.dart';
@@ -27,6 +31,10 @@ import 'package:yovoice/shared/widgets/inputs/yo_keyboard_done_bar.dart';
 
 typedef ReelVideoDurationProbe = Future<int> Function(XFile file);
 typedef ReelBackingAudioPicker = Future<ReelUploadPayload?> Function();
+
+/// Read-only scan of a picked video's track matrices; null hides "Obróć".
+typedef ReelVideoRotationScanner =
+    Future<ReelVideoOrientation?> Function(ReelUploadPayload payload);
 
 enum _ComposerStep { media, edit, review }
 
@@ -42,6 +50,8 @@ class ReelComposerScreen extends StatefulWidget {
     this.videoControllerFactory,
     this.onPublished,
     this.yeelsPostedFlag,
+    this.videoRotationScanner,
+    this.videoRotationBaker,
     super.key,
   });
 
@@ -65,6 +75,14 @@ class ReelComposerScreen extends StatefulWidget {
   /// production uses [YeelsPostedFlag.instance], shared with YO Moments.
   @visibleForTesting
   final YeelsPostedFlag? yeelsPostedFlag;
+
+  /// Optional test/platform override for the pick-time orientation scan that
+  /// decides whether the "Obróć" pill appears (ADR-235).
+  final ReelVideoRotationScanner? videoRotationScanner;
+
+  /// Optional test/platform override for baking the rotation into a local
+  /// copy at Publish, discarding that copy and sweeping stale ones.
+  final ReelVideoRotationBaker? videoRotationBaker;
 
   @override
   State<ReelComposerScreen> createState() => _ReelComposerScreenState();
@@ -108,6 +126,25 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
   int _identityGeneration = 0;
   final Set<Route<dynamic>> _draftModals = {};
 
+  /// "Obróć" (ADR-235): the pending clockwise quarter turns of the picked
+  /// video. Only the preview turns until Publish bakes it into a local copy.
+  int _videoQuarterTurns = 0;
+
+  /// The pick-time scan: non-null exactly when the video can be rotated.
+  ReelVideoOrientation? _orientation;
+
+  /// The preview's video size after the pending turns, for the crop sliders.
+  Size? _videoDisplaySize;
+
+  /// The baked copy for (source, turns), reused by every retry of the same
+  /// draft and deleted after success, on new media, on identity change and
+  /// on discard — never while an upload may be reading it.
+  ({ReelUploadPayload source, int turns, ReelUploadPayload baked})? _baked;
+  bool _publishInFlight = false;
+  final List<ReelUploadPayload> _discardAfterPublish = <ReelUploadPayload>[];
+  late final ReelVideoRotationBaker _baker =
+      widget.videoRotationBaker ?? const ReelVideoRotationBaker();
+
   @override
   void initState() {
     super.initState();
@@ -115,6 +152,153 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
     _identitySubscription = _service.identityChanges.listen(
       _identityChanged,
       onError: (Object _) => _identityChanged(null, force: true),
+    );
+    // Copies orphaned by an interrupted session (a crash mid-publish).
+    unawaited(_baker.sweep().catchError((Object _) {}));
+  }
+
+  /// Deletes the baked copy, deferring while a publish may still stream it.
+  void _discardBaked() {
+    final cached = _baked;
+    if (cached == null) return;
+    _baked = null;
+    _discardCopy(cached.baked);
+  }
+
+  void _discardCopy(ReelUploadPayload baked) {
+    if (_publishInFlight) {
+      _discardAfterPublish.add(baked);
+      return;
+    }
+    unawaited(_baker.discard(baked).catchError((Object _) {}));
+  }
+
+  /// The upload payload for [source] turned [turns] quarter turns, baked once
+  /// per (source, turns).
+  Future<ReelUploadPayload> _bakedMedia(
+    ReelUploadPayload source,
+    int turns,
+    int generation,
+  ) async {
+    final cached = _baked;
+    if (cached != null &&
+        identical(cached.source, source) &&
+        cached.turns == turns &&
+        await _baker.isIntact(cached.baked)) {
+      return cached.baked;
+    }
+    // A different source or turns, or a copy the OS trimmed from the cache
+    // directory since the last attempt: bake afresh rather than failing
+    // every retry with "no longer available".
+    if (identical(_baked, cached) && cached != null) _discardBaked();
+    final baked = await _baker.bake(source, turns);
+    if (!_ownsDraft(generation) || !identical(_media, source)) {
+      // The draft moved on while the copy was written.
+      _discardCopy(baked);
+      throw StateError('This Reel draft belongs to an ended sign-in session.');
+    }
+    _baked = (source: source, turns: turns, baked: baked);
+    return baked;
+  }
+
+  Future<void> _scanRotation(ReelUploadPayload payload, int generation) async {
+    if (payload.mediaKind != ReelMediaKind.video) return;
+    final scanner = widget.videoRotationScanner ?? scanReelUploadOrientation;
+    ReelVideoOrientation? orientation;
+    try {
+      orientation = await scanner(payload);
+    } catch (_) {
+      orientation = null;
+    }
+    if (orientation == null ||
+        !_ownsDraft(generation) ||
+        !identical(_media, payload)) {
+      return;
+    }
+    setState(() => _orientation = orientation);
+  }
+
+  /// Hides the "Rotating reset the crop" notice while it is still up; null
+  /// when there is none.
+  VoidCallback? _retireCropResetNotice;
+
+  void _closeCropResetNotice() {
+    final retire = _retireCropResetNotice;
+    _retireCropResetNotice = null;
+    retire?.call();
+  }
+
+  void _showCropResetNotice(ScaffoldMessengerState messenger, SnackBar bar) {
+    // The newest action's notice replaces anything queued, so it is always
+    // the messenger's current SnackBar and can be hidden by its controller.
+    messenger.clearSnackBars();
+    final notice = messenger.showSnackBar(bar);
+    var open = true;
+    unawaited(notice.closed.then((_) => open = false));
+    _retireCropResetNotice = () {
+      if (!open || !messenger.mounted) return;
+      open = false;
+      notice.close();
+    };
+  }
+
+  bool get _canRotate =>
+      !_draftContractLocked &&
+      !_selecting &&
+      _media?.mediaKind == ReelMediaKind.video &&
+      _orientation != null;
+
+  void _rotateVideo() {
+    if (!_canRotate) return;
+    _discardBaked();
+    final media = _media;
+    final previousCrop = _composition.crop;
+    final framed =
+        previousCrop.scale != 1 ||
+        previousCrop.offsetX != 0 ||
+        previousCrop.offsetY != 0;
+    final turns = (_videoQuarterTurns + 1) % 4;
+    setState(() {
+      _videoQuarterTurns = turns;
+      // Offsets would change meaning between the axes.
+      _composition = _composition.copyWith(crop: const ReelCropTransform());
+      _error = null;
+    });
+    _closeCropResetNotice();
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (!framed || messenger == null) return;
+    // The author's zoom and position just went away — say so, and let one
+    // tap take the turn back with the crop it replaced. Nothing else is
+    // undone: an undo that no longer matches the draft does nothing.
+    final generation = _identityGeneration;
+    final copy = AppLocalizations.of(context);
+    _showCropResetNotice(
+      messenger,
+      SnackBar(
+        key: const ValueKey<String>('reel-rotate-crop-reset'),
+        content: Text(
+          copy.text('Rotating reset the crop.', 'Obrót zresetował kadr.'),
+        ),
+        action: SnackBarAction(
+          label: copy.text('Undo', 'Cofnij'),
+          onPressed: () {
+            if (!_ownsDraft(generation) ||
+                !_canRotate ||
+                !identical(_media, media) ||
+                _videoQuarterTurns != turns ||
+                _composition.crop.scale != 1 ||
+                _composition.crop.offsetX != 0 ||
+                _composition.crop.offsetY != 0) {
+              return;
+            }
+            _discardBaked();
+            setState(() {
+              _videoQuarterTurns = (turns + 3) % 4;
+              _composition = _composition.copyWith(crop: previousCrop);
+            });
+          },
+        ),
+      ),
     );
   }
 
@@ -132,8 +316,13 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
     }
     _draftModals.clear();
     _playhead.value = Duration.zero;
+    _discardBaked();
+    _closeCropResetNotice();
     setState(() {
       _ownerId = uid;
+      _videoQuarterTurns = 0;
+      _orientation = null;
+      _videoDisplaySize = null;
       _media = null;
       _backingAudio = null;
       _session = null;
@@ -219,6 +408,14 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
   @override
   void dispose() {
     _identityGeneration++;
+    _discardBaked();
+    // The tree is locked while it unmounts: hide the notice after the frame,
+    // if its messenger outlives this screen (an Undo would do nothing).
+    final retire = _retireCropResetNotice;
+    _retireCropResetNotice = null;
+    if (retire != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => retire());
+    }
     unawaited(_identitySubscription?.cancel());
     _scroll.dispose();
     _playhead.dispose();
@@ -379,9 +576,14 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
       if (!_ownsDraft(generation) || _draftContractLocked) return;
       final previousKind = _media?.mediaKind;
       _playhead.value = Duration.zero;
+      _discardBaked();
+      _closeCropResetNotice();
       setState(() {
         _media = payload;
         _session = null;
+        _videoQuarterTurns = 0;
+        _orientation = null;
+        _videoDisplaySize = null;
         if (payload.mediaKind != ReelMediaKind.video &&
             _tool == _EditorTool.trim) {
           _tool = _EditorTool.crop;
@@ -398,6 +600,9 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
         );
         _step = _ComposerStep.edit;
       });
+      // Non-blocking: the pill appears when the read-only scan says the
+      // matrix can be rotated; picking never waits for it.
+      unawaited(_scanRotation(payload, generation));
     } catch (error) {
       if (_ownsDraft(generation)) _showError(error);
     } finally {
@@ -853,7 +1058,7 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
     await _previewKey.currentState?.pause();
     if (!_ownsDraft(generation) || _publishing) return;
     final existingSession = _session;
-    final plan =
+    var plan =
         existingSession?.plan ??
         ReelDraftPlan(
           media: media,
@@ -866,60 +1071,108 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
       _showError(FormatException(problem));
       return;
     }
-    final session = existingSession ?? ReelPublishSession(plan: plan);
-    setState(() {
-      _session = session;
-      _publishing = true;
-      _error = null;
-      _progress = 0;
-      _stage = null;
-    });
+    _publishInFlight = true;
+    var published = false;
     try {
-      final reelId = await _service.publish(
-        session,
-        onProgress: (progress) {
-          if (_ownsDraft(generation)) setState(() => _progress = progress);
-        },
-        onStage: (stage) {
-          if (_ownsDraft(generation)) setState(() => _stage = stage);
-        },
-      );
-      if (!mounted || !_ownsDraft(generation)) return;
-      // The account has a Yeel now: the create ring stops inviting one
-      // (ADR-229). Device-local and best effort; never blocks the publish.
-      final owner = _ownerId;
-      if (owner != null) {
-        unawaited(
-          (widget.yeelsPostedFlag ?? YeelsPostedFlag.instance).markPosted(
-            owner,
-          ),
+      final turns = _videoQuarterTurns % 4;
+      if (existingSession == null &&
+          turns != 0 &&
+          media.mediaKind == ReelMediaKind.video) {
+        // "Obróć" becomes real here (ADR-235): a local copy whose video
+        // track matrices are turned, same size and header, baked under the
+        // existing "Preparing…" stage before anything is reserved.
+        setState(() {
+          _publishing = true;
+          _error = null;
+          _progress = 0;
+          _stage = ReelPublishStage.reserving;
+        });
+        final ReelUploadPayload baked;
+        try {
+          baked = await _bakedMedia(media, turns, generation);
+        } catch (error) {
+          if (_ownsDraft(generation)) {
+            setState(() {
+              _publishing = false;
+              _stage = null;
+            });
+            _showError(error);
+          }
+          return;
+        }
+        if (!_ownsDraft(generation)) return;
+        plan = ReelDraftPlan(
+          media: baked,
+          backingAudio: plan.backingAudio,
+          composition: plan.composition,
+          availability: plan.availability,
         );
       }
-      widget.onPublished?.call(reelId);
-      if (Navigator.of(context).canPop()) Navigator.of(context).pop(reelId);
-    } catch (error, stackTrace) {
-      // A reservation exists iff the reserve call answered, so it also names
-      // which callable refused — no extra plumbing through ReelService.
-      final reserved = session.reelId != null;
-      // An attempt that never obtained a reservation left NO server state to
-      // stay consistent with, so holding its session is worse than useless:
-      // `_publish` reuses `existingSession?.plan`, and a retry would then
-      // republish the plan the user has since edited. Dropping it rebuilds
-      // the plan from the current edits and mints a fresh requestId — which
-      // is correct precisely because there is no ledger entry to replay.
-      if (!reserved && identical(_session, session)) _session = null;
-      recordCallableRefusalIfTerminal(
-        callable: reserved ? 'finalizeReelDraftV2' : 'reserveReelDraftV2',
-        error: error,
-        stackTrace: stackTrace,
-      );
-      if (_ownsDraft(generation)) _showError(error);
+      final session = existingSession ?? ReelPublishSession(plan: plan);
+      setState(() {
+        _session = session;
+        _publishing = true;
+        _error = null;
+        _progress = 0;
+        _stage = identical(plan.media, media) ? null : _stage;
+      });
+      try {
+        final reelId = await _service.publish(
+          session,
+          onProgress: (progress) {
+            if (_ownsDraft(generation)) setState(() => _progress = progress);
+          },
+          onStage: (stage) {
+            if (_ownsDraft(generation)) setState(() => _stage = stage);
+          },
+        );
+        published = true;
+        if (!mounted || !_ownsDraft(generation)) return;
+        // The account has a Yeel now: the create ring stops inviting one
+        // (ADR-229). Device-local and best effort; never blocks the publish.
+        final owner = _ownerId;
+        if (owner != null) {
+          unawaited(
+            (widget.yeelsPostedFlag ?? YeelsPostedFlag.instance).markPosted(
+              owner,
+            ),
+          );
+        }
+        widget.onPublished?.call(reelId);
+        if (Navigator.of(context).canPop()) Navigator.of(context).pop(reelId);
+      } catch (error, stackTrace) {
+        // A reservation exists iff the reserve call answered, so it also names
+        // which callable refused — no extra plumbing through ReelService.
+        final reserved = session.reelId != null;
+        // An attempt that never obtained a reservation left NO server state to
+        // stay consistent with, so holding its session is worse than useless:
+        // `_publish` reuses `existingSession?.plan`, and a retry would then
+        // republish the plan the user has since edited. Dropping it rebuilds
+        // the plan from the current edits and mints a fresh requestId — which
+        // is correct precisely because there is no ledger entry to replay.
+        if (!reserved && identical(_session, session)) _session = null;
+        recordCallableRefusalIfTerminal(
+          callable: reserved ? 'finalizeReelDraftV2' : 'reserveReelDraftV2',
+          error: error,
+          stackTrace: stackTrace,
+        );
+        if (_ownsDraft(generation)) _showError(error);
+      } finally {
+        if (_ownsDraft(generation)) {
+          setState(() {
+            _publishing = false;
+            _stage = null;
+          });
+        }
+      }
     } finally {
-      if (_ownsDraft(generation)) {
-        setState(() {
-          _publishing = false;
-          _stage = null;
-        });
+      // Only now may a copy an upload was streaming from be deleted.
+      _publishInFlight = false;
+      if (published) _discardBaked();
+      final pending = List<ReelUploadPayload>.of(_discardAfterPublish);
+      _discardAfterPublish.clear();
+      for (final copy in pending) {
+        _discardCopy(copy);
       }
     }
   }
@@ -1251,6 +1504,25 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
           setState(() => _previewPlaying = playing);
         }
       },
+      // "Obróć" (ADR-235): on the preview's top-end corner, for a video whose
+      // track matrix the pick-time scan can rotate. A tap turns the picture
+      // at once; the decoder is untouched. The Text tool owns the preview's
+      // surface for dragging overlays, so the pill steps aside there: a
+      // caption dragged into that corner stays visible and draggable
+      // instead of sitting under the plate.
+      videoQuarterTurns: video ? _videoQuarterTurns : 0,
+      onRotate:
+          video &&
+              _orientation != null &&
+              !(_step == _ComposerStep.edit && _tool == _EditorTool.text)
+          ? _rotateVideo
+          : null,
+      rotateEnabled: _canRotate,
+      onVideoDisplaySizeChanged: (size) {
+        if (_ownsDraft(generation) && size != _videoDisplaySize) {
+          setState(() => _videoDisplaySize = size);
+        }
+      },
     );
     // The trimmer lives on the video: below it on narrow layouts, inside its
     // bottom band on wide ones. Only the Trim tool shows it, so it never
@@ -1351,6 +1623,7 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
         ],
         _Editor(
           media: media,
+          mediaSize: video ? _videoDisplaySize : null,
           backingAudio: _backingAudio,
           composition: _composition,
           caption: _caption,
@@ -1521,6 +1794,7 @@ class _ReelComposerScreenState extends State<ReelComposerScreen> {
 class _Editor extends StatelessWidget {
   const _Editor({
     required this.media,
+    required this.mediaSize,
     required this.backingAudio,
     required this.composition,
     required this.caption,
@@ -1547,6 +1821,11 @@ class _Editor extends StatelessWidget {
   });
 
   final ReelUploadPayload? media;
+
+  /// The previewed video's display size (after any pending "Obróć" turns);
+  /// null for photos. The position sliders follow the same pan limits the
+  /// canvas renders with, so an axis with nothing to pan into is disabled.
+  final Size? mediaSize;
   final ReelUploadPayload? backingAudio;
   final ReelComposition composition;
   final TextEditingController caption;
@@ -1575,6 +1854,11 @@ class _Editor extends StatelessWidget {
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     final palette = context.appPalette;
+    final panLimits = reelCropPanLimits(
+      ReelCompositionFrame.designSize,
+      composition.crop.scale.toDouble(),
+      mediaSize: mediaSize,
+    );
     return DecoratedBox(
       decoration: BoxDecoration(
         color: palette.surface,
@@ -1644,7 +1928,10 @@ class _Editor extends StatelessWidget {
                         ),
                 ),
               ),
-              if (composition.crop.scale == 1)
+              // Also while only one axis is free (a contained video opens
+              // its long axis first): zooming in further is what frees the
+              // other slider.
+              if (panLimits.dx <= 0 || panLimits.dy <= 0)
                 Text(
                   copy.text(
                     'Zoom in to reposition the frame.',
@@ -1675,9 +1962,7 @@ class _Editor extends StatelessWidget {
                           semanticFormatterCallback: (value) =>
                               '${(value * 100).round()}%',
                           onChanged:
-                              media == null ||
-                                  draftLocked ||
-                                  composition.crop.scale == 1
+                              media == null || draftLocked || panLimits.dx <= 0
                               ? null
                               : (value) => onComposition(
                                   composition.copyWith(
@@ -1712,9 +1997,7 @@ class _Editor extends StatelessWidget {
                           semanticFormatterCallback: (value) =>
                               '${(value * 100).round()}%',
                           onChanged:
-                              media == null ||
-                                  draftLocked ||
-                                  composition.crop.scale == 1
+                              media == null || draftLocked || panLimits.dy <= 0
                               ? null
                               : (value) => onComposition(
                                   composition.copyWith(
@@ -2401,6 +2684,25 @@ class _PositionSlider extends StatelessWidget {
 
 String _friendly(BuildContext context, Object error) {
   final copy = AppLocalizations.of(context);
+  if (error is ReelVideoRotationException) {
+    // Before the generic media match: this is not a size or format problem,
+    // and the "up to 100 MB" hint would send the author looking for one.
+    // Only a full disk can succeed on a plain retry; a vanished, changed or
+    // unrotatable source fails the same way every time, so the author is
+    // told the two ways out instead of being invited into a retry loop.
+    return switch (error.reason) {
+      ReelVideoRotationFailure.noSpace => copy.text(
+        'The rotated video could not be prepared: there is not enough free space. Free up some space and try again.',
+        'Nie udało się przygotować obróconego filmu: za mało wolnego miejsca. Zwolnij trochę miejsca i spróbuj ponownie.',
+      ),
+      ReelVideoRotationFailure.sourceMissing ||
+      ReelVideoRotationFailure.sourceChanged ||
+      ReelVideoRotationFailure.unsupported => copy.text(
+        'The rotated video could not be prepared. Choose the video again, or rotate it back to publish it as it was.',
+        'Nie udało się przygotować obróconego filmu. Wybierz film ponownie albo obróć go z powrotem, aby opublikować go bez zmian.',
+      ),
+    };
+  }
   if (error is StateError &&
       error.message == 'This Reel draft belongs to an ended sign-in session.') {
     return copy.text(

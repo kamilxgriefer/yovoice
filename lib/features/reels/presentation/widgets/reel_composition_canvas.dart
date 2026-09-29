@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/reels/data/models/reel_composition.dart';
+import 'package:yovoice/features/reels/presentation/reel_media_fit.dart';
 import 'package:yovoice/features/reels/presentation/reel_visuals.dart';
 
 typedef ReelLinkOpener = Future<void> Function(ReelLinkOverlay overlay);
@@ -52,6 +53,7 @@ class ReelCompositionFrame extends StatelessWidget {
     this.overlaySafeInsets = const EdgeInsets.fromLTRB(16, 16, 16, 132),
     this.fillViewport = false,
     this.overlayInsetsInViewport = false,
+    this.mediaSize,
     super.key,
   });
 
@@ -59,6 +61,12 @@ class ReelCompositionFrame extends StatelessWidget {
   final Widget media;
   final Widget? mediaForeground;
   final ReelLinkOpener? onOpenLink;
+
+  /// The VIDEO's display size, when [media] is a video laid out by
+  /// `ReelFittedVideo`. It only changes where a contained (non-portrait)
+  /// video may pan (see [reelCropPanLimits]); null — photos, and every
+  /// portrait clip whose fit is cover — keeps today's geometry exactly.
+  final Size? mediaSize;
 
   /// Composer-only: when set, text pills can be dragged (and pinched) on
   /// the canvas. Null — the feed — keeps pills paint-only exactly as before.
@@ -107,6 +115,7 @@ class ReelCompositionFrame extends StatelessWidget {
               child: ReelCompositionCanvas(
                 composition: composition,
                 media: media,
+                mediaSize: mediaSize,
                 mediaForeground: mediaForeground,
                 onOpenLink: onOpenLink,
                 onTextOverlayChanged: onTextOverlayChanged,
@@ -127,28 +136,43 @@ class ReelCompositionFrame extends StatelessWidget {
   );
 }
 
-Offset reelCropTranslation(Size size, ReelCropTransform crop) {
-  final scale = crop.scale.clamp(1.0, 8.0).toDouble();
-  final maxPanX = math.max(0.0, (size.width * (scale - 1)) / 2);
-  final maxPanY = math.max(0.0, (size.height * (scale - 1)) / 2);
+/// The media translation a stored crop recipe asks for in a canvas of
+/// [size]. Offsets are normalized to the pan limits of the shared fit rule
+/// ([reelCropPanLimits]): identical to before for cover media and images
+/// ([mediaSize] null), on the fitted basis for a contained video.
+Offset reelCropTranslation(
+  Size size,
+  ReelCropTransform crop, {
+  Size? mediaSize,
+}) {
+  final limits = reelCropPanLimits(
+    size,
+    crop.scale.toDouble(),
+    mediaSize: mediaSize,
+  );
   return Offset(
-    crop.offsetX.clamp(-1.0, 1.0).toDouble() * maxPanX,
-    crop.offsetY.clamp(-1.0, 1.0).toDouble() * maxPanY,
+    crop.offsetX.clamp(-1.0, 1.0).toDouble() * limits.dx,
+    crop.offsetY.clamp(-1.0, 1.0).toDouble() * limits.dy,
   );
 }
 
 /// Canonical non-destructive renderer used by both the local composer and the
 /// published feed.
 ///
-/// The media child must fill its incoming bounds (normally with BoxFit.cover).
-/// Crop offsets are normalized to the actual spare pixels introduced by zoom,
-/// so every valid recipe remains edge-to-edge at every viewport size. Overlay
-/// positions are also normalized, then clamped after measuring the real child
-/// to keep text and links inside the safe canvas at 200% text scale.
+/// The media child must fill its incoming bounds: a photo with BoxFit.cover,
+/// a video through `ReelFittedVideo` — cover for upright clips, or the whole
+/// picture contained over a blurred cover copy of itself (ADR-235), which is
+/// still edge-to-edge. Crop offsets are normalized to the actual spare pixels
+/// introduced by zoom — on the fitted basis for a contained video (pass its
+/// [mediaSize]) — so every valid recipe remains edge-to-edge at every
+/// viewport size. Overlay positions are also normalized, then clamped after
+/// measuring the real child to keep text and links inside the safe canvas at
+/// 200% text scale.
 class ReelCompositionCanvas extends StatelessWidget {
   const ReelCompositionCanvas({
     required this.composition,
     required this.media,
+    this.mediaSize,
     this.mediaForeground,
     this.onOpenLink,
     this.onTextOverlayChanged,
@@ -160,6 +184,9 @@ class ReelCompositionCanvas extends StatelessWidget {
 
   final ReelComposition composition;
   final Widget media;
+
+  /// See [ReelCompositionFrame.mediaSize].
+  final Size? mediaSize;
   final Widget? mediaForeground;
   final ReelLinkOpener? onOpenLink;
   final ValueChanged<ReelTextOverlay>? onTextOverlayChanged;
@@ -173,7 +200,11 @@ class ReelCompositionCanvas extends StatelessWidget {
       builder: (context, constraints) {
         final size = Size(constraints.maxWidth, constraints.maxHeight);
         final scale = composition.crop.scale.clamp(1.0, 8.0).toDouble();
-        final pan = reelCropTranslation(size, composition.crop);
+        final pan = reelCropTranslation(
+          size,
+          composition.crop,
+          mediaSize: mediaSize,
+        );
         return ClipRect(
           child: Stack(
             fit: StackFit.expand,

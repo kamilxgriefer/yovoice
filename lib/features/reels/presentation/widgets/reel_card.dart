@@ -23,9 +23,11 @@ import 'package:yovoice/features/reels/data/models/reel.dart';
 import 'package:yovoice/features/reels/data/models/reel_composition.dart';
 import 'package:yovoice/features/reels/data/services/reel_service.dart';
 import 'package:yovoice/features/reels/presentation/reel_friend_relationship_store.dart';
+import 'package:yovoice/features/reels/presentation/reel_video_backdrop_policy.dart';
 import 'package:yovoice/features/reels/presentation/sharing/reel_share.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_composition_canvas.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_engagement_bar.dart';
+import 'package:yovoice/features/reels/presentation/widgets/reel_fitted_video.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_playback_coordinator.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_progress_row.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_overlay_measure.dart';
@@ -2356,6 +2358,9 @@ class _DefaultReelVideoPlayerState extends State<_DefaultReelVideoPlayer> {
   @override
   void initState() {
     super.initState();
+    // Decide blur or black while the decoder is still opening, so a
+    // landscape Yeel never switches from black bands to blur on screen.
+    ReelVideoBackdropPolicy.instance.ensureResolved();
     _initialize();
   }
 
@@ -2584,14 +2589,14 @@ class _DefaultReelVideoPlayerState extends State<_DefaultReelVideoPlayer> {
             overlayInsetsInViewport: true,
             overlaySafeInsets: widget.overlaySafeInsets,
             composition: widget.reel.composition,
-            media: FittedBox(
-              fit: BoxFit.cover,
-              child: SizedBox(
-                width: controller.value.size.width,
-                height: controller.value.size.height,
-                child: VideoPlayer(controller),
-              ),
+            // The shared fit rule (ADR-235): today's cover for upright clips,
+            // the whole picture over a blurred copy of itself otherwise —
+            // exactly what the author saw in the composer.
+            media: ReelFittedVideo(
+              size: controller.value.size,
+              video: () => VideoPlayer(controller),
             ),
+            mediaSize: controller.value.size,
             mediaForeground: widget.foreground,
             onOpenLink: (overlay) =>
                 launchUrl(overlay.uri, mode: LaunchMode.externalApplication),

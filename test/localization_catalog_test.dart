@@ -56,8 +56,8 @@ void main() {
           .toSet();
       expect(AppLocalizations.supportedLocales, hasLength(43));
       expect(momentsCreationTranslations.keys.toSet(), translatedLocaleKeys);
-      expect(momentsCreationTranslationKeys.toSet(), hasLength(156));
-      expect(momentsCreationTranslationKeys, hasLength(156));
+      expect(momentsCreationTranslationKeys.toSet(), hasLength(163));
+      expect(momentsCreationTranslationKeys, hasLength(163));
       expect(appTranslationKeys, containsAll(momentsCreationTranslationKeys));
       for (final localeKey in translatedLocaleKeys) {
         final entries = momentsCreationTranslations[localeKey]!;
@@ -321,6 +321,17 @@ void main() {
         "Quiet": "Cicho",
         "Good level": "Dobry poziom",
         "Input level unavailable": "Poziom wejścia niedostępny",
+        // "Obróć" on the composer video (ADR-235). The first key is a stable
+        // contextual key: "Rotate" alone means different things elsewhere.
+        'reels.composer.rotate': 'Obróć',
+        'Rotate video 90° clockwise': 'Obróć film o 90° w prawo',
+        'Rotated {degrees}°': 'Obrócono o {degrees}°',
+        'The rotated video could not be prepared. Choose the video again, or rotate it back to publish it as it was.':
+            'Nie udało się przygotować obróconego filmu. Wybierz film ponownie albo obróć go z powrotem, aby opublikować go bez zmian.',
+        'The rotated video could not be prepared: there is not enough free space. Free up some space and try again.':
+            'Nie udało się przygotować obróconego filmu: za mało wolnego miejsca. Zwolnij trochę miejsca i spróbuj ponownie.',
+        'Rotating reset the crop.': 'Obrót zresetował kadr.',
+        'Undo': 'Cofnij',
       };
       expect(copyPairs.keys.toSet(), momentsCreationTranslationKeys.toSet());
       for (final locale in AppLocalizations.supportedLocales) {

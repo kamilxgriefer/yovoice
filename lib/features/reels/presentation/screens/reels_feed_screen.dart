@@ -25,6 +25,7 @@ import 'package:yovoice/features/reels/data/models/reel_composition.dart';
 import 'package:yovoice/features/reels/data/services/reel_service.dart';
 import 'package:yovoice/features/reels/presentation/reel_friend_relationship_store.dart';
 import 'package:yovoice/features/reels/presentation/reel_engagement_copy.dart';
+import 'package:yovoice/features/reels/presentation/reel_video_backdrop_policy.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_card.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_card_skeleton.dart';
 import 'package:yovoice/features/reels/presentation/widgets/reel_comments_view.dart';
@@ -283,6 +284,9 @@ class _ReelsFeedScreenState extends State<ReelsFeedScreen>
   @override
   void initState() {
     super.initState();
+    // Blur or black for non-portrait videos is decided as Yeels opens, long
+    // before the first decoder is ready (ADR-235).
+    ReelVideoBackdropPolicy.instance.ensureResolved();
     _syncFriendRelationships();
     WidgetsBinding.instance.addObserver(this);
     widget.isVisible?.addListener(_handleHostVisibilityChanged);

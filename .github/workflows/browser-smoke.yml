@@ -42,6 +42,7 @@ jobs:
           test/web_audio_capture_browser_test.dart
           test/image_crop_test.dart
           test/room_cover_editor_test.dart
+          test/reel_video_orientation_browser_test.dart
 
       - name: Build the release web artifact
         run: >-

@@ -8,9 +8,13 @@ import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/features/reels/data/models/reel_composition.dart';
 import 'package:yovoice/features/reels/data/services/reel_upload.dart';
+import 'package:yovoice/features/reels/presentation/reel_media_fit.dart';
+import 'package:yovoice/features/reels/presentation/reel_video_backdrop_policy.dart';
 import 'reel_composition_canvas.dart';
+import 'reel_fitted_video.dart';
 import 'reel_local_video_controller.dart';
 import 'reel_playback_coordinator.dart';
+import 'reel_rotate_pill.dart';
 
 /// Builds the decoder for a picked local file. The default is the platform
 /// controller; tests supply a deterministic one without a native player.
@@ -19,26 +23,35 @@ typedef ReelVideoControllerFactory =
 
 /// Maps pointer movement to the existing stored crop recipe. No new wire
 /// interpretation: at 1× there are no spare zoom pixels to pan into.
+///
+/// [mediaSize] is a video's display size: the pan limits come from the same
+/// fit rule the canvas renders with ([reelCropPanLimits]), so a contained
+/// video pans only where its zoomed picture overflows the frame. Null
+/// (photos) keeps the cover limits exactly.
 ReelCropTransform reelCropFromGesture({
   required ReelCropTransform initial,
   required Size viewport,
   required Offset initialFocalPoint,
   required Offset focalPoint,
   required double gestureScale,
+  Size? mediaSize,
 }) {
   final scale = (initial.scale * gestureScale).clamp(1.0, 8.0);
   final ratio = scale / initial.scale;
   final center = viewport.center(Offset.zero);
-  final originalPan = reelCropTranslation(viewport, initial);
+  final originalPan = reelCropTranslation(
+    viewport,
+    initial,
+    mediaSize: mediaSize,
+  );
   final pan =
       (originalPan - (initialFocalPoint - center)) * ratio +
       (focalPoint - center);
-  final maxX = viewport.width * (scale - 1) / 2;
-  final maxY = viewport.height * (scale - 1) / 2;
+  final limits = reelCropPanLimits(viewport, scale, mediaSize: mediaSize);
   return ReelCropTransform(
     scale: scale,
-    offsetX: maxX <= 0 ? 0 : (pan.dx / maxX).clamp(-1.0, 1.0),
-    offsetY: maxY <= 0 ? 0 : (pan.dy / maxY).clamp(-1.0, 1.0),
+    offsetX: limits.dx <= 0 ? 0 : (pan.dx / limits.dx).clamp(-1.0, 1.0),
+    offsetY: limits.dy <= 0 ? 0 : (pan.dy / limits.dy).clamp(-1.0, 1.0),
   );
 }
 
@@ -58,6 +71,10 @@ class ReelDraftPreview extends StatefulWidget {
     this.onPlayingChanged,
     this.onPositionChanged,
     this.videoControllerFactory,
+    this.videoQuarterTurns = 0,
+    this.onRotate,
+    this.rotateEnabled = true,
+    this.onVideoDisplaySizeChanged,
     super.key,
   });
 
@@ -82,6 +99,23 @@ class ReelDraftPreview extends StatefulWidget {
 
   /// Optional test/platform override for the local video decoder.
   final ReelVideoControllerFactory? videoControllerFactory;
+
+  /// The composer's pending "Obróć" rotation, in clockwise quarter turns.
+  /// A change only rebuilds: the picture turns in a RotatedBox and the fit
+  /// rule is re-evaluated on the turned size; the decoder is untouched.
+  final int videoQuarterTurns;
+
+  /// When set, the "Obróć" pill sits in the preview's top-end corner once the
+  /// decoder is ready. The composer passes it only for a rotatable video.
+  final VoidCallback? onRotate;
+
+  /// False keeps the pill visible but disabled (publishing, reserved).
+  final bool rotateEnabled;
+
+  /// The video's display size after [videoQuarterTurns] (null while no
+  /// decoder is ready), reported after initialization and after every turn,
+  /// so the composer's crop sliders use the same pan limits as the canvas.
+  final ValueChanged<Size?>? onVideoDisplaySizeChanged;
 
   @override
   State<ReelDraftPreview> createState() => ReelDraftPreviewState();
@@ -115,6 +149,8 @@ class ReelDraftPreviewState extends State<ReelDraftPreview>
   int _nextBackingAudioPickerToken = 0;
   int? _backingAudioPickerToken;
   bool _backingAudioPickerFinished = false;
+  Size? _reportedDisplaySize;
+  bool _displaySizeReportScheduled = false;
 
   bool get isPlaying => _playback?.isPlaying ?? false;
 
@@ -133,6 +169,9 @@ class ReelDraftPreviewState extends State<ReelDraftPreview>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // Decide blur or black while the decoder is still opening, so a
+    // contained video never switches from black bands to blur on screen.
+    ReelVideoBackdropPolicy.instance.ensureResolved();
     unawaited(_prepare());
   }
 
@@ -152,7 +191,13 @@ class ReelDraftPreviewState extends State<ReelDraftPreview>
         old.audioTrimStartMs != next.audioTrimStartMs ||
         old.originalAudioVolume != next.originalAudioVolume ||
         old.backingAudioVolume != next.backingAudioVolume;
+    if (oldWidget.videoQuarterTurns != widget.videoQuarterTurns) {
+      _scheduleDisplaySizeReport();
+    }
     if (sourceChanged) {
+      // The composer forgets the old size with the old media; the new
+      // decoder's size must be reported even when it happens to be equal.
+      _reportedDisplaySize = null;
       _cancelAutomaticResume();
       unawaited(_prepare());
     } else if (backingAudioChanged || audioRecipeChanged) {
@@ -292,6 +337,7 @@ class ReelDraftPreviewState extends State<ReelDraftPreview>
           _preparing = false;
           _quiet = false;
         });
+        _scheduleDisplaySizeReport();
         unawaited(_resumeIfEligible());
       }
     } catch (_) {
@@ -301,8 +347,37 @@ class ReelDraftPreviewState extends State<ReelDraftPreview>
           _preparing = false;
           _quiet = false;
         });
+        _scheduleDisplaySizeReport();
       }
     }
+  }
+
+  /// The video's size as laid out: decoder size turned by the pending
+  /// rotation, or null while no decoder is ready.
+  Size? get _videoDisplaySize {
+    final video = _video;
+    if (widget.media.mediaKind != ReelMediaKind.video ||
+        video == null ||
+        !video.value.isInitialized) {
+      return null;
+    }
+    return reelDisplaySize(video.value.size, widget.videoQuarterTurns);
+  }
+
+  void _scheduleDisplaySizeReport() {
+    if (widget.onVideoDisplaySizeChanged == null ||
+        _displaySizeReportScheduled) {
+      return;
+    }
+    _displaySizeReportScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _displaySizeReportScheduled = false;
+      if (!mounted) return;
+      final size = _videoDisplaySize;
+      if (size == _reportedDisplaySize) return;
+      _reportedDisplaySize = size;
+      widget.onVideoDisplaySizeChanged?.call(size);
+    });
   }
 
   void _onVideoTick() {
@@ -568,15 +643,22 @@ class ReelDraftPreviewState extends State<ReelDraftPreview>
             ),
           )
         : video?.value.isInitialized == true
-        ? FittedBox(
-            fit: BoxFit.cover,
-            child: SizedBox(
-              width: video!.value.size.width,
-              height: video.value.size.height,
-              child: VideoPlayer(video),
-            ),
+        ? ReelFittedVideo(
+            size: video!.value.size,
+            quarterTurns: widget.videoQuarterTurns,
+            video: () => VideoPlayer(video),
           )
         : ColoredBox(color: palette.surfaceSunken);
+    // Photos pass no size: they keep today's cover geometry exactly.
+    final displaySize = _videoDisplaySize;
+    final decoderReady =
+        widget.media.mediaKind == ReelMediaKind.video &&
+        video?.value.isInitialized == true;
+    final showRotate =
+        widget.onRotate != null &&
+        decoderReady &&
+        !_failed &&
+        !(_preparing && !_quiet);
     return ClipRRect(
       borderRadius: BorderRadius.circular(24),
       child: LayoutBuilder(
@@ -610,12 +692,14 @@ class ReelDraftPreviewState extends State<ReelDraftPreview>
                               initialFocalPoint: _gestureFocal,
                               focalPoint: details.localFocalPoint,
                               gestureScale: details.scale,
+                              mediaSize: displaySize,
                             ),
                           );
                         },
                   child: ReelCompositionFrame(
                     composition: widget.composition,
                     media: media,
+                    mediaSize: displaySize,
                     onTextOverlayChanged: widget.onTextOverlayChanged,
                     onLinkOverlayChanged: widget.onLinkOverlayChanged,
                   ),
@@ -657,6 +741,16 @@ class ReelDraftPreviewState extends State<ReelDraftPreview>
                             : Icons.play_arrow_rounded,
                       ),
                     ),
+                  ),
+                ),
+              if (showRotate)
+                PositionedDirectional(
+                  top: ReelRotatePill.inset,
+                  end: ReelRotatePill.inset,
+                  child: ReelRotatePill(
+                    previewWidth: viewport.width,
+                    quarterTurns: widget.videoQuarterTurns,
+                    onTap: widget.rotateEnabled ? widget.onRotate : null,
                   ),
                 ),
             ],

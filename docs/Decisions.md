@@ -17852,3 +17852,139 @@ time out the create itself.
   malformed`, added to the Pages alert metrics.
 - Deploy: 18 functions (DEPLOYMENT.md, Premium Pages, "ADR-234 deploy"),
   `managePageV1` last; rules for the explicit deny.
+
+## ADR-235: Yeel videos fit by one shared rule, and "Obróć" rotates the file's track matrix, not the recipe
+
+**Status:** accepted 2026-09-29 (owner decisions A and B in chat; C, an
+in-app camera, is later and out of scope).
+
+**Context.** A Pixel pointed down saved an upright shot as a 1920×1080 file
+with an identity track matrix, so the cat lay on its side. "Nagraj film" is
+the system camera through image_picker, nothing transcodes, and the server
+probe only validates. Both surfaces then drew every video with a hard-coded
+`BoxFit.cover` in a portrait frame, showing only the middle ~31% of it —
+sideways and heavily zoomed, in the composer and in the feed alike.
+
+**Decision.**
+- **One fit rule** (`reel_media_fit.dart`), used by the composer preview, the
+  feed player, the canvas pan, the crop gesture and the crop sliders: cover
+  while cover still shows at least 72% of the picture, measured against the
+  canonical 9:16 recipe frame (never the host viewport), otherwise contain.
+  Null, zero or non-finite sizes stay cover. Every upright phone clip
+  (9:16, 9:20, 9:22 screen recordings, 3:4) keeps today's exact widget tree;
+  4:5, 1:1, 16:9 and wider are shown whole. Photos are untouched.
+- **Contain** (`ReelFittedVideo`) draws black, then a blurred cover copy of
+  the same picture (σ 18 in the 390-wide canvas units, `TileMode.mirror`),
+  a 40% black scrim, and the whole video contained in the full canvas —
+  tightly constrained, so a low-resolution clip is scaled UP too (a
+  `Center`ed FittedBox keeps a clip smaller than the canvas at its own
+  size; the web probe caught it); the backdrop is excluded
+  from semantics and hit testing and lives inside the canvas's filter and
+  zoom. The copy is a second `VideoPlayer` on the SAME controller — the same
+  texture, so no second decoder or download. Policy
+  (`ReelVideoBackdropPolicy`): blurred on iOS/macOS and on Android with more
+  than 4 GB of reported RAM (`totalMem`, so every nominal 4 GB phone stays
+  black: entry GPUs are common there and there is no remote switch) and no
+  memory pressure when it resolves (device_info_plus's `isLowRamDevice` is
+  `MemoryInfo.lowMemory`); the feed, each feed player and the composer
+  start that probe as they open, so a landscape Yeel's first frame already
+  has its final backdrop. Black on web, where video_player_web's single
+  `<video>` element cannot be duplicated or filtered — pending Kamil's
+  sign-off; a `requestVideoFrameCallback` canvas mirror is the follow-up. A
+  poster/still frame was rejected (no thumbnail
+  pipeline, a new media field breaks exact-shape readers, `toImage` on
+  external textures is unreliable, a frozen frame behind moving video reads
+  as a glitch).
+- **Contain pans on the fitted basis:** `max(0, (fitted·s − frame)/2)` per
+  axis; cover and photos keep `frame·(s − 1)/2` exactly. There is no data
+  telling legacy recipes from new ones, so legacy zoomed landscape Yeels
+  render as whole picture × scale (still edge-to-edge thanks to the
+  backdrop), not as a 3.16× cover jump.
+- **"Obróć"** — a pill in the preview's top-end corner (36 px plate in a
+  48 px target, 4 px inset, dense text plate + hairline, icon-only when the
+  label would take more than 60% of the preview). Each tap turns the
+  preview a quarter turn clockwise in a `RotatedBox` (the decoder is not
+  touched), re-evaluates the fit on the turned size and resets the crop;
+  when that crop was not the default a SnackBar says so and its Undo takes
+  the turn back with the crop. Hover, press and focus are drawn on the
+  36 px plate (the focus ring stays inside the preview's rounded corner),
+  and the pill steps aside while the Text tool is active, so a caption
+  dragged into that corner stays visible and draggable. It is offered only
+  when a read-only pick-time scan finds every video track's matrix to be
+  one of the four canonical rotations. On web the scan (and the pick's
+  header read) use `Range` requests on the picker's blob URL — cross_file
+  re-downloads the whole object URL on every `openRead` — with one
+  whole-object fetch per scan where a browser ignores `Range`.
+- **The rotation is baked into the file, not the recipe.** At Publish, only
+  for turns ≠ 0 and before any reservation, under "Preparing…", the
+  composer writes the canonical 36-byte matrix
+  (`(r + taps) mod 4`, Apple's standardized tx/ty — exactly what an iPhone
+  writes) into every `vide` trak's `tkhd` of a LOCAL COPY: io copies to
+  `<temp>/yeel-rotation/`, patches with positioned writes
+  (`FileMode.append` = O_RDWR without O_APPEND), re-scans and asserts the
+  new turns, the length and the 64-byte header; web and io-without-a-file
+  patch the bytes the byte transport already copies for `putData`. Size,
+  content type, header and duration are unchanged, so the reservation,
+  Storage upload, lost-ACK recovery and the finalize probe need no change.
+  The copy is reused for retries while it is intact (a copy the OS trimmed
+  from the cache directory is baked again) and deleted after success, on
+  new media, on identity change and on discard (never while an upload may
+  read it); copies older than 24 h are swept when the composer opens. Every
+  bake failure is a `ReelVideoRotationException`; only a full disk says
+  "try again", every other reason asks to choose the video again or rotate
+  it back.
+
+**Reasoning.** A recipe field would be refused: `ReelComposition.fromWire`,
+`ReelCropTransform.fromWire` and the server's `exactObject` check exact key
+sets (ADR-187), so an added key makes every installed build reject the whole
+Yeel — and even a tolerant future reader would leave old builds and cached
+web bundles showing it sideways. A patched matrix is the structure iPhones
+already upload (3 of the 5 production videos in the diagnosis carry a 90°
+matrix and play upright everywhere): AVFoundation's `presentationSize`,
+ExoPlayer's `parseTkhd` rotationDegrees and Chrome's `videoWidth`/drawn
+frames all apply it, verified on the committed goldens (AVFoundation and
+Chrome oracles, red marker at TR/BR/BL for 1/2/3 turns). Transcoding was
+rejected: no pipeline, and slow on a phone. The fit rule depends on the clip
+alone so the composer and every feed host always agree.
+
+**Consequences.**
+- No server, rules, schema or deploy change; the probe gained only a test
+  proving patched files probe identically. Shipping needs an app build for
+  the pill and the contain fit; the rotation itself then reaches every
+  viewer — old builds included — through the file bytes.
+- New direct dependency line `device_info_plus: 12.3.0` (already resolved
+  and pinned transitively; pubspec.lock changes only its classification).
+- Not rotatable, so no pill: WebM, `cmov`, mirrored/scaled/perspective
+  matrices (platforms already disagree on them: media3 turns most mirrored
+  matrices into a plain rotation and drops the mirror, and treats scaled
+  ones as 0°, while AVFoundation applies them exactly), a video track
+  header without a width or height, a non-identity movie matrix, malformed
+  or over-budget files. The top-level walk and the one-tkhd/mdia/hdlr rule
+  are exactly as strict as the server's trusted probe, so they never hide
+  the pill from a file that could be published.
+- Known limits: old builds still show UNROTATED legacy landscape Yeels at the
+  31% cover crop until they update (fixing stored objects would be a
+  production data write); 4:5 clips (70.3%) are contained with thin bands
+  (a 0.70 threshold would keep them cover — owner to confirm); web draws
+  black bands instead of the blur. A release Flutter web build in Playwright
+  Chromium showed the composer's `RotatedBox` turning the real `<video>`
+  platform view (marker TL/TR/BR/BL for 0–3 turns) and the feed drawing the
+  rot1 golden upright; Safari and Firefox are unverified. An iOS 26.5
+  simulator harness running `ReelFittedVideo` verbatim over real
+  AVFoundation playback showed the contained clip over its same-texture
+  blur, the composer's one-tap `RotatedBox` matching the published rot1
+  file, and a 180° file, all correct while playing. The same double draw on
+  Android's ImageReader backend (Pixel, a low-end 4 GB phone) is unverified.
+  Five real-world non-camera files (an Android screen recording with a
+  `meta` track, an Apple screen recording, three ffmpeg MP4s) scan, rotate
+  and play rotated in AVFoundation and Chromium; real camera files do not
+  exist in the repo and remain to be checked on the devices.
+- Tests: `test/reel_video_orientation_test.dart` (+ the dart2js twin in the
+  browser smoke), `reel_video_rotation_bake_test.dart`,
+  `reel_media_fit_test.dart`, `reel_fitted_video_test.dart`,
+  `reel_fit_agreement_test.dart`, `reel_composer_rotate_test.dart`,
+  `functions/test/reels_probe.test.js`,
+  `browser-tests/tests/reel_rotation_matrix.spec.js`; fixtures from
+  `tool/fixtures/generate_reel_rotation_fixtures.swift`, goldens from
+  `tool/reel_rotate_fixture.dart`, Apple oracle
+  `tool/fixtures/verify_reel_rotation_avfoundation.swift`.

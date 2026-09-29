@@ -183,6 +183,16 @@ the primary Voice Moment or Yeel, so competing audio does not overlap. Yeels
 voice publishing probes backend support and fails honestly when that coordinated
 backend is not yet deployed.
 
+Yeel videos fit their frame by one rule shared by the composer and every
+feed host: cover while it still shows at least 72% of the picture (every
+upright phone clip), otherwise the whole video over a blurred copy of itself
+(black bands on web — pending Kamil's sign-off — and on Android phones with
+4 GB RAM or less). The composer's **Obróć** pill, in
+the video's top corner, turns a video a quarter turn clockwise per tap; at
+Publish the rotation is written into the uploaded file's track matrix, so
+iOS, Android and web viewers — older builds included — play it upright
+([ADR-235](Decisions.md#adr-235-yeel-videos-fit-by-one-shared-rule-and-obróć-rotates-the-files-track-matrix-not-the-recipe)).
+
 **Moments is a primary destination** (source `cef05e6`, deployed
 2026-08-20). Friends keeps its existing screen and state outside the five-item
 mobile dock. Voice discovery is a bounded popular pool weighted by engagement,

@@ -1,7 +1,9 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/features/reels/data/models/reel.dart';
 import 'package:yovoice/features/reels/data/models/reel_composition.dart';
+import 'package:yovoice/features/reels/presentation/widgets/reel_composition_canvas.dart';
 
 ReelComposition _videoComposition({
   bool audio = false,
@@ -124,5 +126,64 @@ void main() {
       }),
       throwsFormatException,
     );
+  });
+
+  group('canvas pan on the shared fit (ADR-235)', () {
+    const crop = ReelCropTransform(scale: 2, offsetX: 0, offsetY: .5);
+    const canvas = ReelCompositionFrame.designSize;
+
+    Future<Offset> translation(WidgetTester tester, {Size? mediaSize}) async {
+      await tester.pumpWidget(
+        Directionality(
+          textDirection: TextDirection.ltr,
+          child: OverflowBox(
+            alignment: Alignment.topLeft,
+            minWidth: 0,
+            minHeight: 0,
+            maxWidth: double.infinity,
+            maxHeight: double.infinity,
+            child: SizedBox.fromSize(
+              size: canvas,
+              child: ReelCompositionCanvas(
+                composition: const ReelComposition(
+                  originalAudioVolume: 0,
+                  crop: crop,
+                ),
+                media: const ColoredBox(color: Colors.black),
+                mediaSize: mediaSize,
+              ),
+            ),
+          ),
+        ),
+      );
+      final vector = tester
+          .widget<Transform>(
+            find.byKey(const ValueKey('reel-composition-media-translation')),
+          )
+          .transform
+          .getTranslation();
+      return Offset(vector.x, vector.y);
+    }
+
+    testWidgets('a contained 16:9 video pans on the fitted basis', (
+      tester,
+    ) async {
+      final pan = await translation(tester, mediaSize: const Size(1920, 1080));
+      // 2× leaves the 219 px tall picture inside the 693 px frame: no
+      // vertical pan however the recipe asks.
+      expect(pan, Offset.zero);
+    });
+
+    testWidgets('a portrait video pans exactly as without a size', (
+      tester,
+    ) async {
+      final none = await translation(tester);
+      final portrait = await translation(
+        tester,
+        mediaSize: const Size(1080, 1920),
+      );
+      expect(portrait, none);
+      expect(none.dy, closeTo(.5 * canvas.height * (2 - 1) / 2, 1e-9));
+    });
   });
 }

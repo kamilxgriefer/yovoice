@@ -27,6 +27,7 @@ class AccessibleTapRegion extends StatefulWidget {
     this.paintsIndicators = true,
     this.onLongPress,
     this.customSemanticsActions,
+    this.semanticValue,
     super.key,
   });
 
@@ -88,6 +89,10 @@ class AccessibleTapRegion extends StatefulWidget {
   /// exactly as it was without them.
   final Map<CustomSemanticsAction, VoidCallback>? customSemanticsActions;
 
+  /// The node's current value, read after its label (for example "Rotated
+  /// 90°" on a rotate control). Null leaves the node exactly as before.
+  final String? semanticValue;
+
   @override
   State<AccessibleTapRegion> createState() => _AccessibleTapRegionState();
 }
@@ -121,6 +126,7 @@ class _AccessibleTapRegionState extends State<AccessibleTapRegion> {
       enabled: widget.onTap != null,
       selected: widget.selected,
       label: widget.semanticLabel,
+      value: widget.semanticValue,
       onTap: widget.onTap,
       customSemanticsActions: widget.customSemanticsActions,
       child: Material(

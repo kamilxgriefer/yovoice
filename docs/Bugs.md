@@ -5,6 +5,45 @@ Update this whenever a bug is found or fixed. For "features not built
 yet," see [Roadmap.md](Roadmap.md) instead; this file is specifically
 about things that are broken, risky, or need verification.
 
+## FIXED IN SOURCE — a sideways, 31%-zoomed Yeel from "Nagraj film" (2026-09-29, next build, ADR-235)
+
+Found by Kamil: a cat filmed with a Pixel pointed down appeared lying on its
+side and heavily zoomed, in the composer and in the feed.
+
+- **Cause.** The system camera saved the upright shot as a 1920×1080 file
+  with an identity track matrix (the phone could not tell which way was up),
+  and both surfaces drew every video with a hard-coded `BoxFit.cover` in a
+  portrait frame, so only the middle ~31% of the picture was visible.
+- **Fixed in source.** A non-portrait video (less than 72% visible under
+  cover) is now shown whole over a blurred copy of itself (black on web —
+  pending Kamil's sign-off — and on Android phones with 4 GB RAM or less),
+  by one shared rule, so composer and feed agree; upright clips are drawn
+  exactly as before. "Obróć" on the composer video turns it a quarter turn
+  per tap, and Publish writes that rotation into the uploaded file's track
+  matrix, so every viewer — iOS, Android, web, old builds included — plays
+  it upright.
+- **Also fixed in source (review of the change, same day).** A web pick's
+  header read copied the whole video out of its object URL (cross_file
+  re-downloads the URL for every `openRead`), and the new rotation scan
+  would have done that once per box header — a fresh browser context stops
+  answering after ~2 GB of such copies. Web picks are now read with `Range`
+  requests (one whole fetch per scan where a browser ignores `Range`). A
+  rotation failure now names its remedy (free space, or choose the video
+  again / rotate it back) instead of always saying "Try again", a copy the
+  OS trimmed between attempts is baked again, the crop a tap resets can be
+  restored with Undo, and the pill steps aside in the Text tool.
+- **Still open.** Yeels already published sideways stay sideways on builds
+  without the fix (shown at the old 31% crop there) and are shown whole but
+  sideways on new builds; re-patching stored objects is a production data
+  write that needs Kamil's approval. Web shows black bands, not the blur
+  (pending Kamil's sign-off). Safari, Firefox, the full app on the iOS
+  simulator and the Pixel are not yet verified by eye (Chromium web is: a
+  release web build of the real preview and fitted video; so is the fitted
+  video itself over real AVFoundation playback in an iOS simulator harness,
+  see ADR-235), nor are real camera files
+  (Pixel, Samsung, iPhone HEVC) — only synthetic fixtures and five
+  real-world non-camera files have been scanned, rotated and played.
+
 ## FIXED IN SOURCE — Premium Pages after build 40 (2026-09-29, next build, ADR-234)
 
 Found by Kamil on build 40 and in the review of the ADR-234 change.

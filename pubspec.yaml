@@ -51,6 +51,11 @@ dependencies:
   # MediaRecorder blob itself. Already resolved transitively via record_web
   # at the version pubspec.lock pins, so this adds no new resolution.
   web: ^1.1.1
+  # Direct, because the Yeel video backdrop policy reads Android's low-RAM
+  # flag and total RAM (ADR-235). Already resolved transitively and pinned to
+  # this exact version in dependency_overrides below, so this names what the
+  # code imports and adds no new resolution.
+  device_info_plus: 12.3.0
   firebase_app_check: ^0.4.6
   firebase_messaging: ^16.5.0
   flutter_local_notifications: ^22.2.0

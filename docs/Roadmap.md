@@ -14,6 +14,40 @@ someone decide what to pick up next.
 
 ---
 
+## Next build — Yeels: whole non-portrait videos and "Obróć" (ADR-235) — source 2026-09-29
+
+**Status: source only, not yet in a build; NOTHING TO DEPLOY** (no server,
+rules or schema change).
+
+- Non-portrait Yeel videos are shown whole over a blurred copy of themselves
+  (black on web — pending Kamil's sign-off, a canvas mirror is the
+  follow-up — and on Android phones with 4 GB RAM or less); upright clips
+  look exactly as before; composer and feed use one fit rule. Photos
+  unchanged.
+- "Obróć" in the composer's video corner turns the video a quarter turn per
+  tap; Publish bakes it into the file's track matrix (a same-size local
+  copy), so every viewer plays it upright, old builds included.
+- Verified by unit/widget tests, the dart2js twin, the functions probe test,
+  the AVFoundation and Chrome oracles on the goldens, harness renders of the
+  Pixel cat and a release Flutter web build of the real preview in
+  Playwright Chromium, plus five real-world non-camera files (an Android
+  screen recording with a `meta` track, an Apple screen recording, three
+  ffmpeg MP4s) scanned, rotated and checked in AVFoundation and Chromium,
+  and an iOS 26.5 simulator harness running the app's `ReelFittedVideo`
+  verbatim over real AVFoundation playback (a landscape clip contained over
+  its same-texture blur, the composer's one-tap `RotatedBox` matching the
+  published rot1 file, a 180° file — all correct while playing);
+  **not verified in the full app on a device or simulator, in Safari or
+  Firefox, nor with real camera files (Pixel, Samsung, iPhone HEVC).**
+  Before the build: the full app on the iOS simulator and the Pixel
+  (composer taps 0–4, publish, feed, 180°, frame time with the blur on and
+  forced black — the Android ImageReader double draw above all), Safari
+  desktop and iOS.
+- **Owner to confirm (one sheet):** black bands on web instead of the blur;
+  4:5 clips (70.3%) contained at the 0.72 threshold (0.70 would keep them
+  cover); a tap resets the crop (now with Undo) and a contained clip's
+  vertical position slider opens only past ~3.16× zoom.
+
 ## YO Voice 3.5.0 (40) — Premium Pages, the Treści tab (ADR-231..233) — 2026-09-28
 
 **Status: on `main` as `3.5.0+40`.** Pages landed as `a6d5bd50`..`ee18d82b`

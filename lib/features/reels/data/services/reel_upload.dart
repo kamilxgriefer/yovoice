@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'package:yovoice/features/reels/data/models/reel_composition.dart';
+import 'package:yovoice/features/reels/data/services/reel_picked_file_range.dart';
 
 const int maxReelImageBytes = 10 * 1024 * 1024;
 const int maxReelVideoBytes = 100 * 1024 * 1024;
@@ -159,13 +160,23 @@ class ReelUploadPayload {
 
 /// Reads at most [reelHeaderProbeBytes] leading bytes of [file].
 ///
-/// `XFile.openRead` is a range read on every platform this app ships to: a
-/// file seek on io, a `Blob.slice` on web. A short file simply yields fewer
-/// bytes, and [sniffReelContentType] refuses what it cannot identify.
+/// On io `XFile.openRead` is a file seek. On web it is NOT a `Blob.slice`:
+/// cross_file re-downloads the picker's whole object URL for every
+/// `openRead`, so a blob-URL pick is asked for its head by one `Range`
+/// request instead, and `openRead` remains only the fallback for a browser
+/// that ignores the header (see reel_picked_file_range.dart). A short file
+/// simply yields fewer bytes, and [sniffReelContentType] refuses what it
+/// cannot identify.
 Future<Uint8List> readReelHeader(
   XFile file, {
   int limit = reelHeaderProbeBytes,
 }) async {
+  final ranged = await readReelPickedFileHead(file, limit);
+  if (ranged != null) {
+    return ranged.length <= limit
+        ? ranged
+        : Uint8List.sublistView(ranged, 0, limit);
+  }
   final builder = BytesBuilder(copy: false);
   await for (final chunk in file.openRead(0, limit)) {
     builder.add(chunk);
