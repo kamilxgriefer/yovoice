@@ -533,8 +533,6 @@ extension PageProfileCopy on PagesCopy {
   String get close => copy.contextualText('pages.close', 'Close', 'Zamknij');
   String get pagePublished =>
       copy.text('Your Page is live', 'Twoja strona jest już widoczna');
-  String zeroFollowersMeta(PageKind kind) =>
-      '${kindLabel(kind)} · ${followers(0)}';
 
   /// §5: every refusal of create / update / resume in words.
   String manageError(PagesFailure failure) => switch (failure) {
@@ -545,10 +543,6 @@ extension PageProfileCopy on PagesCopy {
     PagesFailure.adultRequired => copy.text(
       'You must be 18 or older to run a Page.',
       'Aby prowadzić stronę, musisz mieć ukończone 18 lat.',
-    ),
-    PagesFailure.hasAudience => copy.text(
-      "Pages can't be created on an account that already has followers yet.",
-      'Na koncie, które ma już obserwujących, nie można jeszcze utworzyć strony.',
     ),
     PagesFailure.nameReserved => copy.text(
       "This name can't be used for a Page.",

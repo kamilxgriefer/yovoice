@@ -17793,3 +17793,62 @@ safety action unconditional.
   step 2 is two columns with sticky previews (variant C), and all three
   steps share one 1040 px frame. Backend deployed switched off the same
   day ([record](DEPLOYMENT.md#premium-pages-adr-231233--packages-b1--b2--b3--b4--b5-backend-deployed-2026-09-28-switched-off)).
+
+## ADR-234: Pages open to every Premium or VIP account, followers carried over
+
+**Status:** accepted 2026-09-29 (owner decision in chat), amends ADR-233.
+
+**Context.** Kamil tried to create a Page on his own account and was refused:
+"Pages can't be created on an account that already has followers yet"
+(`pageHasAudience`). ADR-233 required `followerCount == 0` and Creator
+audience off so that it needed no backfill: every follower of a Page account
+would then be a Page follower by construction, and Page follow hints
+(`pageFollowIndex/{f}`) only ever came from live follows. ADR-233 also kept
+paid Premium out of Pages (`PAGES_ALLOW_PAID_SOURCE = false`) until images
+are screened. The owner's decision: "every account with Premium must be able
+to create a Page, whether it has or had followers or anything", paid Premium
+included, and Pages open to everyone (create: Premium or VIP; read: all).
+
+**Decision.**
+- The `pageHasAudience` refusal is retired. Follow edges are already shared
+  between people and Pages, so `users/{P}.followerCount` stays the Page's
+  follower count; the only per-follower Page state is the Treści hint.
+- Carry-over: the create transaction writes `pageFollowCarryJobs/{P}` and,
+  when Creator audience is on, switches it off and re-projects
+  `publicProfiles/{P}` in the same commit. After the commit `managePageV1`
+  carries the first 100 followers itself; `pagesMaintenance` (new
+  `followCarry` slice after the lapse slice) finishes larger accounts in
+  bounded, cursor-resumable, idempotent slices with retry, backoff and a
+  `stuck` alert after five failures. Each follower is its own transaction:
+  both edge mirrors, both block directions and `users/{f}` are re-read; the
+  hint is written with the live-follow rule (`pageIdsAfterFollow`).
+- `PAGES_ALLOW_PAID_SOURCE = true`: `entitlements/{uid}` with `isPremium`,
+  status active, trialing or grace, a Timestamp `currentPeriodEnd` in the
+  future and `premiumIdentityEnabled` admits create and post (Stripe and
+  admin grants); the canonical VIP grant is still checked first; staff
+  preview is still refused. Paid expiry follows the same lapse machine
+  (read-only for 30 days, then hidden; renewal restores).
+- The create flow tells the owner in step 3 that existing followers will
+  follow the Page (owner decision: one line, variants shown first).
+
+**Reasoning.** Refusing accounts that people already follow blocked exactly
+the accounts that need a Page most, and the backfill ADR-233 avoided is small
+and bounded because hints never grant visibility (the feed still re-checks
+edges and blocks for every Page). Doing the whole carry-over inside the
+create transaction would lock up to N followers' index documents and could
+time out the create itself.
+
+**Consequences.**
+- Accepted risk (owner): paid Pages post photos without automated image
+  screening; reports and the Moderation Center arms are the control.
+- A Creator's public follower list closes when they create a Page, and the
+  follower count becomes visible on the Page, including accounts that had
+  kept it private (the step-3 line says so).
+- Followers who muted the owner personally are still carried over; they
+  can unfollow the Page.
+- New server-only collection `pageFollowCarryJobs` (explicit deny in rules,
+  deleted by account deletion's records stage); new log lines
+  `pages follow carry-over completed|retry|deferred|index full|stuck|job
+  malformed`, added to the Pages alert metrics.
+- Deploy: 18 functions (DEPLOYMENT.md, Premium Pages, "ADR-234 deploy"),
+  `managePageV1` last; rules for the explicit deny.

@@ -84,10 +84,13 @@ Future<void> showProfilePreview(
     );
   }
 
-  // Keep navigation on the launcher Navigator. Looking it up from the sheet
+  // Keep navigation on the launcher's Navigator. Looking it up from the sheet
   // after popping the sheet is unsafe (and used to make Message appear inert
-  // when the preview itself was opened above another modal).
-  final navigator = Navigator.of(context);
+  // when the preview itself was opened above another modal). It is the root
+  // one: from Treści's own navigator the sheet, the chat and the full
+  // profile otherwise opened under the floating dock (2026-09-29); every
+  // other launcher's nearest navigator already is the root one.
+  final navigator = Navigator.of(context, rootNavigator: true);
   // A profile preview fans out into profile, relationship, moderation and
   // mutual-friend reads. Rapid taps used to enqueue multiple identical sheets
   // before the first frame appeared, multiplying that work and later popping
@@ -113,6 +116,7 @@ Future<void> showProfilePreview(
     try {
       destination = await showModalBottomSheet<_ProfilePreviewDestination>(
         context: context,
+        useRootNavigator: true,
         isScrollControlled: true,
         useSafeArea: true,
         backgroundColor: Colors.transparent,

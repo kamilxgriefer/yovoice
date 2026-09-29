@@ -1309,10 +1309,15 @@ badge VIP bit, reports, the staff moderation arms and account deletion
 - **Who may run a Page.** A canonical `vipGrants/{uid}`
   (`canonicalLikersVipGrant`, ADR-230) on an active, not Auth-deleted
   account, read server-side inside every write transaction
-  (`functions/pages/access.js`). **Paid Premium is refused in code**
-  (`PAGES_ALLOW_PAID_SOURCE = false`, pinned by `pages_access.test.js`);
-  staff preview is refused. Never `users.premiumIdentity`,
-  `publicBadges.isVip` or `publicBadges.page`.
+  (`functions/pages/access.js`), **or active paid/admin-granted Premium**
+  since ADR-234 (2026-09-29, owner decision: `PAGES_ALLOW_PAID_SOURCE =
+  true`; `entitlements/{uid}` with `isPremium`, status active, trialing or
+  grace, a Timestamp `currentPeriodEnd` in the future and
+  `premiumIdentityEnabled`, pinned by `pages_access.test.js`). The
+  canonical grant is checked first. Staff preview is refused. Never
+  `users.premiumIdentity`, `publicBadges.isVip` or `publicBadges.page`.
+  Accepted risk (ADR-234): paid Pages post photos without automated image
+  screening; reports and the staff moderation arms are the control.
 - **When.** Only while `appConfig/pagesV1` has the exact shape (see
   ADR-233); missing, unreadable or malformed = off (`pagesNotEnabled`), and
   a `writeAccess` wider than `readAccess` is malformed. `appConfig/*` is
@@ -1331,11 +1336,23 @@ badge VIP bit, reports, the staff moderation arms and account deletion
   answer writes `pageAdultRefusals/{uid} = {schemaVersion, refusedAt}` and
   blocks another attempt for 30 days. `pages.create` (5/day) is charged
   before activation, the gate and validation, so probing costs.
-- **Audience leak closed both ways.** A Page can only be created with
-  `followerCount == 0` and Creator audience off, and
-  `setCreatorAudienceEnabled {enabled:true}` is refused (`pageActive`) while
-  `pages/{uid}` exists, so `canReadCreatorAudienceEdges` can never make a
-  Page's follower edges listable.
+- **Audience leak closed both ways.** Since ADR-234 an account with
+  followers may create a Page: the create transaction switches Creator
+  audience OFF and re-projects `publicProfiles/{uid}` in the same commit,
+  and `setCreatorAudienceEnabled {enabled:true}` stays refused (`pageActive`)
+  while `pages/{uid}` exists, so `canReadCreatorAudienceEdges` can never make
+  a Page's follower edges listable.
+- **Follower carry-over (ADR-234).** Existing followers become Page
+  followers: `pageFollowCarryJobs/{pageId}` (server-only, explicit deny in
+  rules) drives a privileged write of OTHER users' `pageFollowIndex/{f}`
+  hints, never edges or counters. Each follower is written in its own
+  transaction that re-reads both edge mirrors, both block directions and
+  `users/{f}`; blocked pairs, missing edges and deleted accounts are
+  skipped, and a full index drops its oldest hint like a live follow. No
+  notification, no rate charge, no uid or pageId in logs. The Page's
+  follower count (the account's own counter) becomes publicly visible on
+  the Page; the owner is told in create step 3. Account deletion of the Page
+  owner scrubs its hint from followers' indexes and deletes the job.
 - **Impersonation.** `functions/profile/name_safety.js` refuses reserved
   names and check-mark look-alikes (✓ ✔ ✅ ☑ 🗸 🗹 √ ⍻) on a skeleton
   (NFKC, diacritics, the confusable map applied BEFORE and after

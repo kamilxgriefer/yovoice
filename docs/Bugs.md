@@ -5,6 +5,33 @@ Update this whenever a bug is found or fixed. For "features not built
 yet," see [Roadmap.md](Roadmap.md) instead; this file is specifically
 about things that are broken, risky, or need verification.
 
+## FIXED IN SOURCE — Premium Pages after build 40 (2026-09-29, next build, ADR-234)
+
+Found by Kamil on build 40 and in the review of the ADR-234 change.
+
+- **A Page could not be created on an account that has followers.** The
+  server refused with `pageHasAudience` ("Pages can't be created on an
+  account that already has followers yet"), a deliberate ADR-233 limit.
+  Kamil hit it on his own account. Retired by ADR-234: followers are carried
+  over, Creator audience switches off in the same commit.
+- **"Dalej" was stranded under the keyboard on the phone create form.** The
+  primary action sat in `Scaffold.bottomNavigationBar`, which stays behind
+  the keyboard (UI.md placement invariant), and there was no Done bar, so
+  after filling the fields the button could not be reached. It now rides
+  `YoKeyboardSafeBottomBar` with `YoKeyboardDoneBar`
+  (`test/pages_create_over_dock_test.dart`, mutation-checked).
+- **Sheets opened from inside Treści stopped above the floating dock.**
+  Treści owns the app's only nested Navigator, so the report sheet, the
+  likers list and upsell, the invite-to-server sheet, the profile preview
+  and its chat, and a Page's chat and call opened under the dock instead of
+  covering it. They now use the root navigator
+  (`test/pages_dock_routes_test.dart`, mutation-checked).
+- **The desktop create form lost its bottom safe area** because an always
+  present zero-height bottom bar made Scaffold drop the body's padding; the
+  bar is now attached only while the keyboard is up.
+- **The create preview promised "0 obserwujących"** to accounts that already
+  have followers; it now shows the account's real counter.
+
 ## FIXED IN SOURCE — YO Moments G4/Y3 reviews (2026-09-28, 3.3.0+38, ADR-228)
 
 Found by the independent code and accessibility reviews of the G4 (Głos) and

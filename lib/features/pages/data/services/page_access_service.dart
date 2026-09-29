@@ -5,6 +5,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 
 import 'package:yovoice/features/likers/data/services/likers_access_service.dart';
 import 'package:yovoice/features/pages/data/models/page_views.dart';
+import 'package:yovoice/features/premium/data/models/subscription_entitlements.dart';
+import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
 import 'package:yovoice/shared/identity/public_identity.dart';
 
 /// The signed-in account's own Page, as its owner may read it
@@ -94,6 +96,7 @@ class PageAccessState {
     required this.resolved,
     required this.hasVipGrant,
     required this.ownPage,
+    this.hasPaidPremium = false,
   });
 
   static const unknown = PageAccessState(
@@ -105,26 +108,37 @@ class PageAccessState {
   /// False until both halves answered once; every entry stays hidden.
   final bool resolved;
 
-  /// A canonical owner-granted `vipGrants/{uid}` (D3: paid Premium does not
-  /// open Pages while `PAGES_ALLOW_PAID_SOURCE` is false).
+  /// A canonical owner-granted `vipGrants/{uid}`.
   final bool hasVipGrant;
+
+  /// Active paid (or admin-written) Premium identity: `entitlements/{uid}`
+  /// active with `premiumIdentityEnabled`. The moderator preview is NOT
+  /// this: the server refuses `staffPreview` for Pages (ADR-233 §2.2). Paid
+  /// Premium runs a Page since the owner's decision of 2026-09-29
+  /// (`PAGES_ALLOW_PAID_SOURCE` true in functions/pages/access.js).
+  final bool hasPaidPremium;
+
+  /// Either authority the server accepts for running a Page.
+  bool get canRunPage => hasVipGrant || hasPaidPremium;
 
   /// The account's own Page, or null when it has none.
   final OwnPage? ownPage;
 
   /// "Utwórz swoją stronę" entries (E2, E3, the phone card, the desktop
-  /// panel row): a VIP without a Page.
-  bool get canCreatePage => resolved && hasVipGrant && ownPage == null;
+  /// panel row, the Premium block): a VIP or Premium account without a Page.
+  bool get canCreatePage => resolved && canRunPage && ownPage == null;
 
   @override
   bool operator ==(Object other) =>
       other is PageAccessState &&
       other.resolved == resolved &&
       other.hasVipGrant == hasVipGrant &&
+      other.hasPaidPremium == hasPaidPremium &&
       other.ownPage == ownPage;
 
   @override
-  int get hashCode => Object.hash(resolved, hasVipGrant, ownPage);
+  int get hashCode =>
+      Object.hash(resolved, hasVipGrant, hasPaidPremium, ownPage);
 }
 
 /// The Pages UX pre-gate (spec §4.8 `PageAccessService`). It only decides
@@ -137,16 +151,27 @@ class PageAccessService {
   PageAccessService({
     FirebaseFirestore? firestore,
     FirebaseAuth? auth,
+    EntitlementService? entitlements,
     DateTime Function()? clock,
   }) : _firestoreOverride = firestore,
        _authOverride = auth,
+       _entitlementsOverride = entitlements,
        _clock = clock ?? DateTime.now;
 
   static final PageAccessService instance = PageAccessService();
 
   final FirebaseFirestore? _firestoreOverride;
   final FirebaseAuth? _authOverride;
+  final EntitlementService? _entitlementsOverride;
   final DateTime Function() _clock;
+
+  EntitlementService get _entitlements =>
+      _entitlementsOverride ??
+      EntitlementService(firestore: _firestore, auth: _auth);
+
+  /// Paid Premium identity only; the moderator overlay does not count.
+  static bool paidPremiumRunsPage(SubscriptionEntitlements value) =>
+      value.isPremium && value.premiumIdentityEnabled;
 
   FirebaseFirestore get _firestore =>
       _firestoreOverride ?? FirebaseFirestore.instance;
@@ -201,24 +226,28 @@ class PageAccessService {
     }
     return Stream<PageAccessState>.multi((subscriber) {
       bool? grant;
+      bool? paid;
       OwnPage? page;
       var pageResolved = false;
       var pageReadable = true;
       PageAccessState? last;
       StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? grantSub;
       StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? pageSub;
+      StreamSubscription<SubscriptionEntitlements>? paidSub;
 
       void emit() {
-        if (grant == null || !pageResolved) return;
+        if (grant == null || paid == null || !pageResolved) return;
         final next = pageReadable
             ? PageAccessState(
                 resolved: true,
                 hasVipGrant: grant!,
+                hasPaidPremium: paid!,
                 ownPage: page,
               )
             : PageAccessState(
                 resolved: false,
                 hasVipGrant: grant!,
+                hasPaidPremium: paid!,
                 ownPage: null,
               );
         if (next == last) return;
@@ -226,6 +255,20 @@ class PageAccessService {
         subscriber.add(next);
       }
 
+      try {
+        paidSub = _entitlements.watchCurrentEntitlements().listen(
+          (value) {
+            paid = paidPremiumRunsPage(value);
+            emit();
+          },
+          onError: (Object _, StackTrace _) {
+            paid = false;
+            emit();
+          },
+        );
+      } catch (_) {
+        paid = false;
+      }
       try {
         grantSub = _firestore
             .collection('vipGrants')
@@ -266,6 +309,7 @@ class PageAccessService {
         subscriber.add(PageAccessState.unknown);
       }
       subscriber.onCancel = () async {
+        await paidSub?.cancel();
         await grantSub?.cancel();
         await pageSub?.cancel();
       };

@@ -47,6 +47,7 @@ class UserProfile {
     required this.accountType,
     required this.friendCount,
     required this.followerCount,
+    this.accountFollowerCount = 0,
     required this.followingCount,
     required this.roomCount,
     required this.communityCount,
@@ -115,6 +116,14 @@ class UserProfile {
   final AccountType accountType;
   final int friendCount;
   final int followerCount;
+
+  /// The account's own follower counter exactly as stored on `users/{uid}`,
+  /// NOT gated by [creatorAudienceVisible]. For the owner's own surfaces
+  /// only: a Page shares its follow edges with the account and shows this
+  /// number to everyone (ADR-234), so the create preview must show it too.
+  /// Public audience surfaces keep using [followerCount]. Another account's
+  /// public projection never carries more than [followerCount] here.
+  final int accountFollowerCount;
   final int followingCount;
   final int roomCount;
   final int communityCount;
@@ -201,6 +210,7 @@ class UserProfile {
       accountType: AccountType.fromValue(data['accountType']),
       friendCount: readInt('friendCount'),
       followerCount: creatorAudienceVisible ? readInt('followerCount') : 0,
+      accountFollowerCount: readInt('followerCount'),
       followingCount: creatorAudienceVisible ? readInt('followingCount') : 0,
       roomCount: readInt('roomCount'),
       communityCount: readInt('communityCount'),
@@ -232,8 +242,7 @@ class UserProfile {
         _ => null,
       },
       profileVisibility: ProfileVisibility.fromValue(data['profileVisibility']),
-      likesHidden:
-          data['likesHidden'] == null || data['likesHidden'] == false
+      likesHidden: data['likesHidden'] == null || data['likesHidden'] == false
           ? false
           : true,
     );

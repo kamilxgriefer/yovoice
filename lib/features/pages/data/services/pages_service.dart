@@ -28,6 +28,11 @@ enum PagesFailure {
   profileNotPublic,
   adultRequired,
   pageExists,
+
+  /// `pageHasAudience`: servers before 2026-09-29 refused a Page on an
+  /// account with followers. The owner retired that rule (every Premium
+  /// account may run a Page), so current servers never send it; it is still
+  /// parsed so a stale answer during a rollout reads as a retryable failure.
   hasAudience,
   nameReserved,
   mediaMetadata,

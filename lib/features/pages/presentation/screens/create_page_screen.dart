@@ -33,6 +33,7 @@ import 'package:yovoice/shared/widgets/buttons/yo_button.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_gradient_filled_button.dart';
 import 'package:yovoice/shared/widgets/cards/yo_card.dart';
 import 'package:yovoice/shared/widgets/identity/yo_vip_rosette.dart';
+import 'package:yovoice/shared/widgets/inputs/yo_keyboard_done_bar.dart';
 import 'package:yovoice/features/premium/presentation/widgets/premium_upsell_sheet.dart';
 import 'package:yovoice/features/pages/data/services/page_access_service.dart';
 
@@ -43,9 +44,11 @@ Future<void> openCreatePageFlow(
   BuildContext context, {
   String? backLabel,
   Stream<PageAccessState> Function()? accessStream,
+  @visibleForTesting WidgetBuilder? screenBuilder,
 }) async {
-  // R11: an account that cannot run a Page (no canonical VIP grant, no
-  // Page) gets the honest upsell instead of a form the server would refuse.
+  // R11: an account that cannot run a Page (neither a canonical VIP grant
+  // nor active paid Premium, and no Page) gets the honest upsell instead of
+  // a form the server would refuse.
   PageAccessState? access;
   try {
     access = await (accessStream?.call() ?? PageAccessService.instance.watch())
@@ -55,7 +58,7 @@ Future<void> openCreatePageFlow(
     access = null;
   }
   if (!context.mounted) return;
-  if (access != null && !access.hasVipGrant && access.ownPage == null) {
+  if (access != null && !access.canRunPage && access.ownPage == null) {
     await showPremiumUpsellSheet(
       context,
       upsellContext: PremiumUpsellContext.pages,
@@ -65,7 +68,7 @@ Future<void> openCreatePageFlow(
   final created = await Navigator.of(context, rootNavigator: true).push<String>(
     MaterialPageRoute<String>(
       settings: const RouteSettings(name: 'pages/create'),
-      builder: (_) => CreatePageScreen(backLabel: backLabel),
+      builder: screenBuilder ?? (_) => CreatePageScreen(backLabel: backLabel),
     ),
   );
   if (created == null || !context.mounted) return;
@@ -168,6 +171,12 @@ class _CreatePageScreenState extends State<CreatePageScreen> {
   PagesCopy get _copy => PagesCopy(AppLocalizations.of(context));
 
   bool get _needsBirthDate => !(_profile?.creatorAgeVerified ?? false);
+
+  /// What the Page will show from its first second: the account's own
+  /// follower counter, shared with the Page (ADR-234). Existing followers
+  /// are carried over, so the preview never promises 0 to an account that
+  /// already has them.
+  int get _followerCount => _profile?.accountFollowerCount ?? 0;
 
   String get _name => _profile?.displayName.trim().isNotEmpty == true
       ? _profile!.displayName
@@ -391,8 +400,10 @@ class _CreatePageScreenState extends State<CreatePageScreen> {
   }
 
   /// A refusal no retry can change: the flow can only be closed.
+  /// `pageHasAudience` is not one of them any more: the server stopped
+  /// refusing accounts with followers (owner decision 2026-09-29), so a
+  /// stale answer during the rollout is worth another try.
   bool get _terminal => switch (_failure) {
-    PagesFailure.hasAudience ||
     PagesFailure.adultRequired ||
     PagesFailure.accessRequired ||
     PagesFailure.pageExists ||
@@ -519,25 +530,38 @@ class _CreatePageScreenState extends State<CreatePageScreen> {
           ],
         ),
       ),
-      bottomNavigationBar: _BottomAction(
-        child: _terminal
-            ? PageTonalButton(
-                key: const ValueKey('create-close'),
-                label: copy.close,
-                height: 52,
-                expand: true,
-                onPressed: () => Navigator.of(context).maybePop(),
-              )
-            : YoButton(
-                key: const ValueKey('create-primary'),
-                label: _primaryLabel,
-                height: 52,
-                isLoading: _publishing,
-                onPressed: _publishing ? null : _next,
-              ),
+      // Scaffold pins this slot to the bottom of the window, behind the
+      // keyboard (UI.md "Placement invariant", ADR-169): the wrapper lifts
+      // Done and Dalej onto the keyboard, so they are never stranded under
+      // it once the fields are filled.
+      bottomNavigationBar: YoKeyboardSafeBottomBar(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const YoKeyboardDoneBar(),
+            _BottomAction(
+              child: _terminal
+                  ? PageTonalButton(
+                      key: const ValueKey('create-close'),
+                      label: copy.close,
+                      height: 52,
+                      expand: true,
+                      onPressed: () => Navigator.of(context).maybePop(),
+                    )
+                  : YoButton(
+                      key: const ValueKey('create-primary'),
+                      label: _primaryLabel,
+                      height: 52,
+                      isLoading: _publishing,
+                      onPressed: _publishing ? null : _next,
+                    ),
+            ),
+          ],
+        ),
       ),
       body: ListView(
         key: ValueKey('create-step-$_step'),
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
         children: [
           _StepProgress(step: _step),
@@ -639,8 +663,19 @@ class _CreatePageScreenState extends State<CreatePageScreen> {
       ],
     );
 
+    // Scaffold hands the body's bottom safe-area inset to ANY
+    // bottomNavigationBar, even one that draws nothing, so the Done bar is
+    // attached only while the software keyboard is up. At rest the body's
+    // SafeArea keeps the home-indicator / gesture inset.
+    final keyboardUp = MediaQuery.viewInsetsOf(context).bottom > 0;
     return Scaffold(
       backgroundColor: palette.background,
+      // Wróć / Dalej scroll with the form here; Done is the way out of a
+      // multi-line field on a touch tablet (it renders nothing with a
+      // hardware keyboard).
+      bottomNavigationBar: keyboardUp
+          ? const YoKeyboardSafeBottomBar(child: YoKeyboardDoneBar())
+          : null,
       body: SafeArea(
         child: LayoutBuilder(
           builder: (context, constraints) {
@@ -654,6 +689,7 @@ class _CreatePageScreenState extends State<CreatePageScreen> {
             }
             return SingleChildScrollView(
               key: ValueKey('create-step-$_step'),
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
               padding: const EdgeInsets.fromLTRB(24, 28, 24, 40),
               child: Center(
                 child: ConstrainedBox(
@@ -724,6 +760,7 @@ class _CreatePageScreenState extends State<CreatePageScreen> {
       policy: OrderedTraversalPolicy(),
       child: CustomScrollView(
         key: ValueKey('create-step-$_step'),
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         slivers: [
           SliverPadding(
             padding: EdgeInsets.fromLTRB(gutter, 28, gutter, 0),
@@ -779,7 +816,7 @@ class _CreatePageScreenState extends State<CreatePageScreen> {
       displayName: _name,
       kind: _kind,
       category: _category ?? '',
-      followerCount: 0,
+      followerCount: _followerCount,
       onYoVoiceSinceMs: null,
       viewerFollows: false,
       lastPostAtMs: null,
@@ -827,6 +864,7 @@ class _CreatePageScreenState extends State<CreatePageScreen> {
             pageId: _userId,
             name: _name,
             kind: _kind,
+            followerCount: _followerCount,
             description: _description.text.trim(),
           ),
           const SizedBox(height: 8),
@@ -1065,6 +1103,10 @@ class _CreatePageScreenState extends State<CreatePageScreen> {
         keyboardType: multiLine
             ? TextInputType.multiline
             : keyboard ?? TextInputType.text,
+        // R1 (UI.md): a one-line field is always followed by another field
+        // here, so Return walks the form; the long-form ones keep Return as
+        // a line break and finish with the Done bar (R3).
+        textInputAction: multiLine ? null : TextInputAction.next,
         style: AppTypography.bodyLarge.copyWith(
           color: palette.textPrimary,
           fontSize: 16,
@@ -1325,6 +1367,7 @@ class _CreatePageScreenState extends State<CreatePageScreen> {
             pageId: _userId,
             name: _name,
             kind: _kind,
+            followerCount: _followerCount,
             description: _description.text.trim(),
           ),
         ),
@@ -1816,12 +1859,16 @@ class _InertHeader extends StatelessWidget {
     required this.pageId,
     required this.name,
     required this.kind,
+    required this.followerCount,
     required this.description,
   });
 
   final String pageId;
   final String name;
   final PageKind kind;
+
+  /// The account's followers, which become the Page's (ADR-234).
+  final int followerCount;
   final String description;
 
   @override
@@ -1882,7 +1929,7 @@ class _InertHeader extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      copy.zeroFollowersMeta(kind),
+                      copy.headerMeta(kind, followerCount),
                       style: AppTypography.bodySmall.copyWith(
                         fontSize: 13,
                         color: palette.textSecondary,

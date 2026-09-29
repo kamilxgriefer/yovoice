@@ -30,6 +30,9 @@ Future<void> showInvitePersonToServerSheet(
   required ServerRepository repository,
 }) => showModalBottomSheet<void>(
   context: context,
+  // Over the whole app: opened from a Page profile inside Treści's own
+  // navigator, a nested sheet would stop at the floating dock.
+  useRootNavigator: true,
   isScrollControlled: true,
   useSafeArea: true,
   showDragHandle: true,

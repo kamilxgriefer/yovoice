@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
@@ -64,7 +65,14 @@ abstract interface class PageAccountActions {
 
 /// The production [PageAccountActions].
 class AppPageAccountActions implements PageAccountActions {
-  const AppPageAccountActions();
+  const AppPageAccountActions({this.messageService, this.firestore, this.auth});
+
+  /// Test seams for "Wiadomość"; the app uses the shared instances. An
+  /// injected [messageService] comes with the matching [firestore] and
+  /// [auth], which the chat it opens reads too.
+  final MessageService? messageService;
+  final FirebaseFirestore? firestore;
+  final FirebaseAuth? auth;
 
   static FirebaseAuth get _auth => FirebaseAuth.instance;
 
@@ -84,16 +92,19 @@ class AppPageAccountActions implements PageAccountActions {
     required String name,
     bool recordVoice = false,
   }) async {
-    final navigator = Navigator.of(context);
+    // The chat covers the shell and its dock (chats always do), instead of
+    // opening inside Treści's own navigator with Treści still selected.
+    final navigator = Navigator.of(context, rootNavigator: true);
     final messenger = ScaffoldMessenger.maybeOf(context);
     final failure = PagesCopy(AppLocalizations.of(context)).chatFailed;
     try {
-      final conversationId = await MessageService.live.openOrCreateConversation(
-        otherUserId: uid,
-        otherDisplayName: name,
-        otherEmail: '',
-        otherPhotoUrl: '',
-      );
+      final conversationId = await (messageService ?? MessageService.live)
+          .openOrCreateConversation(
+            otherUserId: uid,
+            otherDisplayName: name,
+            otherEmail: '',
+            otherPhotoUrl: '',
+          );
       if (!navigator.mounted) return;
       await navigator.push<void>(
         MaterialPageRoute<void>(
@@ -103,6 +114,9 @@ class AppPageAccountActions implements PageAccountActions {
             otherDisplayName: name,
             otherEmail: '',
             otherPhotoUrl: '',
+            messageService: messageService,
+            firestore: firestore,
+            auth: auth,
             initialAction: recordVoice
                 ? ChatLaunchAction.recordVoice
                 : ChatLaunchAction.none,

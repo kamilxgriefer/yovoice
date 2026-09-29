@@ -125,6 +125,9 @@ Future<void> showLikersUpsell(
 }) {
   return showModalBottomSheet<void>(
     context: context,
+    // Over the whole app: from Treści's own navigator a nested sheet would
+    // stop at the floating dock and leave it tappable under the modal.
+    useRootNavigator: true,
     isScrollControlled: true,
     useSafeArea: true,
     backgroundColor: Colors.transparent,
@@ -154,6 +157,8 @@ Future<void> _showListSheet(
 }) {
   return showModalBottomSheet<void>(
     context: context,
+    // See [showLikersUpsell]: the list covers the dock too.
+    useRootNavigator: true,
     isScrollControlled: true,
     useSafeArea: true,
     backgroundColor: Colors.transparent,

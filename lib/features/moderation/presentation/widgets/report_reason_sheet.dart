@@ -36,6 +36,11 @@ Future<ReportReason?> showReportReasonSheet({
 }) {
   return showModalBottomSheet<ReportReason>(
     context: context,
+    // Over the whole app, never inside a nested navigator: from Treści the
+    // sheet otherwise stopped at the floating dock's top edge and left the
+    // dock tappable under the modal (2026-09-29). Everywhere else the
+    // nearest navigator already is the root one.
+    useRootNavigator: true,
     backgroundColor: Colors.transparent,
     isScrollControlled: true,
     showDragHandle: false,

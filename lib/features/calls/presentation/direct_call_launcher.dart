@@ -106,7 +106,9 @@ Future<void> launchDirectCall(
     }
     onCoveredStart?.call();
     try {
-      await Navigator.of(context).push<void>(
+      // The call covers the whole app, the dock included, even when the
+      // caller sits inside Treści's own navigator (a Page's ⋯ → Zadzwoń).
+      await Navigator.of(context, rootNavigator: true).push<void>(
         MaterialPageRoute<void>(
           fullscreenDialog: true,
           builder: (_) => DirectCallScreen(

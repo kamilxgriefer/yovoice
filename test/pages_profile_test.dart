@@ -3,6 +3,7 @@
 // renders profile B, create A, R2, R6, R8-R10, R12, R13, R15).
 import 'dart:async';
 
+import 'package:cloud_firestore/cloud_firestore.dart' show Timestamp;
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
@@ -1358,18 +1359,29 @@ void main() {
       expect(find.byKey(const ValueKey('create-birth-date')), findsNothing);
     });
 
-    testWidgets('pageHasAudience: its own copy and only Zamknij', (
-      tester,
-    ) async {
+    testWidgets('a legacy pageHasAudience answer is retryable, not a dead '
+        'end (owner decision 2026-09-29)', (tester) async {
+      var calls = 0;
       final backend = _Backend({
-        'managePageV1': (_) =>
-            throw _refusal('failed-precondition', 'pageHasAudience'),
+        'managePageV1': (_) {
+          calls++;
+          if (calls == 1) {
+            throw _refusal('failed-precondition', 'pageHasAudience');
+          }
+          return {
+            'pageId': 'me',
+            'kind': 'community',
+            'status': 'active',
+            'ownerPaused': false,
+          };
+        },
       });
       await _pump(
         tester,
-        create(backend, ageVerified: true),
+        _pushed(create(backend, ageVerified: true)),
         size: const Size(390, 2600),
       );
+      await _open(tester);
       await tester.tap(find.byKey(const ValueKey('create-kind-community')));
       await tester.tap(find.byKey(const ValueKey('create-primary')));
       await _settle(tester);
@@ -1391,14 +1403,101 @@ void main() {
       expect(payload['birthDate'], isNull);
       expect(find.byKey(const ValueKey('create-error')), findsOneWidget);
       expect(
-        find.text(
-          'Na koncie, które ma już obserwujących, nie można jeszcze '
-          'utworzyć strony.',
+        find.textContaining('ma już obserwujących'),
+        findsNothing,
+        reason: 'followers never block a Page any more',
+      );
+      expect(
+        find.text('Coś poszło nie tak. Spróbuj ponownie.'),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('create-close')), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('create-primary')));
+      await _settle(tester);
+      expect(backend.payloadsOf('managePageV1'), hasLength(2));
+      expect(
+        backend.payloadsOf('managePageV1').last['requestId'],
+        payload['requestId'],
+        reason: 'the same submission retries under its request id',
+      );
+      expect(find.text('ROOT'), findsOneWidget, reason: 'pops with the id');
+    });
+
+    /// The own users/{uid} document exactly as ProfileService reads it: the
+    /// account has 1200 followers and no visible Creator audience, so the
+    /// public (gated) followerCount is 0 while the Page will show 1200.
+    Future<UserProfile> ownProfileWithFollowers() async {
+      final firestore = FakeFirebaseFirestore();
+      await firestore.doc('users/me').set({
+        'displayName': 'Kawiarnia Ziarno',
+        'username': 'ziarno',
+        'creatorAgeVerified': true,
+        'followerCount': 1200,
+      });
+      final profile = UserProfile.fromFirestore(
+        await firestore.doc('users/me').get(),
+      );
+      expect(profile.followerCount, 0, reason: 'the public count stays gated');
+      expect(profile.accountFollowerCount, 1200);
+      return profile;
+    }
+
+    testWidgets('step 3 previews the followers the account already has, as '
+        'the Page will show them (ADR-234)', (tester) async {
+      final profile = await tester.runAsync(ownProfileWithFollowers);
+      await _pump(
+        tester,
+        create(_Backend({}), profile: Stream.value(profile!)),
+        size: const Size(390, 2600),
+      );
+      await tester.tap(find.byKey(const ValueKey('create-kind-community')));
+      await tester.tap(find.byKey(const ValueKey('create-primary')));
+      await _settle(tester);
+      await tester.tap(find.byKey(const ValueKey('create-category')));
+      await _settle(tester);
+      await tester.tap(find.byKey(const ValueKey('page-category-sport')));
+      await _settle(tester);
+      await _reveal(tester, find.byKey(const ValueKey('create-consent')));
+      await tester.tap(find.byKey(const ValueKey('create-consent')));
+      await _settle(tester);
+      await tester.tap(find.byKey(const ValueKey('create-primary')));
+      await _settle(tester);
+      expect(find.text('Krok 3 z 3'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('create-preview-header')),
+          matching: _meta('Społeczność · 1,2 tys. obserwujących'),
         ),
         findsOneWidget,
       );
-      expect(find.byKey(const ValueKey('create-close')), findsOneWidget);
-      expect(find.byKey(const ValueKey('create-primary')), findsNothing);
+      expect(_meta('Społeczność · 0 obserwujących'), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('wide step 2: the profile preview shows the same followers', (
+      tester,
+    ) async {
+      final profile = await tester.runAsync(ownProfileWithFollowers);
+      await _pump(
+        tester,
+        create(_Backend({}), profile: Stream.value(profile!)),
+        size: const Size(1280, 1000),
+      );
+      await tester.ensureVisible(find.byKey(const ValueKey('create-primary')));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('create-primary')));
+      await _settle(tester);
+      expect(find.byKey(const ValueKey('create-category')), findsOneWidget);
+      expect(find.byKey(const ValueKey('create-preview-wall')), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('create-preview-header')),
+          matching: _meta('Firma · 1,2 tys. obserwujących'),
+        ),
+        findsOneWidget,
+      );
+      expect(_meta('Firma · 0 obserwujących'), findsNothing);
+      expect(tester.takeException(), isNull);
     });
 
     testWidgets('wide: step tabs, side-by-side kinds, actions on the right', (
@@ -1560,6 +1659,7 @@ void main() {
       required bool enabled,
       required PageAccessState access,
       List<String>? log,
+      bool paid = false,
     }) async {
       tester.view.physicalSize = const Size(390, 1600);
       tester.view.devicePixelRatio = 1;
@@ -1567,6 +1667,17 @@ void main() {
       EntitlementService.resetCache();
       ProfileService.resetCurrentProfileCache();
       final db = FakeFirebaseFirestore();
+      if (paid) {
+        await db.doc('entitlements/me').set(<String, Object?>{
+          'isPremium': true,
+          'status': 'active',
+          'plan': 'monthly',
+          'currentPeriodEnd': Timestamp.fromDate(
+            DateTime.now().add(const Duration(days: 30)),
+          ),
+          'premiumIdentityEnabled': true,
+        });
+      }
       final auth = MockFirebaseAuth(
         signedIn: true,
         mockUser: MockUser(uid: 'me'),
@@ -1609,6 +1720,29 @@ void main() {
         find.byKey(const ValueKey('premium-page-benefit')),
         findsOneWidget,
       );
+      await tester.tap(find.byKey(const ValueKey('premium-page-create')));
+      expect(log, ['create']);
+      EntitlementService.resetCache();
+      ProfileService.resetCurrentProfileCache();
+    });
+
+    testWidgets('paid Premium without a VIP grant sees "Utwórz stronę" '
+        '(owner decision 2026-09-29)', (tester) async {
+      final log = <String>[];
+      await pumpPremium(
+        tester,
+        enabled: true,
+        paid: true,
+        access: const PageAccessState(
+          resolved: true,
+          hasVipGrant: false,
+          hasPaidPremium: true,
+          ownPage: null,
+        ),
+        log: log,
+      );
+      expect(find.byKey(const ValueKey('premium-page-block')), findsOneWidget);
+      expect(find.text('Dostępna z Twoim VIP'), findsNothing);
       await tester.tap(find.byKey(const ValueKey('premium-page-create')));
       expect(log, ['create']);
       EntitlementService.resetCache();

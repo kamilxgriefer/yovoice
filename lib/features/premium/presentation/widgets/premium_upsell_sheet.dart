@@ -38,9 +38,12 @@ Future<void> showPremiumUpsellSheet(
   if (upsellContext == PremiumUpsellContext.pages) {
     return showPagesUpsellSheet(
       context,
-      onSeePremium: () => Navigator.of(context).push(
-        MaterialPageRoute<void>(builder: (_) => const PremiumScreen()),
-      ),
+      // Full screen over the shell: the upsell opens from Treści, whose
+      // own navigator would otherwise hold Premium under the dock.
+      onSeePremium: () => Navigator.of(
+        context,
+        rootNavigator: true,
+      ).push(MaterialPageRoute<void>(builder: (_) => const PremiumScreen())),
     );
   }
   if (upsellContext == PremiumUpsellContext.seeWhoLiked) {

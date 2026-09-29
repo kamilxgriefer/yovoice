@@ -30,8 +30,9 @@ class PremiumPagesState {
   final bool enabled;
   final PageAccessState access;
 
-  /// The "Twoja strona" block: a canonical-grant VIP without a Page (create)
-  /// or the owner of one (open). Hidden until Pages are on.
+  /// The "Twoja strona" block: a VIP or Premium account without a Page
+  /// (create; a canonical VIP grant or active paid Premium, owner decision
+  /// 2026-09-29) or the owner of one (open). Hidden until Pages are on.
   bool get showBlock =>
       enabled &&
       access.resolved &&
