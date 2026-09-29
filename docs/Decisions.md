@@ -17889,8 +17889,8 @@ sideways and heavily zoomed, in the composer and in the feed alike.
   `MemoryInfo.lowMemory`); the feed, each feed player and the composer
   start that probe as they open, so a landscape Yeel's first frame already
   has its final backdrop. Black on web, where video_player_web's single
-  `<video>` element cannot be duplicated or filtered — pending Kamil's
-  sign-off; a `requestVideoFrameCallback` canvas mirror is the follow-up. A
+  `<video>` element cannot be duplicated or filtered — accepted by Kamil
+  2026-09-29; a `requestVideoFrameCallback` canvas mirror is the follow-up. A
   poster/still frame was rejected (no thumbnail
   pipeline, a new media field breaks exact-shape readers, `toImage` on
   external textures is unreliable, a frozen frame behind moving video reads

@@ -186,7 +186,7 @@ backend is not yet deployed.
 Yeel videos fit their frame by one rule shared by the composer and every
 feed host: cover while it still shows at least 72% of the picture (every
 upright phone clip), otherwise the whole video over a blurred copy of itself
-(black bands on web — pending Kamil's sign-off — and on Android phones with
+(black bands on web — accepted by Kamil 2026-09-29, blur on web is a follow-up — and on Android phones with
 4 GB RAM or less). The composer's **Obróć** pill, in
 the video's top corner, turns a video a quarter turn clockwise per tap; at
 Publish the rotation is written into the uploaded file's track matrix, so

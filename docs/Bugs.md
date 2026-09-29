@@ -16,7 +16,7 @@ side and heavily zoomed, in the composer and in the feed.
   portrait frame, so only the middle ~31% of the picture was visible.
 - **Fixed in source.** A non-portrait video (less than 72% visible under
   cover) is now shown whole over a blurred copy of itself (black on web —
-  pending Kamil's sign-off — and on Android phones with 4 GB RAM or less),
+  accepted by Kamil 2026-09-29, blur on web is a follow-up — and on Android phones with 4 GB RAM or less),
   by one shared rule, so composer and feed agree; upright clips are drawn
   exactly as before. "Obróć" on the composer video turns it a quarter turn
   per tap, and Publish writes that rotation into the uploaded file's track
@@ -36,7 +36,7 @@ side and heavily zoomed, in the composer and in the feed.
   without the fix (shown at the old 31% crop there) and are shown whole but
   sideways on new builds; re-patching stored objects is a production data
   write that needs Kamil's approval. Web shows black bands, not the blur
-  (pending Kamil's sign-off). Safari, Firefox, the full app on the iOS
+  (accepted by Kamil 2026-09-29, blur on web is a follow-up). Safari, Firefox, the full app on the iOS
   simulator and the Pixel are not yet verified by eye (Chromium web is: a
   release web build of the real preview and fitted video; so is the fitted
   video itself over real AVFoundation playback in an iOS simulator harness,

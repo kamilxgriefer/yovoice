@@ -20,7 +20,7 @@ someone decide what to pick up next.
 rules or schema change).
 
 - Non-portrait Yeel videos are shown whole over a blurred copy of themselves
-  (black on web — pending Kamil's sign-off, a canvas mirror is the
+  (black on web — accepted by Kamil 2026-09-29, blur on web is a follow-up, a canvas mirror is the
   follow-up — and on Android phones with 4 GB RAM or less); upright clips
   look exactly as before; composer and feed use one fit rule. Photos
   unchanged.
@@ -43,10 +43,10 @@ rules or schema change).
   (composer taps 0–4, publish, feed, 180°, frame time with the blur on and
   forced black — the Android ImageReader double draw above all), Safari
   desktop and iOS.
-- **Owner to confirm (one sheet):** black bands on web instead of the blur;
-  4:5 clips (70.3%) contained at the 0.72 threshold (0.70 would keep them
-  cover); a tap resets the crop (now with Undo) and a contained clip's
-  vertical position slider opens only past ~3.16× zoom.
+- **Owner sign-off (Kamil, 2026-09-29, one sheet):** accepted as built —
+  black bands on web for now (blur on web is a follow-up), 4:5 clips shown
+  whole, a tap resets the crop with Undo, and the pill may cover a caption
+  in the top-right corner outside the Text tool.
 
 ## YO Voice 3.5.0 (40) — Premium Pages, the Treści tab (ADR-231..233) — 2026-09-28
 
