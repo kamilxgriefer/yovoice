@@ -48,6 +48,25 @@ rules or schema change).
   whole, a tap resets the crop with Undo, and the pill may cover a caption
   in the top-right corner outside the Text tool.
 
+## YO Voice 3.6.0 (41) — Yeels shown as shot, Pages for every Premium account (ADR-234, ADR-235) — 2026-09-29
+
+**Status: on `main` as `3.6.0+41`.** Client for the fixes Kamil asked for
+on 2026-09-29; the ADR-234 backend is already DEPLOYED (2026-09-29 00:20
+UTC) and Pages are open to everyone (00:22 UTC).
+
+- **Yeels (ADR-235):** a non-portrait video is shown whole on a blurred
+  copy of itself (black on web and low-RAM Android) instead of a ~31%
+  centre slice, in the composer and the feed alike; "Obróć" in the
+  preview's corner rotates a sideways recording before upload (the video
+  traks' tkhd matrix is patched in a local copy). Verified on the iOS
+  Simulator with the real production cat Yeel (whole frame on the blurred
+  backdrop); Android device and Safari not yet checked.
+- **Pages (ADR-234):** every Premium or VIP account can create a Page
+  whatever its followers; existing followers are carried over (Kamil's own
+  Page: 3 of 3 carried at 19:33 UTC); step 3 says so (variant C); the
+  phone create form keeps "Dalej" above the keyboard; sheets opened inside
+  Treści cover the dock; paid Premium passes the client pre-gate.
+
 ## YO Voice 3.5.0 (40) — Premium Pages, the Treści tab (ADR-231..233) — 2026-09-28
 
 **Status: on `main` as `3.5.0+40`.** Pages landed as `a6d5bd50`..`ee18d82b`
