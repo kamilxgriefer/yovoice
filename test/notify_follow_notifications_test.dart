@@ -548,7 +548,7 @@ void main() {
 
         await sync.synchronize(const Locale('pl'));
         expect((await userDoc(_me))!['appLanguage'], 'pl');
-        // A merge: the rest of the document is untouched.
+        // One field: the rest of the document is untouched.
         expect((await userDoc(_me))!['displayName'], 'Kasia');
         expect(store.values[AppLanguageSync.storeKey], '$_me|pl');
 
@@ -576,6 +576,10 @@ void main() {
 
     test('a restart does not write again; another account does', () async {
       store.values[AppLanguageSync.storeKey] = '$_me|de';
+      await db.collection('users').doc(_me).set({'uid': _me});
+      await db.collection('users').doc('second-account').set({
+        'uid': 'second-account',
+      });
       final same = AppLanguageSync(
         firestore: db,
         auth: _authFor(_me),
@@ -584,7 +588,7 @@ void main() {
       );
       addTearDown(same.dispose);
       await same.synchronize(const Locale('de'));
-      expect(await userDoc(_me), isNull);
+      expect((await userDoc(_me))!.containsKey('appLanguage'), isFalse);
 
       final other = AppLanguageSync(
         firestore: db,
@@ -600,6 +604,7 @@ void main() {
 
     test('nothing is written while signed out; signing in stores it', () async {
       final auth = MockFirebaseAuth(mockUser: MockUser(uid: _me));
+      await db.collection('users').doc(_me).set({'uid': _me});
       final sync = AppLanguageSync(
         firestore: db,
         auth: auth,
@@ -608,7 +613,7 @@ void main() {
       );
       addTearDown(sync.dispose);
       await sync.synchronize(const Locale('fr'));
-      expect(await userDoc(_me), isNull);
+      expect((await userDoc(_me))!.containsKey('appLanguage'), isFalse);
       expect(store.values, isEmpty);
 
       await auth.signInWithCredential(null);
@@ -619,8 +624,69 @@ void main() {
       expect(store.values[AppLanguageSync.storeKey], '$_me|fr');
     });
 
+    test(
+      'never creates the profile document; stores once the profile is ready',
+      () async {
+        // A brand-new account: Firebase Auth has published it, registration
+        // has not written users/{uid} yet. Creating the document from here
+        // would make createUserProfile skip `createdAt` and its seed (rules
+        // make createdAt create-only).
+        final auth = MockFirebaseAuth(mockUser: MockUser(uid: _me));
+        final sync = AppLanguageSync(
+          firestore: db,
+          auth: auth,
+          store: store,
+          log: logs.add,
+        );
+        addTearDown(sync.dispose);
+        await sync.synchronize(const Locale('pl'));
+        await auth.signInWithCredential(null);
+        for (var turn = 0; turn < 10; turn++) {
+          await Future<void>.delayed(Duration.zero);
+        }
+        expect(await userDoc(_me), isNull, reason: 'no stub document');
+        expect(store.values, isEmpty);
+        // Ready before any profile exists (a bootstrap that failed half
+        // way): still nothing is created.
+        await sync.profileReady();
+        expect(await userDoc(_me), isNull);
+        // "No document yet" is expected, not an error worth a log line.
+        expect(logs, isEmpty);
+
+        // Registration writes the profile as the document's first writer…
+        await db.collection('users').doc(_me).set({
+          'uid': _me,
+          'displayName': 'Kasia',
+          'createdAt': DateTime(2026, 10, 6),
+        });
+        // …and the profile bootstrap then says so.
+        await sync.profileReady();
+        final stored = (await userDoc(_me))!;
+        expect(stored['appLanguage'], 'pl');
+        expect(stored['displayName'], 'Kasia');
+        expect(stored.containsKey('createdAt'), isTrue);
+        expect(store.values[AppLanguageSync.storeKey], '$_me|pl');
+        expect(logs, isEmpty);
+      },
+    );
+
+    test('profileReady before any locale is resolved does nothing', () async {
+      await db.collection('users').doc(_me).set({'uid': _me});
+      final sync = AppLanguageSync(
+        firestore: db,
+        auth: _authFor(_me),
+        store: store,
+        log: logs.add,
+      );
+      addTearDown(sync.dispose);
+      await sync.profileReady();
+      expect((await userDoc(_me))!.containsKey('appLanguage'), isFalse);
+      expect(logs, isEmpty);
+    });
+
     test('an unwritable store costs a write, never the language', () async {
       store.failWrites = true;
+      await db.collection('users').doc(_me).set({'uid': _me});
       final sync = AppLanguageSync(
         firestore: db,
         auth: _authFor(_me),

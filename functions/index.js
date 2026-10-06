@@ -532,14 +532,18 @@ exports.onPageCapabilityGrantChanged = onPageCapabilityGrantChanged;
 // post opens a paged fan-out outbox, and the outbox trigger writes one bell
 // row per follower, 200 followers per invocation. The publish callable is
 // unchanged. The push for those rows (recipient's language, at most one per
-// Page per day) is onNotificationCreated.
+// Page per day) is onNotificationCreated. A post that stops being published
+// (deleted, held, removed, gone with its account) takes every follower's row
+// with it: onPagePostUnpublished.
 const {
   onPagePostCreated,
   onPagePostFanoutOutboxWritten,
+  onPagePostUnpublished,
 } = require("./notifications/page_posts");
 
 exports.onPagePostCreated = onPagePostCreated;
 exports.onPagePostFanoutOutboxWritten = onPagePostFanoutOutboxWritten;
+exports.onPagePostUnpublished = onPagePostUnpublished;
 
 const { getMyStaffCapabilities } = require("./staff/capabilities");
 

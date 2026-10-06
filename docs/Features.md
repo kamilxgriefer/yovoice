@@ -576,7 +576,11 @@ deep link is reachable. The spec and the owner-approved renders live in
   Notifications → Following → "New posts from Pages you follow", on by
   default) that silences the push and never the bell row. Unfollowing,
   blocking, a paused or suspended Page, a deleted or held post and the Pages
-  kill switch each stop it.
+  kill switch each stop it. When the post is deleted, held or removed — or
+  its owner's account is — the row disappears from every follower's bell;
+  a block removes the blocked Page's rows too. An account that has not
+  opened build 42 yet gets the bell row but no push (older builds can
+  neither open nor silence it).
 - **Languages.** Every string is translated in all 43 app languages
   (`translations_pages.dart`, `test/pages_localization_test.dart`), and every
   count uses each language's plural forms.
@@ -692,5 +696,7 @@ Since ADR-237 (source only, **not deployed**):
 - **Settings → Notifications** opens with a **Following** group (LIVE from
   people you follow, new posts from Pages you follow), and the whole screen
   is translated in all 43 languages. Bell titles for friend requests,
-  invitations, calls, mentions and achievements are translated too; before,
-  only English and Polish existed for them.
+  invitations, calls, mentions and achievements are translated too, and so
+  is the notification centre itself (its subtitle, the Activity heading,
+  "Mark all read", the empty and error states, the row menu and the
+  screen-reader labels); before, only English and Polish existed for them.

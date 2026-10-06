@@ -1,4 +1,5 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { logger } = require("firebase-functions/v2");
 const { createHash, randomUUID } = require("node:crypto");
 const {
   FieldPath,
@@ -16,6 +17,9 @@ const {
   notificationReference,
   restrictionIsActive,
 } = require("../notifications/canonical");
+const {
+  retirePagePostNotificationsBetween,
+} = require("../notifications/page_post_rows");
 const {
   paidCreatorAudienceEligibility,
   sourceProfileVisibleToCaller,
@@ -2069,6 +2073,34 @@ const setFollow = onCall(
   },
 );
 
+/**
+ * After a block: each party's bell rows about the OTHER party's Page posts
+ * (ADR-237). A block hides a Page from the blocked account in both
+ * directions, and a row shows the Page's name and a post's first line, so
+ * the rows go too. Their ids depend on the post, which is why this is a
+ * bounded query after the transaction rather than a deterministic delete
+ * inside it.
+ *
+ * Best effort on purpose: the block itself has committed and must never be
+ * reported as failed because a tidy-up query was. A row that survives opens
+ * nothing (the post detail refuses a blocked reader) and is retired with its
+ * post.
+ */
+async function retireFollowedPagePostRowsAfterBlock(firstId, secondId) {
+  try {
+    await Promise.all([
+      retirePagePostNotificationsBetween(firstId, secondId),
+      retirePagePostNotificationsBetween(secondId, firstId),
+    ]);
+  } catch (error) {
+    logger.warn("Followed-Page post rows were not retired after a block", {
+      code: typeof error?.code === "string" || Number.isSafeInteger(error?.code)
+        ? error.code
+        : null,
+    });
+  }
+}
+
 const setUserBlock = onCall(
   { region: REGION, enforceAppCheck: false },
   async (request) => {
@@ -2318,6 +2350,7 @@ const setUserBlock = onCall(
         "You have reached the block-list safety limit.",
       );
     }
+    await retireFollowedPagePostRowsAfterBlock(auth.uid, targetUserId);
     return result;
   },
 );

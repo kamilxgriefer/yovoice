@@ -918,7 +918,9 @@ characters AFTER the attribution, so a Page named to read like a YO Voice
 notice cannot pose as one on builds that render the unknown type as
 `system` (the pagePostComment rule). `postPreview` is the post's own first
 line, at most 120 code points, with control, zero-width and bidi characters
-removed. A Page post is public to every signed-in reader, which is the only
+removed (the zero-width joiner and non-joiner stay: the publish path allows
+exactly those two, and Persian, Urdu, Indic text and emoji sequences need
+them). A Page post is public to every signed-in reader, which is the only
 reason its words may appear on a lock screen: `buildPushMessage` honours a
 caller's `body` for the types in `PUSH_BODY_TYPES` and for nothing else, so
 this is not a door for a comment's or a message's text.
@@ -927,7 +929,10 @@ read: short strings only, never a canonical key (`actorId`, `isRead`, …) and
 never a `push*` field.
 
 **How often.** One push per Page per day per follower, enforced by a receipt
-created in the claim transaction; the bell row is always written. A Page is
+created in the claim transaction; the bell row is always written. The day is
+UTC, so yesterday's receipt is read too and a push is also withheld while
+the previous one from that Page is younger than six hours: two posts either
+side of UTC midnight ring once. A Page is
 already limited to its daily post budget, so the bell cannot be flooded
 either.
 
@@ -947,13 +952,55 @@ drop one. It holds the Page's name and the post's first line only while
 rows are still being written; the commit that completes the fan-out blanks
 both, and Firestore TTL removes the row after seven days.
 
-**Residual, written down.** (1) A follower's bell row is not retired when
-the post is later deleted or held: the push is stopped and the post detail
-shows "unavailable", but the row and its first line stay in that follower's
-inbox until they delete it. (2) Builds 40/41 show the row as a `system` row
-with the English sentence and have no switch for it; they can silence it
-only by unfollowing or updating. (3) A push already delivered cannot be
-recalled when the post is removed afterwards.
+**When the post goes, the rows go.** A row carries the post's first line,
+so it must not outlive the right to read the post. `onPagePostUnpublished`
+fires on every write to `pagePosts/{postId}` and, when the post leaves
+`published` — the owner's delete (hard or a tombstone), a moderator's hold
+or removal, account deletion, the evidence purge — deletes every follower's
+row of it. It is one trigger on the document rather than a hook in each
+writer, so a path added later (Page deletion) is covered without knowing it
+exists; it deletes only `users/{uid}/notifications/pagePost_{postId}` of
+type `pagePostPublished`, is idempotent and is retried by the platform
+until it finishes. Rows are found through the row's own `sourcePath`
+(collection-group index declared and asserted, ADR-007), not through the
+follower list, so somebody who unfollowed since — or whose edges account
+deletion already removed — is found too. Every row writer validates the
+post inside its transaction, so a row cannot be committed after the write
+that fires the trigger. `setUserBlock` additionally removes each party's
+rows about the other party's Page (best effort, after its transaction).
+
+**Who is pushed.** Only an account that has opened a build which knows the
+type. Builds 40/41 have no switch for "posts from Pages you follow" and
+open nothing when its push is tapped, so a push would be something its
+recipient can neither open nor silence. `users/{uid}.appLanguage` — written
+only by build 42 and later, a closed enum in rules — is the marker: without
+it the push is skipped (`client-too-old`) and the bell row is kept. This
+also removes the deploy-order hazard: the triggers may be deployed before
+build 42 reaches everyone.
+
+**The profile document is never created by the language write.**
+`AppLanguageSync` uses `update`, which fails on a missing document. A merge
+`set` would race registration (the profile's first writer is the only one
+that may set `createdAt`) and could re-create `users/{uid}` for an account
+that was just deleted while its token was still valid.
+
+**Residual, written down.** (1) A push already delivered cannot be recalled
+when the post is removed afterwards, and a post that was announced and then
+hard-deleted by its owner leaves no evidence and nothing to report: a Page
+can put one line (120 characters) on each follower's lock screen once a day
+and delete the post. The rows disappear with the post; keeping the post
+reportable for a while after such a delete needs a report path from a
+notification and a retention decision (owner, privacy policy). (2) Builds
+40/41 show the bell row as a `system` row with the English sentence; they
+get no push for it. (3) The stream-driven in-app banner shows every new
+unread row whatever the push switches say, as for every other type; the cap
+and the switch govern system pushes. (4) Each follower's
+transaction reads five documents every follower shares (the post, the
+Page, the owner, the owner's restriction, `appConfig/pagesV1`); for a Page
+with tens of thousands of followers this may delay writes to those
+documents while a page of 200 is in flight — load-test before Pages of
+that size exist. (5) `users/{uid}/muted` is not consulted by any server
+notification path (pre-existing).
 
 ## Room and club membership authority (hardened 2026-08-16)
 

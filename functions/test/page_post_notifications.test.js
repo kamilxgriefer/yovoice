@@ -1,13 +1,16 @@
 /**
  * "A Page you follow published a post" (ADR-237): the source validator, the
- * paged fan-out outbox, the bell row's exact shape and the per-Page daily
- * push cap. Runs against the Firestore emulator, like every other
- * notification suite:
+ * paged fan-out outbox, the bell row's exact shape, the per-Page daily push
+ * cap, the "client too old" push gate and the retirement of rows when a post
+ * stops being published or a block lands. Runs against the Firestore
+ * emulator, like every other notification suite:
  *
  *   firebase emulators:exec --only firestore --project demo-yovoice \
  *     "cd functions && node --test --test-concurrency=1 test/page_post_notifications.test.js"
  */
 const assert = require("node:assert/strict");
+const { readFileSync } = require("node:fs");
+const path = require("node:path");
 const { after, before, test } = require("node:test");
 
 process.env.FIRESTORE_EMULATOR_HOST ||= "127.0.0.1:8080";
@@ -19,6 +22,7 @@ const { Timestamp } = require("firebase-admin/firestore");
 
 const { db } = require("../utils/firestore");
 const { PAGES_ACTIVATION_PATH } = require("../pages/activation");
+const { pageNameSearch } = require("../pages/contract");
 const { pageBudgetDay } = require("../pages/media_contract");
 const {
   CANONICAL_NOTIFICATION_KEYS,
@@ -37,6 +41,7 @@ const {
   ensurePagePostFanoutOutbox,
   handlePagePostCreated,
   handlePagePostFanoutOutboxWritten,
+  handlePagePostUnpublished,
   pagePostEventId,
   pagePostFanoutOutboxReference,
   pagePostNotificationId,
@@ -45,13 +50,23 @@ const {
   processPagePostFanoutOutbox,
 } = require("../notifications/page_posts");
 const {
+  pagePostNotificationsQuery,
+  retirePagePostNotifications,
+  retirePagePostNotificationsBetween,
+} = require("../notifications/page_post_rows");
+const {
   PAGE_POST_PUSH_CAP_SKIP_REASON,
+  PAGE_POST_PUSH_MIN_GAP_MS,
+  PUSH_CLIENT_TOO_OLD_SKIP_REASON,
+  PUSH_REQUIRES_CURRENT_CLIENT,
   PUSH_TITLES,
   handleNotificationCreated,
   pagePostPushCapDay,
   pagePostPushCapReference,
+  pushNeedsNewerClient,
   pushPreferenceDisabled,
 } = require("../notifications/push");
+const { setUserBlock } = require("../friends/social_graph");
 const {
   documentGeneration,
   isRegisteredNotificationType,
@@ -63,12 +78,14 @@ const {
   pagesActivation,
   photoMedia,
   postDoc,
+  request,
   seedAccount,
   seedFollowEdge,
   seedPage,
 } = require("./helpers/pages_fixture");
 
 const NOW = Date.now();
+const runBlock = setUserBlock.run ?? setUserBlock;
 let previousActivation = null;
 
 before(async () => {
@@ -101,7 +118,12 @@ async function scene({ followers = 1, post = {}, page = {} } = {}) {
   for (let index = 0; index < followers; index += 1) {
     const followerId = freshUid("fl");
     followerIds.push(followerId);
-    await seedAccount(db, followerId, NOW, { displayName: `Follower ${index}` });
+    // `appLanguage` marks an account that has opened build 42 or later: the
+    // only accounts a followed Page's post is PUSHED to.
+    await seedAccount(db, followerId, NOW, {
+      displayName: `Follower ${index}`,
+      user: { appLanguage: "en" },
+    });
     await seedFollowEdge(db, followerId, pageId, NOW);
   }
   const snapshot = await db.doc(`pagePosts/${postId}`).get();
@@ -181,8 +203,22 @@ test("preview and old-client label are bounded and attribution-first", () => {
   const long = pagePostPreview("a".repeat(500));
   assert.equal(Array.from(long).length, 120);
   assert.ok(long.endsWith("…"));
-  // Bidi and zero-width controls never reach a lock screen.
-  assert.equal(pagePostPreview("Hej‮​świat"), "Hej świat");
+  // Bidi and invisible controls never reach a lock screen.
+  assert.equal(pagePostPreview("Hej\u202e\u200b\u015bwiat"), "Hej \u015bwiat");
+  assert.equal(pagePostPreview("a\u2066b\u2069c\ufeffd\u200ee\u0000f"), "a b c d e f");
+  // The two format characters the publish path allows survive: Persian
+  // needs the zero-width non-joiner and emoji sequences need the joiner.
+  const persian = "\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645";
+  assert.equal(pagePostPreview(persian), persian);
+  const family = "\u{1F468}\u200d\u{1F469}\u200d\u{1F467}";
+  assert.equal(pagePostPreview(`Rodzina ${family}`), `Rodzina ${family}`);
+  // ... but joiners alone are not a preview, and a cut never ends on one.
+  assert.equal(pagePostPreview("\u200d \u200c"), "");
+  const cut = pagePostPreview(`${"x".repeat(118)}${family}`);
+  assert.equal(Array.from(cut).length, 120);
+  assert.equal(/[\u200c\u200d]\u2026$/u.test(cut), false);
+  assert.ok(cut.endsWith("\u2026"));
+  assert.ok(cut.length <= 240);
   // A whole emoji is never cut in half.
   const emoji = pagePostPreview("🎉".repeat(200));
   assert.equal(Array.from(emoji).length, 120);
@@ -416,18 +452,49 @@ test("a published post opens ONE outbox; held and stale posts open none", async 
   await handlePagePostCreated(postCreatedEvent(current));
   assert.deepEqual((await reference.get()).data().createdAt, first.createdAt);
 
+  // Redelivered AFTER the owner renamed the Page and changed its kind: the
+  // label and kind are rebuilt from the current Page, and that used to be an
+  // "identity conflict" retried with errors for six hours. It is the same
+  // post: nothing changes and the outbox keeps the first delivery's words.
+  await db.doc(`pages/${current.pageId}`).update({
+    displayName: "Glina i Ogie\u0144",
+    nameSearch: pageNameSearch("Glina i Ogie\u0144"),
+  });
+  assert.equal(pagePostTargetLabel("Glina i Ogie\u0144") === first.targetLabel, false);
+  assert.equal(await handlePagePostCreated(postCreatedEvent(current)), reference.path);
+  const afterRename = (await reference.get()).data();
+  assert.equal(afterRename.targetLabel, first.targetLabel);
+  assert.equal(afterRename.pageKind, "business");
+  assert.deepEqual(afterRename.createdAt, first.createdAt);
+  await ensurePagePostFanoutOutbox({
+    postId: current.postId,
+    pageId: current.pageId,
+    sourceGeneration: current.sourceGeneration,
+    targetLabel: "New post from a Page you follow: somebody renamed",
+    postPreview: "other words",
+    pageKind: "community",
+  });
+  assert.equal((await reference.get()).data().postPreview, first.postPreview);
+
   // A different identity under the same post id is refused, not merged.
-  await assert.rejects(
-    ensurePagePostFanoutOutbox({
-      postId: current.postId,
-      pageId: "somebody-else",
-      sourceGeneration: current.sourceGeneration,
-      targetLabel: first.targetLabel,
-      postPreview: first.postPreview,
-      pageKind: "business",
-    }),
-    /identity conflict/u,
-  );
+  for (const forged of [
+    { pageId: "somebody-else" },
+    { sourceGeneration: "1:1" },
+  ]) {
+    await assert.rejects(
+      ensurePagePostFanoutOutbox({
+        postId: current.postId,
+        pageId: current.pageId,
+        sourceGeneration: current.sourceGeneration,
+        targetLabel: first.targetLabel,
+        postPreview: first.postPreview,
+        pageKind: "business",
+        ...forged,
+      }),
+      /identity conflict/u,
+      JSON.stringify(forged),
+    );
+  }
 
   const held = await scene({ post: { status: "held", heldAt: Timestamp.fromMillis(NOW) } });
   assert.equal(await handlePagePostCreated(postCreatedEvent(held)), null);
@@ -437,6 +504,20 @@ test("a published post opens ONE outbox; held and stale posts open none", async 
   const longAgo = new Date(Date.now() - PAGE_POST_RETRY_WINDOW_MS - 60_000).toISOString();
   assert.equal(await handlePagePostCreated(postCreatedEvent(stale, longAgo)), null);
   assert.equal((await pagePostFanoutOutboxReference(stale.postId).get()).exists, false);
+
+  // A fresh EVENT for an old POST: a restore, an import or a migration
+  // script wrote the document again. It was published long ago and is not
+  // announced as new.
+  const restored = await scene({
+    post: { createdAt: Timestamp.fromMillis(NOW - PAGE_POST_RETRY_WINDOW_MS - 60_000) },
+  });
+  assert.equal(await handlePagePostCreated(postCreatedEvent(restored)), null);
+  assert.equal((await pagePostFanoutOutboxReference(restored.postId).get()).exists, false);
+  // Just inside the window it still is.
+  const recent = await scene({
+    post: { createdAt: Timestamp.fromMillis(NOW - PAGE_POST_RETRY_WINDOW_MS + 600_000) },
+  });
+  assert.notEqual(await handlePagePostCreated(postCreatedEvent(recent)), null);
 
   const malformed = await scene();
   await db.doc(`pagePosts/${malformed.postId}`).update({ unexpected: true });
@@ -768,6 +849,41 @@ test("one push per Page per day; later posts only land in the bell", async () =>
   assert.equal(messaging.messages[1].notification.body, "Post następnego dnia");
 });
 
+test("two posts either side of UTC midnight ring once", async () => {
+  assert.equal(PAGE_POST_PUSH_MIN_GAP_MS, 6 * 60 * 60 * 1000);
+  const current = await scene({ followers: 1 });
+  const [follower] = current.followerIds;
+  await db.doc(`users/${follower}/fcmTokens/token-midnight`).set({ updatedAt: Timestamp.now() });
+  await handlePagePostCreated(postCreatedEvent(current));
+  await drain(pagePostFanoutOutboxReference(current.postId));
+  const messaging = messagingSpy();
+  const lateEvening = Date.UTC(2026, 9, 10, 23, 58, 0);
+  assert.equal((await pushRow(follower, current.postId, messaging, lateEvening))
+    .pushDeliveryStatus, "sent");
+
+  // Four minutes later it is "tomorrow" in UTC. Still the same evening.
+  const second = await publishAndFanOut(current.pageId, "Dwie minuty po północy");
+  const straddle = await pushRow(follower, second, messaging, Date.UTC(2026, 9, 11, 0, 2, 0));
+  assert.equal(straddle.pushDeliveryStatus, "skipped");
+  assert.equal(straddle.pushSkipReason, "daily-cap");
+  assert.equal(messaging.messages.length, 1);
+  // A withheld push spends nothing: the new day's push is still available…
+  assert.equal((await pagePostPushCapReference(follower, current.pageId, "20261011").get()).exists,
+    false);
+  // …and rings once six hours have passed since the last one.
+  const third = await publishAndFanOut(current.pageId, "Rano");
+  const stillClose = await pushRow(
+    follower, third, messaging, lateEvening + PAGE_POST_PUSH_MIN_GAP_MS - 1_000);
+  assert.equal(stillClose.pushSkipReason, "daily-cap");
+  const fourth = await publishAndFanOut(current.pageId, "Rano, drugi raz");
+  const morning = await pushRow(
+    follower, fourth, messaging, lateEvening + PAGE_POST_PUSH_MIN_GAP_MS + 1_000);
+  assert.equal(morning.pushDeliveryStatus, "sent");
+  assert.equal(messaging.messages.length, 2);
+  assert.equal((await pagePostPushCapReference(follower, current.pageId, "20261011").get()).exists,
+    true);
+});
+
 test("the cap is per Page: another followed Page still rings the same day", async () => {
   const one = await scene({ followers: 1 });
   const [follower] = one.followerIds;
@@ -860,4 +976,262 @@ test("two posts racing the claim ring once", async () => {
   ]);
   assert.deepEqual([left.pushDeliveryStatus, right.pushDeliveryStatus].sort(), ["sent", "skipped"]);
   assert.equal(messaging.messages.length, 1);
+});
+
+// ------------------------------------------- builds that predate the type
+
+test("an account that never opened build 42 gets the row, not the push", async () => {
+  assert.deepEqual([...PUSH_REQUIRES_CURRENT_CLIENT], ["pagePostPublished"]);
+  assert.equal(PUSH_CLIENT_TOO_OLD_SKIP_REASON, "client-too-old");
+  assert.equal(pushNeedsNewerClient({}, "pagePostPublished"), true);
+  assert.equal(pushNeedsNewerClient(undefined, "pagePostPublished"), true);
+  assert.equal(pushNeedsNewerClient({ appLanguage: "system" }, "pagePostPublished"), true);
+  assert.equal(pushNeedsNewerClient({ appLanguage: "pl" }, "pagePostPublished"), false);
+  assert.equal(pushNeedsNewerClient({ appLanguage: "en" }, "pagePostPublished"), false);
+  // Every type that existed before keeps pushing to every build.
+  for (const type of ["follow", "friendRequest", "pagePostComment", "liveStarted", "system"]) {
+    assert.equal(pushNeedsNewerClient({}, type), false, type);
+  }
+
+  const current = await scene({ followers: 1 });
+  const [follower] = current.followerIds;
+  // Builds 40/41: a token, no switch for this type, no stored language.
+  await db.doc(`users/${follower}`).update({ appLanguage: null });
+  await db.doc(`users/${follower}/fcmTokens/token-old-build`).set({ updatedAt: Timestamp.now() });
+  await handlePagePostCreated(postCreatedEvent(current));
+  await drain(pagePostFanoutOutboxReference(current.postId));
+  const messaging = messagingSpy();
+  const at = Date.UTC(2026, 9, 9, 8, 0, 0);
+  const row = await pushRow(follower, current.postId, messaging, at);
+  assert.equal(row.type, "pagePostPublished");
+  assert.equal(row.targetLabel, "New post from a Page you follow: Pracownia Glina");
+  assert.equal(row.pushDeliveryStatus, "skipped");
+  assert.equal(row.pushSkipReason, "client-too-old");
+  assert.equal(messaging.messages.length, 0);
+  // Nothing was spent: once the account opens build 42, today still rings.
+  assert.equal((await pagePostPushCapReference(follower, current.pageId, "20261009").get()).exists,
+    false);
+  await db.doc(`users/${follower}`).update({ appLanguage: "pl" });
+  const second = await publishAndFanOut(current.pageId, "Po aktualizacji");
+  const pushed = await pushRow(follower, second, messaging, at + 60_000);
+  assert.equal(pushed.pushDeliveryStatus, "sent");
+  assert.equal(messaging.messages.length, 1);
+  assert.equal(messaging.messages[0].notification.title, "Pracownia Glina dodaje post");
+  assert.equal(messaging.messages[0].notification.body, "Po aktualizacji");
+});
+
+// --------------------------------------------------------------- retiring
+
+function unpublishEvent(postId, before, after) {
+  return { params: { postId }, data: { before, after } };
+}
+
+async function rowExists(uid, postId) {
+  return (await db.doc(`users/${uid}/notifications/${pagePostNotificationId(postId)}`).get())
+    .exists;
+}
+
+test("the retirement query's COLLECTION_GROUP index is declared", () => {
+  // ADR-007: automatic single-field indexes are COLLECTION scope only, and
+  // the emulator enforces neither. Without this override production answers
+  // the trigger's query with FAILED_PRECONDITION and no row is ever retired.
+  const config = JSON.parse(readFileSync(
+    path.resolve(__dirname, "../../firestore.indexes.json"),
+    "utf8",
+  ));
+  const overrides = config.fieldOverrides.filter((override) =>
+    override.collectionGroup === "notifications" && override.fieldPath === "sourcePath");
+  assert.equal(overrides.length, 1);
+  assert.ok(overrides[0].indexes.some((index) =>
+    index.queryScope === "COLLECTION_GROUP" && index.order === "ASCENDING"));
+  // A fieldOverride REPLACES automatic indexing: the collection-scope
+  // entries every other field keeps by default are declared again.
+  for (const expected of [
+    { order: "ASCENDING", queryScope: "COLLECTION" },
+    { order: "DESCENDING", queryScope: "COLLECTION" },
+    { arrayConfig: "CONTAINS", queryScope: "COLLECTION" },
+  ]) {
+    assert.ok(overrides[0].indexes.some((index) =>
+      Object.entries(expected).every(([key, value]) => index[key] === value)),
+    JSON.stringify(expected));
+  }
+  assert.notEqual(overrides[0].ttl, true);
+});
+
+test("a post that stops being published takes every follower's row with it", async () => {
+  const current = await scene({ followers: 5 });
+  const [reader, unfollowed, deletedOwn, ...others] = current.followerIds;
+  await handlePagePostCreated(postCreatedEvent(current));
+  await drain(pagePostFanoutOutboxReference(current.postId));
+  const kept = await publishAndFanOut(current.pageId, "Ten post zostaje");
+  for (const follower of current.followerIds) {
+    assert.equal(await rowExists(follower, current.postId), true);
+    assert.equal(await rowExists(follower, kept), true);
+  }
+  // Rows that are NOT this post's row, in the same inboxes.
+  await db.doc(`users/${reader}/notifications/follow_someone`).set({
+    type: "follow",
+    actorId: "someone",
+    isRead: false,
+  });
+  // Unfollowing later keeps the row (it was earned) but removes the edge the
+  // fan-out walked: retirement must not depend on the follower list.
+  await db.doc(`users/${unfollowed}/following/${current.pageId}`).delete();
+  await db.doc(`users/${current.pageId}/followers/${unfollowed}`).delete();
+  // A row the follower already deleted is simply not there.
+  await db.doc(`users/${deletedOwn}/notifications/${pagePostNotificationId(current.postId)}`)
+    .delete();
+  // Something else that happens to carry the same sourcePath is left alone:
+  // only the row this feature wrote, under its own id, in a user inbox.
+  const lookalikes = [
+    db.doc(`users/${reader}/notifications/other_id`),
+    db.doc(`clubs/some-server/notifications/${pagePostNotificationId(current.postId)}`),
+  ];
+  await lookalikes[0].set({ type: "system", sourcePath: `pagePosts/${current.postId}` });
+  await lookalikes[1].set({
+    type: "pagePostPublished",
+    sourcePath: `pagePosts/${current.postId}`,
+  });
+
+  // The real collection-group query sees exactly the rows of this post.
+  const found = await pagePostNotificationsQuery(current.postId).get();
+  assert.equal(found.size, 4 + lookalikes.length);
+
+  const before = current.snapshot;
+  // A like, a comment or a pin: published before and after. Nothing is read.
+  const neverRead = {
+    collectionGroup: () => {
+      throw new Error("an ordinary post write must not query anything");
+    },
+  };
+  await db.doc(`pagePosts/${current.postId}`).update({ likeCount: 3 });
+  const liked = await db.doc(`pagePosts/${current.postId}`).get();
+  assert.equal(await handlePagePostUnpublished(
+    unpublishEvent(current.postId, before, liked), { firestore: neverRead }), null);
+  // A create is not an unpublish, and neither is a hold being lifted.
+  assert.equal(await handlePagePostUnpublished(
+    unpublishEvent(current.postId, { exists: false }, liked), { firestore: neverRead }), null);
+  assert.equal(await handlePagePostUnpublished(unpublishEvent(
+    current.postId,
+    { exists: true, id: current.postId, data: () => ({ status: "held" }) },
+    liked,
+  ), { firestore: neverRead }), null);
+  assert.equal(await rowExists(reader, current.postId), true);
+
+  // The owner deletes the post (a hard delete): two batches of 3 and 1.
+  await db.doc(`pagePosts/${current.postId}`).delete();
+  const gone = await db.doc(`pagePosts/${current.postId}`).get();
+  const retired = await handlePagePostUnpublished(
+    unpublishEvent(current.postId, liked, gone), { batchSize: 3 });
+  assert.deepEqual(retired, { deleted: 4, done: true });
+  for (const follower of current.followerIds) {
+    assert.equal(await rowExists(follower, current.postId), false, follower);
+    // Another post of the same Page keeps its rows.
+    assert.equal(await rowExists(follower, kept), true, follower);
+  }
+  assert.equal((await db.doc(`users/${reader}/notifications/follow_someone`).get()).exists, true);
+  for (const lookalike of lookalikes) assert.equal((await lookalike.get()).exists, true);
+  // Redelivered: nothing left, still done.
+  assert.deepEqual(await handlePagePostUnpublished(
+    unpublishEvent(current.postId, liked, gone)), { deleted: 0, done: true });
+  // A replayed fan-out page cannot bring a retired row back.
+  await pagePostFanoutOutboxReference(current.postId).update({ status: "pending", afterId: null });
+  await drain(pagePostFanoutOutboxReference(current.postId));
+  assert.equal(await rowExists(others[0], current.postId), false);
+  await Promise.all(lookalikes.map((lookalike) => lookalike.delete()));
+});
+
+test("a hold, a moderator's removal and a tombstone retire rows too", async () => {
+  for (const change of [
+    { status: "held", heldAt: Timestamp.fromMillis(NOW) },
+    { status: "removed", removedAt: Timestamp.fromMillis(NOW), removedReason: "spam" },
+    { status: "deleted", deletedAt: Timestamp.fromMillis(NOW) },
+  ]) {
+    const current = await scene({ followers: 2 });
+    await handlePagePostCreated(postCreatedEvent(current));
+    await drain(pagePostFanoutOutboxReference(current.postId));
+    await db.doc(`pagePosts/${current.postId}`).update(change);
+    const after = await db.doc(`pagePosts/${current.postId}`).get();
+    const retired = await handlePagePostUnpublished(
+      unpublishEvent(current.postId, current.snapshot, after));
+    assert.deepEqual(retired, { deleted: 2, done: true }, change.status);
+    for (const follower of current.followerIds) {
+      assert.equal(await rowExists(follower, current.postId), false, change.status);
+    }
+  }
+});
+
+test("retirement that runs out of budget asks to be run again", async () => {
+  const current = await scene({ followers: 3 });
+  await handlePagePostCreated(postCreatedEvent(current));
+  await drain(pagePostFanoutOutboxReference(current.postId));
+  assert.deepEqual(
+    await retirePagePostNotifications(current.postId, { batchSize: 1, maxBatches: 2 }),
+    { deleted: 2, done: false },
+  );
+  await db.doc(`pagePosts/${current.postId}`).delete();
+  const gone = await db.doc(`pagePosts/${current.postId}`).get();
+  // The trigger turns "not finished" into a retry of the event.
+  await assert.rejects(
+    handlePagePostUnpublished(unpublishEvent(current.postId, current.snapshot, gone), {
+      budgetMs: -1,
+    }),
+    /not finished/u,
+  );
+  assert.deepEqual(await handlePagePostUnpublished(
+    unpublishEvent(current.postId, current.snapshot, gone)), { deleted: 1, done: true });
+  await assert.rejects(retirePagePostNotifications("a/b"), TypeError);
+  await assert.rejects(retirePagePostNotifications(""), TypeError);
+});
+
+test("a block in either direction retires the blocked Page's rows", async () => {
+  const current = await scene({ followers: 3 });
+  const [blocksPage, blockedByPage, bystander] = current.followerIds;
+  await handlePagePostCreated(postCreatedEvent(current));
+  await drain(pagePostFanoutOutboxReference(current.postId));
+  const second = await publishAndFanOut(current.pageId, "Drugi post");
+  // Another Page the first follower also follows: its rows are not touched.
+  const otherPage = freshUid("pg");
+  await seedPage(db, otherPage, NOW, {
+    page: { displayName: "Studio Fala" },
+    user: { displayName: "Studio Fala" },
+  });
+  await seedFollowEdge(db, blocksPage, otherPage, NOW);
+  const otherPost = await publishAndFanOut(otherPage, "Inna strona");
+  // A row of another type that names the same actor is not this helper's.
+  await db.doc(`users/${blocksPage}/notifications/pagePostComment_probe`).set({
+    type: "pagePostComment",
+    actorId: current.pageId,
+    isRead: false,
+  });
+
+  // The follower blocks the Page.
+  await runBlock(request(blocksPage, { targetUserId: current.pageId, blocked: true }));
+  assert.equal(await rowExists(blocksPage, current.postId), false);
+  assert.equal(await rowExists(blocksPage, second), false);
+  assert.equal(await rowExists(blocksPage, otherPost), true);
+  assert.equal(
+    (await db.doc(`users/${blocksPage}/notifications/pagePostComment_probe`).get()).exists,
+    true,
+  );
+  // The Page's owner blocks a follower.
+  await runBlock(request(current.pageId, { targetUserId: blockedByPage, blocked: true }));
+  assert.equal(await rowExists(blockedByPage, current.postId), false);
+  assert.equal(await rowExists(blockedByPage, second), false);
+  // Nobody else's inbox changed.
+  assert.equal(await rowExists(bystander, current.postId), true);
+  assert.equal(await rowExists(bystander, second), true);
+
+  // Bounded and refusing nonsense.
+  assert.deepEqual(await retirePagePostNotificationsBetween(bystander, bystander),
+    { deleted: 0, done: true });
+  assert.deepEqual(await retirePagePostNotificationsBetween("a/b", current.pageId),
+    { deleted: 0, done: true });
+  assert.deepEqual(
+    await retirePagePostNotificationsBetween(bystander, current.pageId, {
+      batchSize: 1,
+      maxBatches: 1,
+    }),
+    { deleted: 1, done: false },
+  );
 });

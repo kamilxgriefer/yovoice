@@ -11,6 +11,7 @@ const { buildPushMessage } = require("./push_payload");
 const {
   localizedPushSurface,
   localizedPushTitle,
+  normalizePushLocale,
   recipientPushLocale,
 } = require("./push_locale");
 const { isCurrentNotificationGeneration } = require("./push_generation");
@@ -59,9 +60,17 @@ function pushDecisionLedgerReference(userId, notificationId, firestore = db) {
 // that day still writes its bell row; only the push is withheld. The receipt
 // lives in the TTL-managed delivery ledger and is created inside the push
 // claim transaction, so two posts racing each other cannot both ring.
+//
+// A calendar day alone has an edge: a post at 23:59 UTC and one at 00:01 UTC
+// are two "days" two minutes apart — and UTC midnight is early evening in
+// the Americas. So yesterday's receipt is read too, and a push is also
+// withheld while the previous one from that Page is younger than six hours.
+// "At most one a day" then also means "never two in a row".
 const PAGE_POST_PUSH_TYPE = "pagePostPublished";
 const PAGE_POST_PUSH_CAP_RETENTION_MS = 3 * 24 * 60 * 60 * 1000;
 const PAGE_POST_PUSH_CAP_SKIP_REASON = "daily-cap";
+const PAGE_POST_PUSH_MIN_GAP_MS = 6 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 function pagePostPushCapDay(nowMs) {
   return new Date(nowMs).toISOString().slice(0, 10).replace(/-/gu, "");
@@ -86,10 +95,26 @@ function pagePostPushCapGate({ type, recipientId, notificationId, now, firestore
     if (typeof pageId !== "string" || pageId.length === 0 || pageId.includes("/")) {
       return { skipReason: "invalid-source" };
     }
-    const day = pagePostPushCapDay(now.toMillis());
+    const nowMs = now.toMillis();
+    const day = pagePostPushCapDay(nowMs);
     const reference = pagePostPushCapReference(recipientId, pageId, day, firestore);
-    const receipt = await transaction.get(reference);
+    const [receipt, previous] = await transaction.getAll(
+      reference,
+      pagePostPushCapReference(
+        recipientId,
+        pageId,
+        pagePostPushCapDay(nowMs - DAY_MS),
+        firestore,
+      ),
+    );
     if (receipt.exists) return { skipReason: PAGE_POST_PUSH_CAP_SKIP_REASON };
+    const previousAtMs = previous.exists &&
+        typeof previous.data()?.createdAt?.toMillis === "function"
+      ? previous.data().createdAt.toMillis()
+      : null;
+    if (previousAtMs !== null && nowMs - previousAtMs < PAGE_POST_PUSH_MIN_GAP_MS) {
+      return { skipReason: PAGE_POST_PUSH_CAP_SKIP_REASON };
+    }
     return {
       commit: () => transaction.create(reference, {
         kind: "pagePostPushCap",
@@ -369,6 +394,29 @@ function pushPreferenceDisabled(preferences, type) {
   return keys.some((key) => preferences?.[key] === false);
 }
 
+// Types whose push needs a build that KNOWS the type (ADR-237).
+//
+// `pagePostPublished` has no older switch it could belong to: builds 40/41
+// show no "posts from Pages you follow" row in notification settings, and
+// they open nothing when its push is tapped (an unknown type is a `system`
+// row with no destination there). A push its recipient can neither open nor
+// silence — except by unfollowing — is not sent. The bell row is still
+// written, and those builds show it as a YO Voice notice.
+//
+// The marker is `users/{uid}.appLanguage`: only build 42 and later write it
+// (AppLanguageSync), rules accept only the 43 locale keys, and the push
+// boundary already holds the document. An account that has it has opened a
+// build with the switch at least once. It also means the triggers may be
+// deployed before build 42 reaches everyone: nobody on an older build is
+// pushed.
+const PUSH_REQUIRES_CURRENT_CLIENT = Object.freeze(["pagePostPublished"]);
+const PUSH_CLIENT_TOO_OLD_SKIP_REASON = "client-too-old";
+
+function pushNeedsNewerClient(userData, type) {
+  return PUSH_REQUIRES_CURRENT_CLIENT.includes(type) &&
+    normalizePushLocale(userData?.appLanguage) === null;
+}
+
 async function deleteTokenReferences(references) {
   const unique = new Map();
   for (const reference of references) {
@@ -514,6 +562,12 @@ async function handleNotificationCreated(event, {
     // foreground suppression is a client concern and does not alter delivery.
     if (pushPreferenceDisabled(preferences, type)) {
       await skip("preference-disabled");
+      return;
+    }
+    // Before the tokens and before the daily cap: nothing is spent on a
+    // push that is not sent.
+    if (pushNeedsNewerClient(userDoc.data(), type)) {
+      await skip(PUSH_CLIENT_TOO_OLD_SKIP_REASON);
       return;
     }
 
@@ -695,9 +749,12 @@ module.exports = {
   onNotificationCreated: exports.onNotificationCreated,
   PAGE_POST_PUSH_CAP_RETENTION_MS,
   PAGE_POST_PUSH_CAP_SKIP_REASON,
+  PAGE_POST_PUSH_MIN_GAP_MS,
+  PUSH_CLIENT_TOO_OLD_SKIP_REASON,
   PUSH_DECISION_LEDGER_TYPES,
   PUSH_DECISION_RETENTION_MS,
   PUSH_PREFERENCE_KEYS,
+  PUSH_REQUIRES_CURRENT_CLIENT,
   PUSH_TITLES,
   claimPushDelivery,
   completePushDelivery,
@@ -711,6 +768,7 @@ module.exports = {
   pagePostPushCapReference,
   pushDecisionLedgerReference,
   pushDeliveryAttemptId,
+  pushNeedsNewerClient,
   pushPreferenceDisabled,
   recordPushDecision,
   skipPushDelivery,

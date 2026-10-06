@@ -171,6 +171,32 @@ void main() {
           reason: 'notification_copy.dart uses an uncatalogued key "$key"',
         );
       }
+      // The notification centre itself: its subtitle, heading, actions,
+      // empty and error states and screen-reader labels used to be English
+      // beside the translated rows.
+      final bell = File(
+        'lib/features/notifications/presentation/screens/'
+        'notifications_screen.dart',
+      ).readAsStringSync();
+      final bellKeys = _catalogKeys(bell);
+      expect(bellKeys.length, greaterThan(20));
+      for (final key in bellKeys) {
+        expect(
+          appTranslationKeys,
+          contains(key),
+          reason: 'notifications_screen.dart uses an uncatalogued key "$key"',
+        );
+      }
+      for (final key in const [
+        'notifyBell.activity',
+        'Mark all read',
+        'You are all caught up',
+        'Friend requests, messages and activity',
+        'Delete notification',
+      ]) {
+        expect(bellKeys, contains(key));
+        expect(notifyFollowTranslationKeys, contains(key));
+      }
       // The settings rows added for the Following group.
       final preferences = File(
         'lib/features/notifications/presentation/screens/'

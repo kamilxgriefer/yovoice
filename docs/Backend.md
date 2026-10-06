@@ -180,9 +180,14 @@ lock-screen body stays generic and no comment text ever enters a payload.
 - `onPagePostCreated` (`functions/notifications/page_posts.js`) — a Firestore
   trigger on `pagePosts/{postId}`, not a change to `publishPagePostV1`. For a
   canonical post that is **born published** it creates
-  `pagePostFanoutOutbox/{id}` once (identity checked; a different identity
-  under the same post is refused) and does nothing else. A held, malformed
-  or six-hour-old event opens no outbox.
+  `pagePostFanoutOutbox/{id}` once and does nothing else. The outbox's
+  identity is only what can never change for a post — post id, Page id,
+  source path, source generation — so a redelivered event after the owner
+  renamed the Page changes nothing instead of failing for six hours; a
+  different identity under the same post is refused. A held, malformed or
+  six-hour-old event opens no outbox, and neither does a post whose own
+  `createdAt` is older than six hours (a restore, an import or a migration
+  writing an old post again is not "new").
 - `onPagePostFanoutOutboxWritten` — the room-live outbox pattern, one page
   per invocation: while the outbox is `pending` it reads **200 followers**
   of the Page after the durable cursor (`users/{page}/followers`, by
@@ -207,6 +212,30 @@ lock-screen body stays generic and no comment text ever enters a payload.
   neither account is muted. The recipient's **preference is not part of
   it**: a switched-off preference silences the push (below) and never the
   bell row, which is what the settings screen promises.
+- `onPagePostUnpublished` (same file; the helper is
+  `functions/notifications/page_post_rows.js`) — a Firestore trigger on
+  every write to `pagePosts/{postId}`. When the document was `published`
+  before and is missing or anything else after — the owner's delete (hard
+  or a tombstone under review), a moderator's hold or removal, the account
+  deletion pipeline, the evidence purge — it deletes **every follower's
+  bell row of that post**, 400 a batch, and throws to be redelivered when
+  one run's budget was not enough. Rows are found with a collection-group
+  query on the row's own `sourcePath` (needs the `COLLECTION_GROUP`
+  single-field index on `notifications.sourcePath`; ADR-007 test in
+  `functions/test/page_post_notifications.test.js`), so a follower who has
+  unfollowed since is found too. It deletes only
+  `users/{uid}/notifications/pagePost_{postId}` of type
+  `pagePostPublished`. A like, a comment, a pin or a hold being lifted
+  returns on the event's own payload, before any read. Every row writer
+  reads the post inside its transaction, so no row can be committed after
+  the write that fires this trigger. A post restored from a hold is not
+  announced again.
+- `setUserBlock` (`functions/friends/social_graph.js`) — after its
+  transaction, best effort, deletes each party's `pagePostPublished` rows
+  whose actor is the other party
+  (`retirePagePostNotificationsBetween`): a block hides a Page in both
+  directions, and a row shows its name and a post's first line. A failure
+  is logged and never fails the block.
 - **Cost per post:** per follower one transaction of 18 document reads (8 in
   the canonical writer, 10 in the validator) and two writes (the bell row
   and its 30-day delivery receipt), plus the push path's reads for the
@@ -219,10 +248,20 @@ lock-screen body stays generic and no comment text ever enters a payload.
   cap is a receipt in `notificationDeliveryEvents`
   (`kind: "pagePostPushCap"`), created **inside the push claim
   transaction** through `claimPushDelivery`'s new `gate` hook, so two posts
-  racing each other cannot both ring. A capped row is marked
+  racing each other cannot both ring. The same gate reads yesterday's
+  receipt and also withholds the push while the previous one from that Page
+  is younger than six hours (`PAGE_POST_PUSH_MIN_GAP_MS`), so a post at
+  23:59 UTC and one at 00:01 UTC ring once. A capped row is marked
   `pushDeliveryStatus: "skipped"`, `pushSkipReason: "daily-cap"` and stays
-  in the bell. The order is preference → tokens → source → cap, so a muted
-  switch or a token-less account spends no cap.
+  in the bell. The order is preference → client → tokens → source → cap,
+  so a muted switch or a token-less account spends no cap.
+- **Builds that predate the type are not pushed.** `pagePostPublished` has
+  no older switch it could belong to and builds 40/41 open nothing when its
+  push is tapped, so `onNotificationCreated` skips the push
+  (`pushSkipReason: "client-too-old"`, bell row kept) for a recipient whose
+  `users/{uid}.appLanguage` is absent or unknown — the field only build 42
+  and later write. The first start of build 42 stores it, and the next post
+  rings. Every other type keeps pushing to every build.
 - **Push language.** `functions/notifications/push_locale.js` reads
   `users/{uid}.appLanguage` from the user document the push already loads
   and picks the title and the generic lock-screen sentences from

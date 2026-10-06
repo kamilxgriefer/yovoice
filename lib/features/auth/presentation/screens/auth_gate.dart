@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:yovoice/core/localization/app_language_sync.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_immersive_colors.dart';
@@ -279,6 +280,12 @@ class _AuthenticatedEntryState extends State<_AuthenticatedEntry> {
 
   Future<void> _bootstrapProfile() async {
     await ensureAuthenticatedProfileWithRetry(ProfileService().ensureProfile);
+
+    // The profile document exists from here on, so the language pushes are
+    // written in may be stored on it (ADR-237). The sync never creates that
+    // document itself: for an account that was just registered, this is the
+    // first attempt that can succeed.
+    unawaited(AppLanguageSync.instance.profileReady());
 
     // Bind push only after the private profile exists. Profile provisioning is
     // the authenticated-entry boundary; push remains best-effort and never

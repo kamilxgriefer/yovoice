@@ -88,12 +88,17 @@ Notable fields:
   - `users/{uid}.appLanguage` — the language the owner's app is shown in:
     one of the 43 locale keys of `lib/core/localization/app_language.dart`
     (`en`, `pl`, `pt_BR`, `zh_CN`, `zh_TW`, …). **Client-written** by
-    `AppLanguageSync` with a merge set, only when the (account, language)
-    pair changes. Rules allow the owner to create, merge and update it with
-    one of those 43 values and nothing else (`appLanguageValueAllowed()`);
-    nobody else reads or writes it. `onNotificationCreated` reads it from
-    the user document it already loads for the preferences. Absent or
-    unknown means English.
+    `AppLanguageSync` with an `update` of that one field, only when the
+    (account, language) pair changes. It never creates the document: a
+    merge set from there raced registration and left new profiles without
+    `createdAt` (create-only by rules), so the profile bootstrap calls
+    `AppLanguageSync.profileReady()` once the document exists. Rules allow
+    the owner to create, merge and update it with one of those 43 values
+    and nothing else (`appLanguageValueAllowed()`); nobody else reads or
+    writes it. `onNotificationCreated` reads it from the user document it
+    already loads for the preferences. Absent or unknown means English —
+    and, for `pagePostPublished` only, no push at all (the account has not
+    opened a build that knows the type).
   - `users/{uid}/notifications/{pagePost_<postId>}` — type
     `pagePostPublished`: `actorId` the Page (its owner's uid), `actorName`
     the Page's name, `targetId` the post, `targetLabel` the English sentence
@@ -112,6 +117,14 @@ Notable fields:
     `postPreview` are blanked the moment the fan-out completes, so a
     finished row holds ids and counters only. No index: followers are read
     by document id.
+  - `fieldOverrides` → `notifications.sourcePath`: the automatic
+    collection-scope entries declared again plus `COLLECTION_GROUP`
+    ascending. `onPagePostUnpublished` finds every follower's row of one
+    post with `collectionGroup("notifications").where("sourcePath", "==",
+    "pagePosts/{postId}")`; without the override production answers
+    `FAILED_PRECONDITION` and no row is retired (ADR-007). No rule matches
+    `notifications` as a collection group, so no client can run that query.
+    Deploy indexes **before** the functions.
   - The per-Page daily push cap is a receipt in the existing TTL-managed
     `notificationDeliveryEvents` collection (`kind: "pagePostPushCap"`,
     keyed by recipient, Page and UTC day, kept three days).

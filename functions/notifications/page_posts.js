@@ -29,6 +29,23 @@
  * deleted or held, a paused or suspended Page, an unfollow or a block stops
  * the row and the push. The per-Page daily push cap lives at the push
  * boundary (push.js): later posts of the same day still land in the bell.
+ *
+ * A row carries the post's first line, so it is RETIRED when the post stops
+ * being published:
+ *
+ *   onPagePostUnpublished           -> a `pagePosts/{postId}` write whose
+ *                                      BEFORE was `published` and whose AFTER
+ *                                      is missing or anything else deletes
+ *                                      every follower's row of that post
+ *                                      (page_post_rows.js)
+ *
+ * One trigger on the post document instead of a hook in each writer, because
+ * a post leaves `published` in many places — the owner's delete (hard or a
+ * tombstone under review), a moderator's hold or removal, the account
+ * deletion pipeline, the evidence purge — and a path added later is covered
+ * without knowing this file exists. Every writer of a row reads the post
+ * inside its own transaction, so no row can be committed after the write
+ * that fires this trigger.
  */
 const { onDocumentCreated, onDocumentWritten } = require(
   "firebase-functions/v2/firestore",
@@ -37,14 +54,19 @@ const { logger } = require("firebase-functions/v2");
 const { FieldValue, Timestamp } = require("firebase-admin/firestore");
 
 const { db } = require("../utils/firestore");
-const { digest } = require("../integrity/guards");
+const { digest, timestampMillis } = require("../integrity/guards");
 const { fanOutRoomLiveFollowers } = require("./activity");
 const { createNotificationForEvent } = require("./canonical");
 const { pagePostPublishedSourceIsCurrent } = require("./engagement_source");
+const {
+  PAGE_POST_NOTIFICATION_TYPE,
+  pagePostNotificationId,
+  pagePostSourcePath,
+  retirePagePostNotifications,
+} = require("./page_post_rows");
 const { documentGeneration } = require("./social_source");
 
 const REGION = "europe-west1";
-const PAGE_POST_NOTIFICATION_TYPE = "pagePostPublished";
 const PAGE_POST_FANOUT_COLLECTION = "pagePostFanoutOutbox";
 const PAGE_POST_FOLLOWER_PAGE_SIZE = 200;
 const PAGE_POST_FANOUT_CONCURRENCY = 16;
@@ -63,24 +85,33 @@ const PAGE_POST_COMPLETED_LABEL = "New post from a Page you follow: a Page";
 const PAGE_KINDS = Object.freeze(["business", "community"]);
 const STOP_REASONS = Object.freeze(["source-gone", "pages-disabled", "expired"]);
 
-function pagePostNotificationId(postId) {
-  return `pagePost_${postId}`;
-}
-
-function pagePostSourcePath(postId) {
-  return `pagePosts/${postId}`;
-}
-
 function pagePostEventId(postId, followerId) {
   return `page-post:${postId}:${followerId}`;
 }
 
+// A cut must not end on a joiner: the emoji or letter it joined to is gone.
+const DANGLING_JOINER = /[\u200c\u200d\s]+$/u;
+
 function cutToCodePoints(value, max) {
   const characters = Array.from(value);
   return characters.length > max
-    ? `${characters.slice(0, max - 1).join("").trimEnd()}…`
+    ? `${characters.slice(0, max - 1).join("").replace(DANGLING_JOINER, "")}…`
     : value;
 }
+
+// Invisible and directional controls never reach a lock screen. Written as
+// escapes on purpose: a literal invisible character in a source file cannot
+// be reviewed and is easily damaged by an editor.
+//
+// U+200C and U+200D (zero-width non-joiner and joiner) are deliberately NOT
+// in this set. The publish path allows exactly those two format characters
+// (pages/media_contract.js) because Persian, Urdu and Indic text and emoji
+// sequences need them: stripping them here turned a family emoji into three
+// people and broke Persian words on the lock screen. Every other format
+// character is already refused at publish; this is the second line.
+const PREVIEW_CONTROLS =
+  /[\u0000-\u001f\u007f-\u009f\u200b\u200e\u200f\u202a-\u202e\u2060-\u2069\ufeff]/gu;
+const PREVIEW_INVISIBLE = /[\s\u200c\u200d\ufe0e\ufe0f]/gu;
 
 /**
  * The one-line preview a newer client shows under the title and the push
@@ -93,10 +124,11 @@ function cutToCodePoints(value, max) {
 function pagePostPreview(text) {
   if (typeof text !== "string") return "";
   const flat = text
-    // Invisible and directional controls never reach a lock screen.
-    .replace(/[\u0000-\u001f\u007f-\u009f​-‏‪-‮⁠-⁩﻿]/gu, " ")
+    .replace(PREVIEW_CONTROLS, " ")
     .replace(/\s+/gu, " ")
     .trim();
+  // Joiners alone are not a preview.
+  if (flat.replace(PREVIEW_INVISIBLE, "").length === 0) return "";
   return cutToCodePoints(flat, PAGE_POST_PREVIEW_MAX);
 }
 
@@ -140,22 +172,25 @@ function validOutbox(data) {
     typeof data.expiresAt?.toMillis === "function";
 }
 
+// What makes an outbox THIS post's outbox: only values that can never change
+// for a post. The Page's name and kind (and so `targetLabel`, `pageKind`) are
+// rebuilt from the CURRENT Page on every delivery of the create event; they
+// used to be part of the identity, so an owner who renamed the Page between
+// two deliveries of one event made the second one throw "identity conflict"
+// and be retried with errors for six hours, although the first had done the
+// work.
 const OUTBOX_IDENTITY_KEYS = Object.freeze([
   "postId",
   "pageId",
   "sourcePath",
   "sourceGeneration",
-  "targetLabel",
-  "postPreview",
-  "pageKind",
 ]);
-// What somebody wrote. Needed only while rows are still being written.
-const OUTBOX_TEXT_KEYS = Object.freeze(["targetLabel", "postPreview"]);
 
 /**
  * Creates the outbox once. A redelivered create event finds the same
- * identity and changes nothing; a DIFFERENT identity under the same post id
- * is a bug upstream and is refused rather than merged.
+ * identity and changes nothing — the outbox keeps the words of the FIRST
+ * delivery; a DIFFERENT identity under the same post id is a bug upstream
+ * and is refused rather than merged.
  */
 async function ensurePagePostFanoutOutbox({
   postId,
@@ -181,13 +216,8 @@ async function ensurePagePostFanoutOutbox({
     const snapshot = await transaction.get(reference);
     if (snapshot.exists) {
       const existing = snapshot.data();
-      // A finished fan-out has dropped its words; only the ids still
-      // identify it, and a redelivered create event must find it done.
-      const keys = validOutbox(existing) && existing.status === "complete"
-        ? OUTBOX_IDENTITY_KEYS.filter((key) => !OUTBOX_TEXT_KEYS.includes(key))
-        : OUTBOX_IDENTITY_KEYS;
       if (!validOutbox(existing) ||
-          keys.some((key) => existing[key] !== identity[key])) {
+          OUTBOX_IDENTITY_KEYS.some((key) => existing[key] !== identity[key])) {
         throw new Error("page-post fanout outbox identity conflict");
       }
       return;
@@ -339,11 +369,14 @@ function eventIsTooOld(event, nowMs = Date.now()) {
   return nowMs - emittedMs > PAGE_POST_RETRY_WINDOW_MS;
 }
 
-async function handlePagePostCreated(event, { firestore = db } = {}) {
+async function handlePagePostCreated(event, {
+  firestore = db,
+  nowMs = Date.now(),
+} = {}) {
   const snapshot = event.data;
   if (!snapshot?.exists) return null;
   const postId = event.params?.postId;
-  if (eventIsTooOld(event)) {
+  if (eventIsTooOld(event, nowMs)) {
     logger.warn("Abandoning a stale Page post notification", { postId });
     return null;
   }
@@ -353,6 +386,17 @@ async function handlePagePostCreated(event, { firestore = db } = {}) {
   // Only a post that is born published announces itself. A held post that
   // moderation restores later is not "new", and a malformed one never is.
   if (!post || post.postId !== postId || post.status !== "published") return null;
+  // The event is fresh; the POST must be too. A `pagePosts` document that a
+  // restore, an import or a migration script writes again is created now but
+  // was published long ago (`createdAt` is the publish instant the callable
+  // stamped), and by then the outbox and the event ledger that would have
+  // refused it have expired: without this, every follower would be told
+  // about a "new" post from last year.
+  const publishedAtMs = timestampMillis(post.createdAt);
+  if (publishedAtMs === null || nowMs - publishedAtMs > PAGE_POST_RETRY_WINDOW_MS) {
+    logger.warn("Page post notification skipped: the post is not new", { postId });
+    return null;
+  }
   const sourceGeneration = documentGeneration(snapshot, "createTime");
   if (typeof sourceGeneration !== "string") return null;
   const page = canonicalPageOrNull(
@@ -399,6 +443,34 @@ async function handlePagePostFanoutOutboxWritten(event, options = {}) {
   return fanout;
 }
 
+/**
+ * Retires every follower's row of a post that just stopped being published.
+ * Every other write to the post — a like, a comment, a pin, a hold lifted —
+ * returns before any read.
+ */
+async function handlePagePostUnpublished(event, { firestore = db, ...options } = {}) {
+  const before = event.data?.before;
+  const after = event.data?.after;
+  if (!before?.exists || before.data()?.status !== "published") return null;
+  if (after?.exists && after.data()?.status === "published") return null;
+  const postId = event.params?.postId;
+  if (typeof postId !== "string" || postId.length === 0 || postId !== before.id) {
+    return null;
+  }
+  const retired = await retirePagePostNotifications(postId, { firestore, ...options });
+  logger.info("page post notifications retired", {
+    postId,
+    deleted: retired.deleted,
+    done: retired.done,
+  });
+  // Not finished inside the budget: the platform redelivers the event and
+  // the next run continues with what is left.
+  if (!retired.done) {
+    throw new Error("page post notification retirement is not finished");
+  }
+  return retired;
+}
+
 const onPagePostCreated = onDocumentCreated(
   {
     document: "pagePosts/{postId}",
@@ -423,6 +495,20 @@ const onPagePostFanoutOutboxWritten = onDocumentWritten(
   (event) => handlePagePostFanoutOutboxWritten(event),
 );
 
+// Fires on EVERY write to a post, likes and comments included; all but an
+// unpublish return on two field reads of the event's own payload.
+const onPagePostUnpublished = onDocumentWritten(
+  {
+    document: "pagePosts/{postId}",
+    region: REGION,
+    memory: "256MiB",
+    timeoutSeconds: 300,
+    maxInstances: 25,
+    retry: true,
+  },
+  (event) => handlePagePostUnpublished(event),
+);
+
 module.exports = {
   PAGE_POST_FANOUT_COLLECTION,
   PAGE_POST_FOLLOWER_PAGE_SIZE,
@@ -433,8 +519,10 @@ module.exports = {
   ensurePagePostFanoutOutbox,
   handlePagePostCreated,
   handlePagePostFanoutOutboxWritten,
+  handlePagePostUnpublished,
   onPagePostCreated,
   onPagePostFanoutOutboxWritten,
+  onPagePostUnpublished,
   pagePostEventId,
   pagePostFanoutOutboxReference,
   pagePostNotificationId,

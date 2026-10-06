@@ -152,6 +152,10 @@ function inspectColdStart() {
 // born published) and onPagePostFanoutOutboxWritten (one page of 200
 // followers per invocation) join it; neither is warm or a keep-warm target
 // and the Pages graph stays lazy inside both.
+// 2026-10-06 (ADR-237 review, 298 + 1 = 299): onPagePostUnpublished retires
+// every follower's bell row when a post stops being published. It fires on
+// every post write and returns on the event payload alone for all but an
+// unpublish; not warm, not a keep-warm target.
 // `deliverBugReportV1` is NOT in it: both of its
 // delivery channels are source-gated off in index.js. Extending this list is
 // the deliberate review step the header describes, not a drive-by edit.
@@ -329,6 +333,7 @@ const EXPORT_NAMES = Object.freeze([
   "onPageCapabilityGrantChanged",
   "onPagePostCreated",
   "onPagePostFanoutOutboxWritten",
+  "onPagePostUnpublished",
   "onPinnedCreatorEntitlementChanged",
   "onPinnedCreatorProfileChanged",
   "onPinnedMomentEligibilityChanged",

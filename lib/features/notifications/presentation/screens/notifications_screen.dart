@@ -821,7 +821,12 @@ class _ActivityHeader extends StatelessWidget {
                   ),
                 ),
               );
-        final title = copy.text('Activity', 'Aktywność');
+        // A context key: "Activity" is also an emoji category elsewhere.
+        final title = copy.contextualText(
+          'notifyBell.activity',
+          'Activity',
+          'Aktywność',
+        );
         final pill = _countPill(count);
 
         // A narrow phone at large text puts the action under the heading,

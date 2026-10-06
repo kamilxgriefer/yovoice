@@ -1,7 +1,7 @@
 /// Copy for notifications that follow what you follow (ADR-237) and the
 /// server's push copy in the recipient's language.
 ///
-/// Three groups of key live here:
+/// Four groups of key live here:
 ///
 /// * The notification titles the bell has always shown — a friend request, a
 ///   server invitation, a call, a mention, an unlocked achievement — which
@@ -20,6 +20,11 @@
 ///   "Servers", "Calls", "Messages", "Mentions" and "Replies" are single
 ///   words that mean other things elsewhere, so their translations here do
 ///   not leak into other screens.
+/// * The notification centre's own chrome — its subtitle, the "Activity"
+///   heading (`notifyBell.activity`, a context key for the same reason),
+///   "Mark all read", the empty and error states, the unread-messages
+///   section, the row menu and the screen-reader labels — which the bell
+///   showed in English beside the translated rows.
 ///
 /// English and Polish are authored at the call sites; this module gives every
 /// other selectable locale an explicit translation, so none of these strings
@@ -83,6 +88,23 @@ const notifyFollowTranslationKeys = <String>[
   'notifyPrefs.mentions',
   'notifyPrefs.replies',
   'Could not update this notification setting.',
+  'Service is temporarily unavailable.',
+  'Friend requests, messages and activity',
+  'Could not load your activity',
+  'This account is not allowed to read its activity feed. Sign out and back in to refresh it.',
+  'You are all caught up',
+  'New friend requests, messages and activity will appear here.',
+  'Unread messages',
+  'Mark all read',
+  'notifyBell.activity',
+  'Sent you a friend request',
+  'New message',
+  'Read notification. {title}',
+  'Unread notification. {title}',
+  'Notification actions',
+  'Delete notification',
+  'Friend requests and unread messages could not be loaded. Your activity below is up to date.',
+  'You don\'t have permission to do that.',
 ];
 
 const notifyFollowTranslations = <String, Map<String, String>>{
@@ -154,6 +176,30 @@ const notifyFollowTranslations = <String, Map<String, String>>{
     'notifyPrefs.replies': 'Antworten',
     'Could not update this notification setting.':
         'Diese Benachrichtigungseinstellung konnte nicht geändert werden.',
+    'Service is temporarily unavailable.':
+        'Der Dienst ist vorübergehend nicht verfügbar.',
+    'Friend requests, messages and activity':
+        'Freundschaftsanfragen, Nachrichten und Aktivitäten',
+    'Could not load your activity':
+        'Deine Aktivitäten konnten nicht geladen werden',
+    'This account is not allowed to read its activity feed. Sign out and back in to refresh it.':
+        'Dieses Konto darf seinen Aktivitätsfeed nicht lesen. Melde dich ab und wieder an, um ihn zu aktualisieren.',
+    'You are all caught up': 'Du bist auf dem neuesten Stand',
+    'New friend requests, messages and activity will appear here.':
+        'Neue Freundschaftsanfragen, Nachrichten und Aktivitäten erscheinen hier.',
+    'Unread messages': 'Ungelesene Nachrichten',
+    'Mark all read': 'Alle als gelesen markieren',
+    'notifyBell.activity': 'Aktivität',
+    'Sent you a friend request': 'Sendet dir eine Freundschaftsanfrage',
+    'New message': 'Neue Nachricht',
+    'Read notification. {title}': 'Gelesene Benachrichtigung. {title}',
+    'Unread notification. {title}': 'Ungelesene Benachrichtigung. {title}',
+    'Notification actions': 'Benachrichtigungsaktionen',
+    'Delete notification': 'Benachrichtigung löschen',
+    'Friend requests and unread messages could not be loaded. Your activity below is up to date.':
+        'Freundschaftsanfragen und ungelesene Nachrichten konnten nicht geladen werden. Deine Aktivität unten ist aktuell.',
+    'You don\'t have permission to do that.':
+        'Dazu hast du keine Berechtigung.',
   },
   'es': <String, String>{
     '{actor} sent you a friend request':
@@ -220,6 +266,29 @@ const notifyFollowTranslations = <String, Map<String, String>>{
     'notifyPrefs.replies': 'Respuestas',
     'Could not update this notification setting.':
         'No se pudo actualizar este ajuste de notificaciones.',
+    'Service is temporarily unavailable.':
+        'El servicio no está disponible temporalmente.',
+    'Friend requests, messages and activity':
+        'Solicitudes de amistad, mensajes y actividad',
+    'Could not load your activity': 'No se pudo cargar tu actividad',
+    'This account is not allowed to read its activity feed. Sign out and back in to refresh it.':
+        'Esta cuenta no tiene permiso para leer su actividad. Cierra sesión y vuelve a iniciarla para actualizarla.',
+    'You are all caught up': 'Estás al día',
+    'New friend requests, messages and activity will appear here.':
+        'Las nuevas solicitudes de amistad, mensajes y actividad aparecerán aquí.',
+    'Unread messages': 'Mensajes no leídos',
+    'Mark all read': 'Marcar todo como leído',
+    'notifyBell.activity': 'Actividad',
+    'Sent you a friend request': 'Te envía una solicitud de amistad',
+    'New message': 'Mensaje nuevo',
+    'Read notification. {title}': 'Notificación leída. {title}',
+    'Unread notification. {title}': 'Notificación no leída. {title}',
+    'Notification actions': 'Acciones de la notificación',
+    'Delete notification': 'Eliminar notificación',
+    'Friend requests and unread messages could not be loaded. Your activity below is up to date.':
+        'No se pudieron cargar las solicitudes de amistad ni los mensajes no leídos. Tu actividad de abajo está al día.',
+    'You don\'t have permission to do that.':
+        'No tienes permiso para hacer eso.',
   },
   'pt': <String, String>{
     '{actor} sent you a friend request':
@@ -286,6 +355,29 @@ const notifyFollowTranslations = <String, Map<String, String>>{
     'notifyPrefs.replies': 'Respostas',
     'Could not update this notification setting.':
         'Não foi possível atualizar esta definição de notificações.',
+    'Service is temporarily unavailable.':
+        'O serviço está temporariamente indisponível.',
+    'Friend requests, messages and activity':
+        'Pedidos de amizade, mensagens e atividade',
+    'Could not load your activity': 'Não foi possível carregar a tua atividade',
+    'This account is not allowed to read its activity feed. Sign out and back in to refresh it.':
+        'Esta conta não tem permissão para ler a sua atividade. Termina a sessão e volta a iniciá-la para atualizar.',
+    'You are all caught up': 'Está tudo em dia',
+    'New friend requests, messages and activity will appear here.':
+        'Os novos pedidos de amizade, mensagens e atividade aparecem aqui.',
+    'Unread messages': 'Mensagens não lidas',
+    'Mark all read': 'Marcar tudo como lido',
+    'notifyBell.activity': 'Atividade',
+    'Sent you a friend request': 'Envia-te um pedido de amizade',
+    'New message': 'Nova mensagem',
+    'Read notification. {title}': 'Notificação lida. {title}',
+    'Unread notification. {title}': 'Notificação não lida. {title}',
+    'Notification actions': 'Ações da notificação',
+    'Delete notification': 'Eliminar notificação',
+    'Friend requests and unread messages could not be loaded. Your activity below is up to date.':
+        'Não foi possível carregar os pedidos de amizade e as mensagens não lidas. A tua atividade abaixo está atualizada.',
+    'You don\'t have permission to do that.':
+        'Não tens permissão para fazer isso.',
   },
   'pt_BR': <String, String>{
     '{actor} sent you a friend request':
@@ -352,6 +444,29 @@ const notifyFollowTranslations = <String, Map<String, String>>{
     'notifyPrefs.replies': 'Respostas',
     'Could not update this notification setting.':
         'Não foi possível atualizar esta configuração de notificações.',
+    'Service is temporarily unavailable.':
+        'O serviço está temporariamente indisponível.',
+    'Friend requests, messages and activity':
+        'Pedidos de amizade, mensagens e atividade',
+    'Could not load your activity': 'Não foi possível carregar sua atividade',
+    'This account is not allowed to read its activity feed. Sign out and back in to refresh it.':
+        'Esta conta não tem permissão para ler a própria atividade. Saia e entre novamente para atualizar.',
+    'You are all caught up': 'Você está em dia',
+    'New friend requests, messages and activity will appear here.':
+        'Novos pedidos de amizade, mensagens e atividades aparecerão aqui.',
+    'Unread messages': 'Mensagens não lidas',
+    'Mark all read': 'Marcar tudo como lido',
+    'notifyBell.activity': 'Atividade',
+    'Sent you a friend request': 'Envia um pedido de amizade para você',
+    'New message': 'Nova mensagem',
+    'Read notification. {title}': 'Notificação lida. {title}',
+    'Unread notification. {title}': 'Notificação não lida. {title}',
+    'Notification actions': 'Ações da notificação',
+    'Delete notification': 'Excluir notificação',
+    'Friend requests and unread messages could not be loaded. Your activity below is up to date.':
+        'Não foi possível carregar os pedidos de amizade e as mensagens não lidas. Sua atividade abaixo está atualizada.',
+    'You don\'t have permission to do that.':
+        'Você não tem permissão para fazer isso.',
   },
   'fr': <String, String>{
     '{actor} sent you a friend request': '{actor} t’a envoyé une demande d’ami',
@@ -416,6 +531,29 @@ const notifyFollowTranslations = <String, Map<String, String>>{
     'notifyPrefs.replies': 'Réponses',
     'Could not update this notification setting.':
         'Impossible de modifier ce réglage de notification.',
+    'Service is temporarily unavailable.':
+        'Le service est temporairement indisponible.',
+    'Friend requests, messages and activity':
+        'Demandes d’ami, messages et activité',
+    'Could not load your activity': 'Impossible de charger ton activité',
+    'This account is not allowed to read its activity feed. Sign out and back in to refresh it.':
+        'Ce compte n’est pas autorisé à lire son activité. Déconnecte-toi puis reconnecte-toi pour l’actualiser.',
+    'You are all caught up': 'Tu es à jour',
+    'New friend requests, messages and activity will appear here.':
+        'Les nouvelles demandes d’ami, les messages et l’activité apparaîtront ici.',
+    'Unread messages': 'Messages non lus',
+    'Mark all read': 'Tout marquer comme lu',
+    'notifyBell.activity': 'Activité',
+    'Sent you a friend request': 'T’envoie une demande d’ami',
+    'New message': 'Nouveau message',
+    'Read notification. {title}': 'Notification lue. {title}',
+    'Unread notification. {title}': 'Notification non lue. {title}',
+    'Notification actions': 'Actions de la notification',
+    'Delete notification': 'Supprimer la notification',
+    'Friend requests and unread messages could not be loaded. Your activity below is up to date.':
+        'Impossible de charger les demandes d’ami et les messages non lus. Ton activité ci-dessous est à jour.',
+    'You don\'t have permission to do that.':
+        'Tu n’as pas l’autorisation de faire cela.',
   },
   'it': <String, String>{
     '{actor} sent you a friend request':
@@ -481,6 +619,29 @@ const notifyFollowTranslations = <String, Map<String, String>>{
     'notifyPrefs.replies': 'Risposte',
     'Could not update this notification setting.':
         'Impossibile aggiornare questa impostazione di notifica.',
+    'Service is temporarily unavailable.':
+        'Il servizio è temporaneamente non disponibile.',
+    'Friend requests, messages and activity':
+        'Richieste di amicizia, messaggi e attività',
+    'Could not load your activity': 'Impossibile caricare la tua attività',
+    'This account is not allowed to read its activity feed. Sign out and back in to refresh it.':
+        'Questo account non è autorizzato a leggere la propria attività. Esci e accedi di nuovo per aggiornarla.',
+    'You are all caught up': 'Non ti sei perso nulla',
+    'New friend requests, messages and activity will appear here.':
+        'Le nuove richieste di amicizia, i messaggi e le attività appariranno qui.',
+    'Unread messages': 'Messaggi non letti',
+    'Mark all read': 'Segna tutto come letto',
+    'notifyBell.activity': 'Attività',
+    'Sent you a friend request': 'Ti invia una richiesta di amicizia',
+    'New message': 'Nuovo messaggio',
+    'Read notification. {title}': 'Notifica letta. {title}',
+    'Unread notification. {title}': 'Notifica non letta. {title}',
+    'Notification actions': 'Azioni della notifica',
+    'Delete notification': 'Elimina notifica',
+    'Friend requests and unread messages could not be loaded. Your activity below is up to date.':
+        'Impossibile caricare le richieste di amicizia e i messaggi non letti. La tua attività qui sotto è aggiornata.',
+    'You don\'t have permission to do that.':
+        'Non hai l’autorizzazione per farlo.',
   },
   'uk': <String, String>{
     '{actor} sent you a friend request': '{actor} надсилає вам запит на дружбу',
@@ -546,6 +707,27 @@ const notifyFollowTranslations = <String, Map<String, String>>{
     'notifyPrefs.replies': 'Відповіді',
     'Could not update this notification setting.':
         'Не вдалося оновити це налаштування сповіщень.',
+    'Service is temporarily unavailable.': 'Сервіс тимчасово недоступний.',
+    'Friend requests, messages and activity':
+        'Запити на дружбу, повідомлення та активність',
+    'Could not load your activity': 'Не вдалося завантажити вашу активність',
+    'This account is not allowed to read its activity feed. Sign out and back in to refresh it.':
+        'Цей обліковий запис не має доступу до своєї стрічки активності. Вийдіть і ввійдіть знову, щоб оновити її.',
+    'You are all caught up': 'Ви все переглянули',
+    'New friend requests, messages and activity will appear here.':
+        'Нові запити на дружбу, повідомлення та активність з’являться тут.',
+    'Unread messages': 'Непрочитані повідомлення',
+    'Mark all read': 'Позначити все як прочитане',
+    'notifyBell.activity': 'Активність',
+    'Sent you a friend request': 'Надсилає вам запит на дружбу',
+    'New message': 'Нове повідомлення',
+    'Read notification. {title}': 'Прочитане сповіщення. {title}',
+    'Unread notification. {title}': 'Непрочитане сповіщення. {title}',
+    'Notification actions': 'Дії зі сповіщенням',
+    'Delete notification': 'Видалити сповіщення',
+    'Friend requests and unread messages could not be loaded. Your activity below is up to date.':
+        'Не вдалося завантажити запити на дружбу та непрочитані повідомлення. Активність нижче актуальна.',
+    'You don\'t have permission to do that.': 'У вас немає дозволу на цю дію.',
   },
   'ru': <String, String>{
     '{actor} sent you a friend request':
@@ -613,6 +795,28 @@ const notifyFollowTranslations = <String, Map<String, String>>{
     'notifyPrefs.replies': 'Ответы',
     'Could not update this notification setting.':
         'Не удалось обновить эту настройку уведомлений.',
+    'Service is temporarily unavailable.': 'Сервис временно недоступен.',
+    'Friend requests, messages and activity':
+        'Запросы в друзья, сообщения и активность',
+    'Could not load your activity': 'Не удалось загрузить вашу активность',
+    'This account is not allowed to read its activity feed. Sign out and back in to refresh it.':
+        'У этого аккаунта нет доступа к своей ленте активности. Выйдите и войдите снова, чтобы обновить её.',
+    'You are all caught up': 'Вы всё просмотрели',
+    'New friend requests, messages and activity will appear here.':
+        'Новые запросы в друзья, сообщения и активность появятся здесь.',
+    'Unread messages': 'Непрочитанные сообщения',
+    'Mark all read': 'Отметить всё как прочитанное',
+    'notifyBell.activity': 'Активность',
+    'Sent you a friend request': 'Отправляет вам запрос в друзья',
+    'New message': 'Новое сообщение',
+    'Read notification. {title}': 'Прочитанное уведомление. {title}',
+    'Unread notification. {title}': 'Непрочитанное уведомление. {title}',
+    'Notification actions': 'Действия с уведомлением',
+    'Delete notification': 'Удалить уведомление',
+    'Friend requests and unread messages could not be loaded. Your activity below is up to date.':
+        'Не удалось загрузить запросы в друзья и непрочитанные сообщения. Активность ниже актуальна.',
+    'You don\'t have permission to do that.':
+        'У вас нет разрешения на это действие.',
   },
   'cs': <String, String>{
     '{actor} sent you a friend request':
@@ -676,6 +880,27 @@ const notifyFollowTranslations = <String, Map<String, String>>{
     'notifyPrefs.replies': 'Odpovědi',
     'Could not update this notification setting.':
         'Toto nastavení oznámení se nepodařilo změnit.',
+    'Service is temporarily unavailable.': 'Služba je dočasně nedostupná.',
+    'Friend requests, messages and activity':
+        'Žádosti o přátelství, zprávy a aktivita',
+    'Could not load your activity': 'Aktivitu se nepodařilo načíst',
+    'This account is not allowed to read its activity feed. Sign out and back in to refresh it.':
+        'Tento účet nemá oprávnění číst svou aktivitu. Odhlas se a znovu se přihlas, aby se obnovila.',
+    'You are all caught up': 'Všechno máš přečtené',
+    'New friend requests, messages and activity will appear here.':
+        'Nové žádosti o přátelství, zprávy a aktivita se zobrazí tady.',
+    'Unread messages': 'Nepřečtené zprávy',
+    'Mark all read': 'Označit vše jako přečtené',
+    'notifyBell.activity': 'Aktivita',
+    'Sent you a friend request': 'Posílá ti žádost o přátelství',
+    'New message': 'Nová zpráva',
+    'Read notification. {title}': 'Přečtené oznámení. {title}',
+    'Unread notification. {title}': 'Nepřečtené oznámení. {title}',
+    'Notification actions': 'Akce oznámení',
+    'Delete notification': 'Smazat oznámení',
+    'Friend requests and unread messages could not be loaded. Your activity below is up to date.':
+        'Žádosti o přátelství a nepřečtené zprávy se nepodařilo načíst. Aktivita níže je aktuální.',
+    'You don\'t have permission to do that.': 'K tomu nemáš oprávnění.',
   },
   'sk': <String, String>{
     '{actor} sent you a friend request':
@@ -739,6 +964,27 @@ const notifyFollowTranslations = <String, Map<String, String>>{
     'notifyPrefs.replies': 'Odpovede',
     'Could not update this notification setting.':
         'Toto nastavenie upozornení sa nepodarilo zmeniť.',
+    'Service is temporarily unavailable.': 'Služba je dočasne nedostupná.',
+    'Friend requests, messages and activity':
+        'Žiadosti o priateľstvo, správy a aktivita',
+    'Could not load your activity': 'Aktivitu sa nepodarilo načítať',
+    'This account is not allowed to read its activity feed. Sign out and back in to refresh it.':
+        'Tento účet nemá oprávnenie čítať svoju aktivitu. Odhlás sa a znova sa prihlás, aby sa obnovila.',
+    'You are all caught up': 'Všetko máš prečítané',
+    'New friend requests, messages and activity will appear here.':
+        'Nové žiadosti o priateľstvo, správy a aktivita sa zobrazia tu.',
+    'Unread messages': 'Neprečítané správy',
+    'Mark all read': 'Označiť všetko ako prečítané',
+    'notifyBell.activity': 'Aktivita',
+    'Sent you a friend request': 'Posiela ti žiadosť o priateľstvo',
+    'New message': 'Nová správa',
+    'Read notification. {title}': 'Prečítané upozornenie. {title}',
+    'Unread notification. {title}': 'Neprečítané upozornenie. {title}',
+    'Notification actions': 'Akcie upozornenia',
+    'Delete notification': 'Odstrániť upozornenie',
+    'Friend requests and unread messages could not be loaded. Your activity below is up to date.':
+        'Žiadosti o priateľstvo a neprečítané správy sa nepodarilo načítať. Aktivita nižšie je aktuálna.',
+    'You don\'t have permission to do that.': 'Na to nemáš oprávnenie.',
   },
   'bg': <String, String>{
     '{actor} sent you a friend request':
@@ -805,6 +1051,27 @@ const notifyFollowTranslations = <String, Map<String, String>>{
     'notifyPrefs.replies': 'Отговори',
     'Could not update this notification setting.':
         'Тази настройка за известия не можа да бъде променена.',
+    'Service is temporarily unavailable.': 'Услугата временно не е достъпна.',
+    'Friend requests, messages and activity':
+        'Покани за приятелство, съобщения и активност',
+    'Could not load your activity': 'Активността ти не можа да се зареди',
+    'This account is not allowed to read its activity feed. Sign out and back in to refresh it.':
+        'Този акаунт няма право да чете своята активност. Излез и влез отново, за да я обновиш.',
+    'You are all caught up': 'Всичко е прегледано',
+    'New friend requests, messages and activity will appear here.':
+        'Новите покани за приятелство, съобщения и активност ще се появят тук.',
+    'Unread messages': 'Непрочетени съобщения',
+    'Mark all read': 'Маркирай всички като прочетени',
+    'notifyBell.activity': 'Активност',
+    'Sent you a friend request': 'Изпраща ти покана за приятелство',
+    'New message': 'Ново съобщение',
+    'Read notification. {title}': 'Прочетено известие. {title}',
+    'Unread notification. {title}': 'Непрочетено известие. {title}',
+    'Notification actions': 'Действия с известието',
+    'Delete notification': 'Изтрий известието',
+    'Friend requests and unread messages could not be loaded. Your activity below is up to date.':
+        'Поканите за приятелство и непрочетените съобщения не можаха да се заредят. Активността по-долу е актуална.',
+    'You don\'t have permission to do that.': 'Нямаш разрешение за това.',
   },
   'nl': <String, String>{
     '{actor} sent you a friend request':
@@ -875,6 +1142,29 @@ const notifyFollowTranslations = <String, Map<String, String>>{
     'notifyPrefs.replies': 'Antwoorden',
     'Could not update this notification setting.':
         'Deze meldingsinstelling kon niet worden bijgewerkt.',
+    'Service is temporarily unavailable.':
+        'De dienst is tijdelijk niet beschikbaar.',
+    'Friend requests, messages and activity':
+        'Vriendschapsverzoeken, berichten en activiteit',
+    'Could not load your activity': 'Je activiteit kon niet worden geladen',
+    'This account is not allowed to read its activity feed. Sign out and back in to refresh it.':
+        'Dit account mag zijn activiteit niet lezen. Log uit en weer in om te vernieuwen.',
+    'You are all caught up': 'Je bent helemaal bij',
+    'New friend requests, messages and activity will appear here.':
+        'Nieuwe vriendschapsverzoeken, berichten en activiteit verschijnen hier.',
+    'Unread messages': 'Ongelezen berichten',
+    'Mark all read': 'Alles als gelezen markeren',
+    'notifyBell.activity': 'Activiteit',
+    'Sent you a friend request': 'Stuurt je een vriendschapsverzoek',
+    'New message': 'Nieuw bericht',
+    'Read notification. {title}': 'Gelezen melding. {title}',
+    'Unread notification. {title}': 'Ongelezen melding. {title}',
+    'Notification actions': 'Meldingsacties',
+    'Delete notification': 'Melding verwijderen',
+    'Friend requests and unread messages could not be loaded. Your activity below is up to date.':
+        'Vriendschapsverzoeken en ongelezen berichten konden niet worden geladen. Je activiteit hieronder is actueel.',
+    'You don\'t have permission to do that.':
+        'Je hebt geen toestemming om dat te doen.',
   },
   'ro': <String, String>{
     '{actor} sent you a friend request':
@@ -942,6 +1232,28 @@ const notifyFollowTranslations = <String, Map<String, String>>{
     'notifyPrefs.replies': 'Răspunsuri',
     'Could not update this notification setting.':
         'Nu am putut actualiza această setare de notificare.',
+    'Service is temporarily unavailable.':
+        'Serviciul este temporar indisponibil.',
+    'Friend requests, messages and activity':
+        'Cereri de prietenie, mesaje și activitate',
+    'Could not load your activity': 'Activitatea ta nu a putut fi încărcată',
+    'This account is not allowed to read its activity feed. Sign out and back in to refresh it.':
+        'Acest cont nu are permisiunea de a-și citi activitatea. Deconectează-te și conectează-te din nou pentru a o actualiza.',
+    'You are all caught up': 'Ești la zi',
+    'New friend requests, messages and activity will appear here.':
+        'Cererile de prietenie, mesajele și activitatea nouă vor apărea aici.',
+    'Unread messages': 'Mesaje necitite',
+    'Mark all read': 'Marchează totul ca citit',
+    'notifyBell.activity': 'Activitate',
+    'Sent you a friend request': 'Îți trimite o cerere de prietenie',
+    'New message': 'Mesaj nou',
+    'Read notification. {title}': 'Notificare citită. {title}',
+    'Unread notification. {title}': 'Notificare necitită. {title}',
+    'Notification actions': 'Acțiuni pentru notificare',
+    'Delete notification': 'Șterge notificarea',
+    'Friend requests and unread messages could not be loaded. Your activity below is up to date.':
+        'Cererile de prietenie și mesajele necitite nu au putut fi încărcate. Activitatea de mai jos este la zi.',
+    'You don\'t have permission to do that.': 'Nu ai permisiunea să faci asta.',
   },
   'tr': <String, String>{
     '{actor} sent you a friend request':
@@ -1008,6 +1320,28 @@ const notifyFollowTranslations = <String, Map<String, String>>{
     'notifyPrefs.replies': 'Yanıtlar',
     'Could not update this notification setting.':
         'Bu bildirim ayarı güncellenemedi.',
+    'Service is temporarily unavailable.':
+        'Hizmet geçici olarak kullanılamıyor.',
+    'Friend requests, messages and activity':
+        'Arkadaşlık istekleri, mesajlar ve etkinlikler',
+    'Could not load your activity': 'Etkinliklerin yüklenemedi',
+    'This account is not allowed to read its activity feed. Sign out and back in to refresh it.':
+        'Bu hesabın kendi etkinlik akışını okuma izni yok. Yenilemek için çıkış yapıp tekrar giriş yap.',
+    'You are all caught up': 'Her şeyi gördün',
+    'New friend requests, messages and activity will appear here.':
+        'Yeni arkadaşlık istekleri, mesajlar ve etkinlikler burada görünecek.',
+    'Unread messages': 'Okunmamış mesajlar',
+    'Mark all read': 'Tümünü okundu olarak işaretle',
+    'notifyBell.activity': 'Etkinlik',
+    'Sent you a friend request': 'Sana arkadaşlık isteği gönderiyor',
+    'New message': 'Yeni mesaj',
+    'Read notification. {title}': 'Okunmuş bildirim. {title}',
+    'Unread notification. {title}': 'Okunmamış bildirim. {title}',
+    'Notification actions': 'Bildirim işlemleri',
+    'Delete notification': 'Bildirimi sil',
+    'Friend requests and unread messages could not be loaded. Your activity below is up to date.':
+        'Arkadaşlık istekleri ve okunmamış mesajlar yüklenemedi. Aşağıdaki etkinliklerin güncel.',
+    'You don\'t have permission to do that.': 'Bunu yapma iznin yok.',
   },
   'el': <String, String>{
     '{actor} sent you a friend request':
@@ -1076,6 +1410,30 @@ const notifyFollowTranslations = <String, Map<String, String>>{
     'notifyPrefs.replies': 'Απαντήσεις',
     'Could not update this notification setting.':
         'Δεν ήταν δυνατή η ενημέρωση αυτής της ρύθμισης ειδοποιήσεων.',
+    'Service is temporarily unavailable.':
+        'Η υπηρεσία είναι προσωρινά μη διαθέσιμη.',
+    'Friend requests, messages and activity':
+        'Αιτήματα φιλίας, μηνύματα και δραστηριότητα',
+    'Could not load your activity':
+        'Δεν ήταν δυνατή η φόρτωση της δραστηριότητάς σου',
+    'This account is not allowed to read its activity feed. Sign out and back in to refresh it.':
+        'Αυτός ο λογαριασμός δεν επιτρέπεται να διαβάσει τη δραστηριότητά του. Αποσυνδέσου και συνδέσου ξανά για ανανέωση.',
+    'You are all caught up': 'Τα έχεις δει όλα',
+    'New friend requests, messages and activity will appear here.':
+        'Τα νέα αιτήματα φιλίας, τα μηνύματα και η δραστηριότητα θα εμφανίζονται εδώ.',
+    'Unread messages': 'Μη αναγνωσμένα μηνύματα',
+    'Mark all read': 'Σήμανση όλων ως αναγνωσμένων',
+    'notifyBell.activity': 'Δραστηριότητα',
+    'Sent you a friend request': 'Σου στέλνει αίτημα φιλίας',
+    'New message': 'Νέο μήνυμα',
+    'Read notification. {title}': 'Αναγνωσμένη ειδοποίηση. {title}',
+    'Unread notification. {title}': 'Μη αναγνωσμένη ειδοποίηση. {title}',
+    'Notification actions': 'Ενέργειες ειδοποίησης',
+    'Delete notification': 'Διαγραφή ειδοποίησης',
+    'Friend requests and unread messages could not be loaded. Your activity below is up to date.':
+        'Δεν ήταν δυνατή η φόρτωση των αιτημάτων φιλίας και των μη αναγνωσμένων μηνυμάτων. Η δραστηριότητά σου παρακάτω είναι ενημερωμένη.',
+    'You don\'t have permission to do that.':
+        'Δεν έχεις άδεια να το κάνεις αυτό.',
   },
   'hu': <String, String>{
     '{actor} sent you a friend request': '{actor} barátkérést küldött neked',
@@ -1139,6 +1497,28 @@ const notifyFollowTranslations = <String, Map<String, String>>{
     'notifyPrefs.replies': 'Válaszok',
     'Could not update this notification setting.':
         'Ezt az értesítési beállítást nem sikerült frissíteni.',
+    'Service is temporarily unavailable.':
+        'A szolgáltatás átmenetileg nem érhető el.',
+    'Friend requests, messages and activity':
+        'Barátkérések, üzenetek és tevékenység',
+    'Could not load your activity': 'Nem sikerült betölteni a tevékenységedet',
+    'This account is not allowed to read its activity feed. Sign out and back in to refresh it.':
+        'Ez a fiók nem olvashatja a saját tevékenységét. Jelentkezz ki, majd be újra a frissítéshez.',
+    'You are all caught up': 'Mindent láttál',
+    'New friend requests, messages and activity will appear here.':
+        'Az új barátkérések, üzenetek és tevékenységek itt jelennek meg.',
+    'Unread messages': 'Olvasatlan üzenetek',
+    'Mark all read': 'Összes megjelölése olvasottként',
+    'notifyBell.activity': 'Tevékenység',
+    'Sent you a friend request': 'Barátkérést küld neked',
+    'New message': 'Új üzenet',
+    'Read notification. {title}': 'Olvasott értesítés. {title}',
+    'Unread notification. {title}': 'Olvasatlan értesítés. {title}',
+    'Notification actions': 'Értesítés műveletei',
+    'Delete notification': 'Értesítés törlése',
+    'Friend requests and unread messages could not be loaded. Your activity below is up to date.':
+        'A barátkéréseket és az olvasatlan üzeneteket nem sikerült betölteni. Az alábbi tevékenység naprakész.',
+    'You don\'t have permission to do that.': 'Ehhez nincs jogosultságod.',
   },
   'hr': <String, String>{
     '{actor} sent you a friend request':
@@ -1202,6 +1582,27 @@ const notifyFollowTranslations = <String, Map<String, String>>{
     'notifyPrefs.replies': 'Odgovori',
     'Could not update this notification setting.':
         'Ovu postavku obavijesti nije bilo moguće ažurirati.',
+    'Service is temporarily unavailable.': 'Usluga je privremeno nedostupna.',
+    'Friend requests, messages and activity':
+        'Zahtjevi za prijateljstvo, poruke i aktivnost',
+    'Could not load your activity': 'Aktivnost se nije mogla učitati',
+    'This account is not allowed to read its activity feed. Sign out and back in to refresh it.':
+        'Ovaj račun nema dopuštenje čitati svoju aktivnost. Odjavi se i ponovno prijavi za osvježavanje.',
+    'You are all caught up': 'Sve je pregledano',
+    'New friend requests, messages and activity will appear here.':
+        'Novi zahtjevi za prijateljstvo, poruke i aktivnost pojavit će se ovdje.',
+    'Unread messages': 'Nepročitane poruke',
+    'Mark all read': 'Označi sve kao pročitano',
+    'notifyBell.activity': 'Aktivnost',
+    'Sent you a friend request': 'Šalje ti zahtjev za prijateljstvo',
+    'New message': 'Nova poruka',
+    'Read notification. {title}': 'Pročitana obavijest. {title}',
+    'Unread notification. {title}': 'Nepročitana obavijest. {title}',
+    'Notification actions': 'Radnje za obavijest',
+    'Delete notification': 'Izbriši obavijest',
+    'Friend requests and unread messages could not be loaded. Your activity below is up to date.':
+        'Zahtjevi za prijateljstvo i nepročitane poruke nisu se mogli učitati. Aktivnost ispod je ažurna.',
+    'You don\'t have permission to do that.': 'Nemaš dopuštenje za to.',
   },
   'sr': <String, String>{
     '{actor} sent you a friend request':
@@ -1265,6 +1666,27 @@ const notifyFollowTranslations = <String, Map<String, String>>{
     'notifyPrefs.replies': 'Одговори',
     'Could not update this notification setting.':
         'Ово подешавање обавештења није могло да се ажурира.',
+    'Service is temporarily unavailable.': 'Услуга је привремено недоступна.',
+    'Friend requests, messages and activity':
+        'Захтеви за пријатељство, поруке и активност',
+    'Could not load your activity': 'Активност није могла да се учита',
+    'This account is not allowed to read its activity feed. Sign out and back in to refresh it.':
+        'Овај налог нема дозволу да чита своју активност. Одјави се и поново се пријави да би се освежила.',
+    'You are all caught up': 'Све је прегледано',
+    'New friend requests, messages and activity will appear here.':
+        'Нови захтеви за пријатељство, поруке и активност појавиће се овде.',
+    'Unread messages': 'Непрочитане поруке',
+    'Mark all read': 'Означи све као прочитано',
+    'notifyBell.activity': 'Активност',
+    'Sent you a friend request': 'Шаље ти захтев за пријатељство',
+    'New message': 'Нова порука',
+    'Read notification. {title}': 'Прочитано обавештење. {title}',
+    'Unread notification. {title}': 'Непрочитано обавештење. {title}',
+    'Notification actions': 'Радње за обавештење',
+    'Delete notification': 'Избриши обавештење',
+    'Friend requests and unread messages could not be loaded. Your activity below is up to date.':
+        'Захтеви за пријатељство и непрочитане поруке нису могли да се учитају. Активност испод је ажурна.',
+    'You don\'t have permission to do that.': 'Немаш дозволу за то.',
   },
   'sv': <String, String>{
     '{actor} sent you a friend request':
@@ -1330,6 +1752,29 @@ const notifyFollowTranslations = <String, Map<String, String>>{
     'notifyPrefs.replies': 'Svar',
     'Could not update this notification setting.':
         'Det gick inte att uppdatera den här aviseringsinställningen.',
+    'Service is temporarily unavailable.':
+        'Tjänsten är tillfälligt otillgänglig.',
+    'Friend requests, messages and activity':
+        'Vänförfrågningar, meddelanden och aktivitet',
+    'Could not load your activity': 'Det gick inte att läsa in din aktivitet',
+    'This account is not allowed to read its activity feed. Sign out and back in to refresh it.':
+        'Det här kontot får inte läsa sin aktivitet. Logga ut och in igen för att uppdatera.',
+    'You are all caught up': 'Du har sett allt',
+    'New friend requests, messages and activity will appear here.':
+        'Nya vänförfrågningar, meddelanden och aktivitet visas här.',
+    'Unread messages': 'Olästa meddelanden',
+    'Mark all read': 'Markera alla som lästa',
+    'notifyBell.activity': 'Aktivitet',
+    'Sent you a friend request': 'Skickar en vänförfrågan till dig',
+    'New message': 'Nytt meddelande',
+    'Read notification. {title}': 'Läst avisering. {title}',
+    'Unread notification. {title}': 'Oläst avisering. {title}',
+    'Notification actions': 'Aviseringsåtgärder',
+    'Delete notification': 'Ta bort avisering',
+    'Friend requests and unread messages could not be loaded. Your activity below is up to date.':
+        'Vänförfrågningar och olästa meddelanden kunde inte läsas in. Din aktivitet nedan är aktuell.',
+    'You don\'t have permission to do that.':
+        'Du har inte behörighet att göra det.',
   },
   'da': <String, String>{
     '{actor} sent you a friend request': '{actor} sendte dig en venneanmodning',
@@ -1394,6 +1839,29 @@ const notifyFollowTranslations = <String, Map<String, String>>{
     'notifyPrefs.replies': 'Svar',
     'Could not update this notification setting.':
         'Denne notifikationsindstilling kunne ikke opdateres.',
+    'Service is temporarily unavailable.':
+        'Tjenesten er midlertidigt utilgængelig.',
+    'Friend requests, messages and activity':
+        'Venneanmodninger, beskeder og aktivitet',
+    'Could not load your activity': 'Din aktivitet kunne ikke indlæses',
+    'This account is not allowed to read its activity feed. Sign out and back in to refresh it.':
+        'Denne konto har ikke tilladelse til at læse sin aktivitet. Log ud og ind igen for at opdatere.',
+    'You are all caught up': 'Du har set det hele',
+    'New friend requests, messages and activity will appear here.':
+        'Nye venneanmodninger, beskeder og aktivitet vises her.',
+    'Unread messages': 'Ulæste beskeder',
+    'Mark all read': 'Markér alle som læst',
+    'notifyBell.activity': 'Aktivitet',
+    'Sent you a friend request': 'Sender dig en venneanmodning',
+    'New message': 'Ny besked',
+    'Read notification. {title}': 'Læst notifikation. {title}',
+    'Unread notification. {title}': 'Ulæst notifikation. {title}',
+    'Notification actions': 'Notifikationshandlinger',
+    'Delete notification': 'Slet notifikation',
+    'Friend requests and unread messages could not be loaded. Your activity below is up to date.':
+        'Venneanmodninger og ulæste beskeder kunne ikke indlæses. Din aktivitet nedenfor er opdateret.',
+    'You don\'t have permission to do that.':
+        'Du har ikke tilladelse til at gøre det.',
   },
   'nb': <String, String>{
     '{actor} sent you a friend request':
@@ -1459,6 +1927,29 @@ const notifyFollowTranslations = <String, Map<String, String>>{
     'notifyPrefs.replies': 'Svar',
     'Could not update this notification setting.':
         'Kunne ikke oppdatere denne varslingsinnstillingen.',
+    'Service is temporarily unavailable.':
+        'Tjenesten er midlertidig utilgjengelig.',
+    'Friend requests, messages and activity':
+        'Venneforespørsler, meldinger og aktivitet',
+    'Could not load your activity': 'Kunne ikke laste inn aktiviteten din',
+    'This account is not allowed to read its activity feed. Sign out and back in to refresh it.':
+        'Denne kontoen har ikke tilgang til å lese aktiviteten sin. Logg ut og inn igjen for å oppdatere.',
+    'You are all caught up': 'Du har sett alt',
+    'New friend requests, messages and activity will appear here.':
+        'Nye venneforespørsler, meldinger og aktivitet vises her.',
+    'Unread messages': 'Uleste meldinger',
+    'Mark all read': 'Merk alle som lest',
+    'notifyBell.activity': 'Aktivitet',
+    'Sent you a friend request': 'Sender deg en venneforespørsel',
+    'New message': 'Ny melding',
+    'Read notification. {title}': 'Lest varsel. {title}',
+    'Unread notification. {title}': 'Ulest varsel. {title}',
+    'Notification actions': 'Varselhandlinger',
+    'Delete notification': 'Slett varsel',
+    'Friend requests and unread messages could not be loaded. Your activity below is up to date.':
+        'Kunne ikke laste inn venneforespørsler og uleste meldinger. Aktiviteten din nedenfor er oppdatert.',
+    'You don\'t have permission to do that.':
+        'Du har ikke tillatelse til å gjøre det.',
   },
   'fi': <String, String>{
     '{actor} sent you a friend request':
@@ -1524,6 +2015,29 @@ const notifyFollowTranslations = <String, Map<String, String>>{
     'notifyPrefs.replies': 'Vastaukset',
     'Could not update this notification setting.':
         'Tätä ilmoitusasetusta ei voitu päivittää.',
+    'Service is temporarily unavailable.':
+        'Palvelu ei ole tilapäisesti käytettävissä.',
+    'Friend requests, messages and activity':
+        'Kaveripyynnöt, viestit ja toiminta',
+    'Could not load your activity': 'Toimintaasi ei voitu ladata',
+    'This account is not allowed to read its activity feed. Sign out and back in to refresh it.':
+        'Tällä tilillä ei ole oikeutta lukea omaa toimintaansa. Kirjaudu ulos ja takaisin sisään päivittääksesi sen.',
+    'You are all caught up': 'Olet ajan tasalla',
+    'New friend requests, messages and activity will appear here.':
+        'Uudet kaveripyynnöt, viestit ja toiminta näkyvät täällä.',
+    'Unread messages': 'Lukemattomat viestit',
+    'Mark all read': 'Merkitse kaikki luetuiksi',
+    'notifyBell.activity': 'Toiminta',
+    'Sent you a friend request': 'Lähettää sinulle kaveripyynnön',
+    'New message': 'Uusi viesti',
+    'Read notification. {title}': 'Luettu ilmoitus. {title}',
+    'Unread notification. {title}': 'Lukematon ilmoitus. {title}',
+    'Notification actions': 'Ilmoituksen toiminnot',
+    'Delete notification': 'Poista ilmoitus',
+    'Friend requests and unread messages could not be loaded. Your activity below is up to date.':
+        'Kaveripyyntöjä ja lukemattomia viestejä ei voitu ladata. Alla oleva toimintasi on ajan tasalla.',
+    'You don\'t have permission to do that.':
+        'Sinulla ei ole oikeutta tehdä tätä.',
   },
   'lt': <String, String>{
     '{actor} sent you a friend request':
@@ -1590,6 +2104,27 @@ const notifyFollowTranslations = <String, Map<String, String>>{
     'notifyPrefs.replies': 'Atsakymai',
     'Could not update this notification setting.':
         'Nepavyko atnaujinti šio pranešimų nustatymo.',
+    'Service is temporarily unavailable.': 'Paslauga laikinai nepasiekiama.',
+    'Friend requests, messages and activity':
+        'Kvietimai draugauti, žinutės ir veikla',
+    'Could not load your activity': 'Nepavyko įkelti tavo veiklos',
+    'This account is not allowed to read its activity feed. Sign out and back in to refresh it.':
+        'Ši paskyra neturi teisės skaityti savo veiklos. Atsijunk ir vėl prisijunk, kad ji atsinaujintų.',
+    'You are all caught up': 'Viską peržiūrėjai',
+    'New friend requests, messages and activity will appear here.':
+        'Nauji kvietimai draugauti, žinutės ir veikla bus rodomi čia.',
+    'Unread messages': 'Neskaitytos žinutės',
+    'Mark all read': 'Pažymėti viską kaip skaitytą',
+    'notifyBell.activity': 'Veikla',
+    'Sent you a friend request': 'Siunčia tau kvietimą draugauti',
+    'New message': 'Nauja žinutė',
+    'Read notification. {title}': 'Skaitytas pranešimas. {title}',
+    'Unread notification. {title}': 'Neskaitytas pranešimas. {title}',
+    'Notification actions': 'Pranešimo veiksmai',
+    'Delete notification': 'Ištrinti pranešimą',
+    'Friend requests and unread messages could not be loaded. Your activity below is up to date.':
+        'Nepavyko įkelti kvietimų draugauti ir neskaitytų žinučių. Žemiau esanti veikla yra naujausia.',
+    'You don\'t have permission to do that.': 'Neturi leidimo tai atlikti.',
   },
   'lv': <String, String>{
     '{actor} sent you a friend request':
@@ -1654,6 +2189,28 @@ const notifyFollowTranslations = <String, Map<String, String>>{
     'notifyPrefs.replies': 'Atbildes',
     'Could not update this notification setting.':
         'Šo paziņojumu iestatījumu neizdevās atjaunināt.',
+    'Service is temporarily unavailable.':
+        'Pakalpojums īslaicīgi nav pieejams.',
+    'Friend requests, messages and activity':
+        'Draudzības uzaicinājumi, ziņojumi un aktivitāte',
+    'Could not load your activity': 'Neizdevās ielādēt tavu aktivitāti',
+    'This account is not allowed to read its activity feed. Sign out and back in to refresh it.':
+        'Šim kontam nav atļauts lasīt savu aktivitāti. Izraksties un pieraksties vēlreiz, lai to atsvaidzinātu.',
+    'You are all caught up': 'Viss ir apskatīts',
+    'New friend requests, messages and activity will appear here.':
+        'Jauni draudzības uzaicinājumi, ziņojumi un aktivitāte parādīsies šeit.',
+    'Unread messages': 'Nelasītie ziņojumi',
+    'Mark all read': 'Atzīmēt visu kā lasītu',
+    'notifyBell.activity': 'Aktivitāte',
+    'Sent you a friend request': 'Sūta tev draudzības uzaicinājumu',
+    'New message': 'Jauns ziņojums',
+    'Read notification. {title}': 'Izlasīts paziņojums. {title}',
+    'Unread notification. {title}': 'Nelasīts paziņojums. {title}',
+    'Notification actions': 'Paziņojuma darbības',
+    'Delete notification': 'Dzēst paziņojumu',
+    'Friend requests and unread messages could not be loaded. Your activity below is up to date.':
+        'Neizdevās ielādēt draudzības uzaicinājumus un nelasītos ziņojumus. Tālāk redzamā aktivitāte ir aktuāla.',
+    'You don\'t have permission to do that.': 'Tev nav atļaujas to darīt.',
   },
   'et': <String, String>{
     '{actor} sent you a friend request': '{actor} saatis sulle sõbrakutse',
@@ -1716,6 +2273,26 @@ const notifyFollowTranslations = <String, Map<String, String>>{
     'notifyPrefs.replies': 'Vastused',
     'Could not update this notification setting.':
         'Seda teavitusseadet ei õnnestunud uuendada.',
+    'Service is temporarily unavailable.': 'Teenus on ajutiselt kättesaamatu.',
+    'Friend requests, messages and activity': 'Sõbrakutsed, sõnumid ja tegevus',
+    'Could not load your activity': 'Sinu tegevust ei õnnestunud laadida',
+    'This account is not allowed to read its activity feed. Sign out and back in to refresh it.':
+        'Sellel kontol pole õigust oma tegevust lugeda. Logi välja ja uuesti sisse, et seda värskendada.',
+    'You are all caught up': 'Oled kõigega kursis',
+    'New friend requests, messages and activity will appear here.':
+        'Uued sõbrakutsed, sõnumid ja tegevus ilmuvad siia.',
+    'Unread messages': 'Lugemata sõnumid',
+    'Mark all read': 'Märgi kõik loetuks',
+    'notifyBell.activity': 'Tegevus',
+    'Sent you a friend request': 'Saadab sulle sõbrakutse',
+    'New message': 'Uus sõnum',
+    'Read notification. {title}': 'Loetud teavitus. {title}',
+    'Unread notification. {title}': 'Lugemata teavitus. {title}',
+    'Notification actions': 'Teavituse toimingud',
+    'Delete notification': 'Kustuta teavitus',
+    'Friend requests and unread messages could not be loaded. Your activity below is up to date.':
+        'Sõbrakutseid ja lugemata sõnumeid ei õnnestunud laadida. Allolev tegevus on ajakohane.',
+    'You don\'t have permission to do that.': 'Sul pole selleks õigust.',
   },
   'id': <String, String>{
     '{actor} sent you a friend request':
@@ -1782,6 +2359,29 @@ const notifyFollowTranslations = <String, Map<String, String>>{
     'notifyPrefs.replies': 'Balasan',
     'Could not update this notification setting.':
         'Tidak dapat memperbarui pengaturan notifikasi ini.',
+    'Service is temporarily unavailable.':
+        'Layanan sedang tidak tersedia untuk sementara.',
+    'Friend requests, messages and activity':
+        'Permintaan pertemanan, pesan, dan aktivitas',
+    'Could not load your activity': 'Tidak dapat memuat aktivitasmu',
+    'This account is not allowed to read its activity feed. Sign out and back in to refresh it.':
+        'Akun ini tidak diizinkan membaca aktivitasnya. Keluar lalu masuk lagi untuk memperbaruinya.',
+    'You are all caught up': 'Semua sudah kamu lihat',
+    'New friend requests, messages and activity will appear here.':
+        'Permintaan pertemanan, pesan, dan aktivitas baru akan muncul di sini.',
+    'Unread messages': 'Pesan belum dibaca',
+    'Mark all read': 'Tandai semua sudah dibaca',
+    'notifyBell.activity': 'Aktivitas',
+    'Sent you a friend request': 'Mengirimimu permintaan pertemanan',
+    'New message': 'Pesan baru',
+    'Read notification. {title}': 'Notifikasi sudah dibaca. {title}',
+    'Unread notification. {title}': 'Notifikasi belum dibaca. {title}',
+    'Notification actions': 'Tindakan notifikasi',
+    'Delete notification': 'Hapus notifikasi',
+    'Friend requests and unread messages could not be loaded. Your activity below is up to date.':
+        'Permintaan pertemanan dan pesan belum dibaca tidak dapat dimuat. Aktivitasmu di bawah ini sudah terbaru.',
+    'You don\'t have permission to do that.':
+        'Kamu tidak memiliki izin untuk melakukannya.',
   },
   'vi': <String, String>{
     '{actor} sent you a friend request':
@@ -1847,6 +2447,28 @@ const notifyFollowTranslations = <String, Map<String, String>>{
     'notifyPrefs.replies': 'Trả lời',
     'Could not update this notification setting.':
         'Không thể cập nhật cài đặt thông báo này.',
+    'Service is temporarily unavailable.': 'Dịch vụ tạm thời không khả dụng.',
+    'Friend requests, messages and activity':
+        'Lời mời kết bạn, tin nhắn và hoạt động',
+    'Could not load your activity': 'Không thể tải hoạt động của bạn',
+    'This account is not allowed to read its activity feed. Sign out and back in to refresh it.':
+        'Tài khoản này không được phép đọc hoạt động của mình. Hãy đăng xuất rồi đăng nhập lại để làm mới.',
+    'You are all caught up': 'Bạn đã xem hết',
+    'New friend requests, messages and activity will appear here.':
+        'Lời mời kết bạn, tin nhắn và hoạt động mới sẽ xuất hiện ở đây.',
+    'Unread messages': 'Tin nhắn chưa đọc',
+    'Mark all read': 'Đánh dấu tất cả là đã đọc',
+    'notifyBell.activity': 'Hoạt động',
+    'Sent you a friend request': 'Gửi cho bạn lời mời kết bạn',
+    'New message': 'Tin nhắn mới',
+    'Read notification. {title}': 'Thông báo đã đọc. {title}',
+    'Unread notification. {title}': 'Thông báo chưa đọc. {title}',
+    'Notification actions': 'Thao tác với thông báo',
+    'Delete notification': 'Xóa thông báo',
+    'Friend requests and unread messages could not be loaded. Your activity below is up to date.':
+        'Không thể tải lời mời kết bạn và tin nhắn chưa đọc. Hoạt động bên dưới của bạn đã được cập nhật.',
+    'You don\'t have permission to do that.':
+        'Bạn không có quyền thực hiện việc đó.',
   },
   'zh_CN': <String, String>{
     '{actor} sent you a friend request': '{actor} 向你发送了好友请求',
@@ -1903,6 +2525,26 @@ const notifyFollowTranslations = <String, Map<String, String>>{
     'notifyPrefs.mentions': '提及',
     'notifyPrefs.replies': '回复',
     'Could not update this notification setting.': '无法更新此通知设置。',
+    'Service is temporarily unavailable.': '服务暂时不可用。',
+    'Friend requests, messages and activity': '好友请求、消息和动态',
+    'Could not load your activity': '无法加载你的动态',
+    'This account is not allowed to read its activity feed. Sign out and back in to refresh it.':
+        '此账号无权读取自己的动态。请退出后重新登录以刷新。',
+    'You are all caught up': '已全部看完',
+    'New friend requests, messages and activity will appear here.':
+        '新的好友请求、消息和动态会显示在这里。',
+    'Unread messages': '未读消息',
+    'Mark all read': '全部标为已读',
+    'notifyBell.activity': '动态',
+    'Sent you a friend request': '向你发送了好友请求',
+    'New message': '新消息',
+    'Read notification. {title}': '已读通知。{title}',
+    'Unread notification. {title}': '未读通知。{title}',
+    'Notification actions': '通知操作',
+    'Delete notification': '删除通知',
+    'Friend requests and unread messages could not be loaded. Your activity below is up to date.':
+        '无法加载好友请求和未读消息。下方的动态是最新的。',
+    'You don\'t have permission to do that.': '你没有执行此操作的权限。',
   },
   'zh_TW': <String, String>{
     '{actor} sent you a friend request': '{actor} 向你送出好友邀請',
@@ -1959,6 +2601,26 @@ const notifyFollowTranslations = <String, Map<String, String>>{
     'notifyPrefs.mentions': '提及',
     'notifyPrefs.replies': '回覆',
     'Could not update this notification setting.': '無法更新這項通知設定。',
+    'Service is temporarily unavailable.': '服務暫時無法使用。',
+    'Friend requests, messages and activity': '好友邀請、訊息和動態',
+    'Could not load your activity': '無法載入你的動態',
+    'This account is not allowed to read its activity feed. Sign out and back in to refresh it.':
+        '此帳號無權讀取自己的動態。請登出後重新登入以重新整理。',
+    'You are all caught up': '已全部看完',
+    'New friend requests, messages and activity will appear here.':
+        '新的好友邀請、訊息和動態會顯示在這裡。',
+    'Unread messages': '未讀訊息',
+    'Mark all read': '全部標示為已讀',
+    'notifyBell.activity': '動態',
+    'Sent you a friend request': '向你傳送了好友邀請',
+    'New message': '新訊息',
+    'Read notification. {title}': '已讀通知。{title}',
+    'Unread notification. {title}': '未讀通知。{title}',
+    'Notification actions': '通知動作',
+    'Delete notification': '刪除通知',
+    'Friend requests and unread messages could not be loaded. Your activity below is up to date.':
+        '無法載入好友邀請和未讀訊息。下方的動態是最新的。',
+    'You don\'t have permission to do that.': '你沒有執行此操作的權限。',
   },
   'ja': <String, String>{
     '{actor} sent you a friend request': '{actor} さんから友達リクエストが届きました',
@@ -2015,6 +2677,26 @@ const notifyFollowTranslations = <String, Map<String, String>>{
     'notifyPrefs.mentions': 'メンション',
     'notifyPrefs.replies': '返信',
     'Could not update this notification setting.': 'この通知設定を更新できませんでした。',
+    'Service is temporarily unavailable.': 'サービスは一時的にご利用いただけません。',
+    'Friend requests, messages and activity': '友達リクエスト、メッセージ、アクティビティ',
+    'Could not load your activity': 'アクティビティを読み込めませんでした',
+    'This account is not allowed to read its activity feed. Sign out and back in to refresh it.':
+        'このアカウントにはアクティビティを読み取る権限がありません。一度ログアウトしてから再度ログインしてください。',
+    'You are all caught up': 'すべて確認済みです',
+    'New friend requests, messages and activity will appear here.':
+        '新しい友達リクエスト、メッセージ、アクティビティがここに表示されます。',
+    'Unread messages': '未読メッセージ',
+    'Mark all read': 'すべて既読にする',
+    'notifyBell.activity': 'アクティビティ',
+    'Sent you a friend request': '友達リクエストが届いています',
+    'New message': '新着メッセージ',
+    'Read notification. {title}': '既読の通知。{title}',
+    'Unread notification. {title}': '未読の通知。{title}',
+    'Notification actions': '通知の操作',
+    'Delete notification': '通知を削除',
+    'Friend requests and unread messages could not be loaded. Your activity below is up to date.':
+        '友達リクエストと未読メッセージを読み込めませんでした。下のアクティビティは最新です。',
+    'You don\'t have permission to do that.': 'この操作を行う権限がありません。',
   },
   'ko': <String, String>{
     '{actor} sent you a friend request': '{actor} 님이 친구 요청을 보냈습니다',
@@ -2071,6 +2753,26 @@ const notifyFollowTranslations = <String, Map<String, String>>{
     'notifyPrefs.mentions': '멘션',
     'notifyPrefs.replies': '답글',
     'Could not update this notification setting.': '이 알림 설정을 업데이트할 수 없습니다.',
+    'Service is temporarily unavailable.': '서비스를 일시적으로 사용할 수 없습니다.',
+    'Friend requests, messages and activity': '친구 요청, 메시지 및 활동',
+    'Could not load your activity': '활동을 불러올 수 없습니다',
+    'This account is not allowed to read its activity feed. Sign out and back in to refresh it.':
+        '이 계정은 자신의 활동을 읽을 권한이 없습니다. 로그아웃한 후 다시 로그인하여 새로 고치세요.',
+    'You are all caught up': '모두 확인했습니다',
+    'New friend requests, messages and activity will appear here.':
+        '새로운 친구 요청, 메시지 및 활동이 여기에 표시됩니다.',
+    'Unread messages': '읽지 않은 메시지',
+    'Mark all read': '모두 읽음으로 표시',
+    'notifyBell.activity': '활동',
+    'Sent you a friend request': '친구 요청을 보냈습니다',
+    'New message': '새 메시지',
+    'Read notification. {title}': '읽은 알림. {title}',
+    'Unread notification. {title}': '읽지 않은 알림. {title}',
+    'Notification actions': '알림 작업',
+    'Delete notification': '알림 삭제',
+    'Friend requests and unread messages could not be loaded. Your activity below is up to date.':
+        '친구 요청과 읽지 않은 메시지를 불러올 수 없습니다. 아래 활동은 최신 상태입니다.',
+    'You don\'t have permission to do that.': '이 작업을 수행할 권한이 없습니다.',
   },
   'ar': <String, String>{
     '{actor} sent you a friend request': 'أرسل {actor} إليك طلب صداقة',
@@ -2130,6 +2832,26 @@ const notifyFollowTranslations = <String, Map<String, String>>{
     'notifyPrefs.replies': 'الردود',
     'Could not update this notification setting.':
         'تعذّر تحديث إعداد الإشعارات هذا.',
+    'Service is temporarily unavailable.': 'الخدمة غير متاحة مؤقتًا.',
+    'Friend requests, messages and activity': 'طلبات الصداقة والرسائل والنشاط',
+    'Could not load your activity': 'تعذّر تحميل نشاطك',
+    'This account is not allowed to read its activity feed. Sign out and back in to refresh it.':
+        'لا يُسمح لهذا الحساب بقراءة نشاطه. سجّل الخروج ثم سجّل الدخول مجددًا للتحديث.',
+    'You are all caught up': 'لقد اطّلعت على كل شيء',
+    'New friend requests, messages and activity will appear here.':
+        'ستظهر هنا طلبات الصداقة والرسائل والأنشطة الجديدة.',
+    'Unread messages': 'الرسائل غير المقروءة',
+    'Mark all read': 'تحديد الكل كمقروء',
+    'notifyBell.activity': 'النشاط',
+    'Sent you a friend request': 'يرسل إليك طلب صداقة',
+    'New message': 'رسالة جديدة',
+    'Read notification. {title}': 'إشعار مقروء. {title}',
+    'Unread notification. {title}': 'إشعار غير مقروء. {title}',
+    'Notification actions': 'إجراءات الإشعار',
+    'Delete notification': 'حذف الإشعار',
+    'Friend requests and unread messages could not be loaded. Your activity below is up to date.':
+        'تعذّر تحميل طلبات الصداقة والرسائل غير المقروءة. نشاطك أدناه محدَّث.',
+    'You don\'t have permission to do that.': 'ليس لديك إذن للقيام بذلك.',
   },
   'hi': <String, String>{
     '{actor} sent you a friend request': '{actor} ने आपको मित्रता अनुरोध भेजा',
@@ -2198,6 +2920,29 @@ const notifyFollowTranslations = <String, Map<String, String>>{
     'notifyPrefs.replies': 'जवाब',
     'Could not update this notification setting.':
         'यह सूचना सेटिंग अपडेट नहीं हो सकी।',
+    'Service is temporarily unavailable.':
+        'सेवा अस्थायी रूप से उपलब्ध नहीं है।',
+    'Friend requests, messages and activity':
+        'मित्रता अनुरोध, संदेश और गतिविधि',
+    'Could not load your activity': 'आपकी गतिविधि लोड नहीं हो सकी',
+    'This account is not allowed to read its activity feed. Sign out and back in to refresh it.':
+        'इस खाते को अपनी गतिविधि पढ़ने की अनुमति नहीं है। रीफ़्रेश करने के लिए साइन आउट करके फिर से साइन इन करें।',
+    'You are all caught up': 'आपने सब कुछ देख लिया है',
+    'New friend requests, messages and activity will appear here.':
+        'नए मित्रता अनुरोध, संदेश और गतिविधि यहाँ दिखेंगे।',
+    'Unread messages': 'अपठित संदेश',
+    'Mark all read': 'सभी को पढ़ा हुआ चिह्नित करें',
+    'notifyBell.activity': 'गतिविधि',
+    'Sent you a friend request': 'आपको मित्रता अनुरोध भेजा है',
+    'New message': 'नया संदेश',
+    'Read notification. {title}': 'पढ़ी हुई सूचना। {title}',
+    'Unread notification. {title}': 'अपठित सूचना। {title}',
+    'Notification actions': 'सूचना की कार्रवाइयाँ',
+    'Delete notification': 'सूचना हटाएँ',
+    'Friend requests and unread messages could not be loaded. Your activity below is up to date.':
+        'मित्रता अनुरोध और अपठित संदेश लोड नहीं हो सके। नीचे आपकी गतिविधि अद्यतन है।',
+    'You don\'t have permission to do that.':
+        'आपको ऐसा करने की अनुमति नहीं है।',
   },
   'bn': <String, String>{
     '{actor} sent you a friend request':
@@ -2268,6 +3013,27 @@ const notifyFollowTranslations = <String, Map<String, String>>{
     'notifyPrefs.replies': 'উত্তর',
     'Could not update this notification setting.':
         'এই বিজ্ঞপ্তি সেটিং আপডেট করা যায়নি।',
+    'Service is temporarily unavailable.': 'পরিষেবাটি সাময়িকভাবে অনুপলব্ধ।',
+    'Friend requests, messages and activity':
+        'বন্ধুত্বের অনুরোধ, বার্তা ও কার্যকলাপ',
+    'Could not load your activity': 'আপনার কার্যকলাপ লোড করা যায়নি',
+    'This account is not allowed to read its activity feed. Sign out and back in to refresh it.':
+        'এই অ্যাকাউন্টের নিজের কার্যকলাপ পড়ার অনুমতি নেই। রিফ্রেশ করতে সাইন আউট করে আবার সাইন ইন করুন।',
+    'You are all caught up': 'আপনি সবকিছু দেখে ফেলেছেন',
+    'New friend requests, messages and activity will appear here.':
+        'নতুন বন্ধুত্বের অনুরোধ, বার্তা ও কার্যকলাপ এখানে দেখা যাবে।',
+    'Unread messages': 'অপঠিত বার্তা',
+    'Mark all read': 'সবগুলো পঠিত হিসেবে চিহ্নিত করুন',
+    'notifyBell.activity': 'কার্যকলাপ',
+    'Sent you a friend request': 'আপনাকে বন্ধুত্বের অনুরোধ পাঠিয়েছেন',
+    'New message': 'নতুন বার্তা',
+    'Read notification. {title}': 'পঠিত বিজ্ঞপ্তি। {title}',
+    'Unread notification. {title}': 'অপঠিত বিজ্ঞপ্তি। {title}',
+    'Notification actions': 'বিজ্ঞপ্তির কার্যক্রম',
+    'Delete notification': 'বিজ্ঞপ্তি মুছুন',
+    'Friend requests and unread messages could not be loaded. Your activity below is up to date.':
+        'বন্ধুত্বের অনুরোধ ও অপঠিত বার্তা লোড করা যায়নি। নিচের কার্যকলাপ হালনাগাদ আছে।',
+    'You don\'t have permission to do that.': 'এটি করার অনুমতি আপনার নেই।',
   },
   'ur': <String, String>{
     '{actor} sent you a friend request':
@@ -2335,6 +3101,28 @@ const notifyFollowTranslations = <String, Map<String, String>>{
     'notifyPrefs.replies': 'جوابات',
     'Could not update this notification setting.':
         'یہ اطلاع کی ترتیب اپ ڈیٹ نہیں ہو سکی۔',
+    'Service is temporarily unavailable.': 'سروس عارضی طور پر دستیاب نہیں ہے۔',
+    'Friend requests, messages and activity':
+        'دوستی کی درخواستیں، پیغامات اور سرگرمی',
+    'Could not load your activity': 'آپ کی سرگرمی لوڈ نہیں ہو سکی',
+    'This account is not allowed to read its activity feed. Sign out and back in to refresh it.':
+        'اس اکاؤنٹ کو اپنی سرگرمی پڑھنے کی اجازت نہیں ہے۔ تازہ کرنے کے لیے سائن آؤٹ کر کے دوبارہ سائن اِن کریں۔',
+    'You are all caught up': 'آپ نے سب کچھ دیکھ لیا ہے',
+    'New friend requests, messages and activity will appear here.':
+        'نئی دوستی کی درخواستیں، پیغامات اور سرگرمی یہاں نظر آئیں گی۔',
+    'Unread messages': 'نہ پڑھے گئے پیغامات',
+    'Mark all read': 'سب کو پڑھا ہوا نشان زد کریں',
+    'notifyBell.activity': 'سرگرمی',
+    'Sent you a friend request': 'آپ کو دوستی کی درخواست بھیجی ہے',
+    'New message': 'نیا پیغام',
+    'Read notification. {title}': 'پڑھی ہوئی اطلاع۔ {title}',
+    'Unread notification. {title}': 'نہ پڑھی گئی اطلاع۔ {title}',
+    'Notification actions': 'اطلاع کے اقدامات',
+    'Delete notification': 'اطلاع حذف کریں',
+    'Friend requests and unread messages could not be loaded. Your activity below is up to date.':
+        'دوستی کی درخواستیں اور نہ پڑھے گئے پیغامات لوڈ نہیں ہو سکے۔ نیچے آپ کی سرگرمی تازہ ترین ہے۔',
+    'You don\'t have permission to do that.':
+        'آپ کو ایسا کرنے کی اجازت نہیں ہے۔',
   },
   'th': <String, String>{
     '{actor} sent you a friend request': '{actor} ส่งคำขอเป็นเพื่อนถึงคุณ',
@@ -2396,6 +3184,27 @@ const notifyFollowTranslations = <String, Map<String, String>>{
     'notifyPrefs.replies': 'การตอบกลับ',
     'Could not update this notification setting.':
         'ไม่สามารถอัปเดตการตั้งค่าการแจ้งเตือนนี้ได้',
+    'Service is temporarily unavailable.': 'บริการไม่พร้อมใช้งานชั่วคราว',
+    'Friend requests, messages and activity':
+        'คำขอเป็นเพื่อน ข้อความ และกิจกรรม',
+    'Could not load your activity': 'ไม่สามารถโหลดกิจกรรมของคุณได้',
+    'This account is not allowed to read its activity feed. Sign out and back in to refresh it.':
+        'บัญชีนี้ไม่ได้รับอนุญาตให้อ่านกิจกรรมของตัวเอง โปรดออกจากระบบแล้วเข้าสู่ระบบอีกครั้งเพื่อรีเฟรช',
+    'You are all caught up': 'คุณดูครบทุกอย่างแล้ว',
+    'New friend requests, messages and activity will appear here.':
+        'คำขอเป็นเพื่อน ข้อความ และกิจกรรมใหม่จะแสดงที่นี่',
+    'Unread messages': 'ข้อความที่ยังไม่ได้อ่าน',
+    'Mark all read': 'ทำเครื่องหมายว่าอ่านแล้วทั้งหมด',
+    'notifyBell.activity': 'กิจกรรม',
+    'Sent you a friend request': 'ส่งคำขอเป็นเพื่อนถึงคุณ',
+    'New message': 'ข้อความใหม่',
+    'Read notification. {title}': 'การแจ้งเตือนที่อ่านแล้ว {title}',
+    'Unread notification. {title}': 'การแจ้งเตือนที่ยังไม่ได้อ่าน {title}',
+    'Notification actions': 'การดำเนินการกับการแจ้งเตือน',
+    'Delete notification': 'ลบการแจ้งเตือน',
+    'Friend requests and unread messages could not be loaded. Your activity below is up to date.':
+        'ไม่สามารถโหลดคำขอเป็นเพื่อนและข้อความที่ยังไม่ได้อ่านได้ กิจกรรมด้านล่างของคุณเป็นข้อมูลล่าสุดแล้ว',
+    'You don\'t have permission to do that.': 'คุณไม่มีสิทธิ์ดำเนินการนี้',
   },
   'ms': <String, String>{
     '{actor} sent you a friend request':
@@ -2464,6 +3273,29 @@ const notifyFollowTranslations = <String, Map<String, String>>{
     'notifyPrefs.replies': 'Balasan',
     'Could not update this notification setting.':
         'Tetapan pemberitahuan ini tidak dapat dikemas kini.',
+    'Service is temporarily unavailable.':
+        'Perkhidmatan tidak tersedia buat sementara waktu.',
+    'Friend requests, messages and activity':
+        'Permintaan rakan, mesej dan aktiviti',
+    'Could not load your activity': 'Aktiviti anda tidak dapat dimuatkan',
+    'This account is not allowed to read its activity feed. Sign out and back in to refresh it.':
+        'Akaun ini tidak dibenarkan membaca aktivitinya. Log keluar dan log masuk semula untuk memuat semula.',
+    'You are all caught up': 'Anda sudah melihat semuanya',
+    'New friend requests, messages and activity will appear here.':
+        'Permintaan rakan, mesej dan aktiviti baharu akan dipaparkan di sini.',
+    'Unread messages': 'Mesej belum dibaca',
+    'Mark all read': 'Tandai semua sebagai dibaca',
+    'notifyBell.activity': 'Aktiviti',
+    'Sent you a friend request': 'Menghantar permintaan rakan kepada anda',
+    'New message': 'Mesej baharu',
+    'Read notification. {title}': 'Pemberitahuan sudah dibaca. {title}',
+    'Unread notification. {title}': 'Pemberitahuan belum dibaca. {title}',
+    'Notification actions': 'Tindakan pemberitahuan',
+    'Delete notification': 'Padam pemberitahuan',
+    'Friend requests and unread messages could not be loaded. Your activity below is up to date.':
+        'Permintaan rakan dan mesej belum dibaca tidak dapat dimuatkan. Aktiviti anda di bawah adalah terkini.',
+    'You don\'t have permission to do that.':
+        'Anda tidak mempunyai kebenaran untuk melakukannya.',
   },
   'fil': <String, String>{
     '{actor} sent you a friend request':
@@ -2533,6 +3365,29 @@ const notifyFollowTranslations = <String, Map<String, String>>{
     'notifyPrefs.replies': 'Mga sagot',
     'Could not update this notification setting.':
         'Hindi ma-update ang setting ng abiso na ito.',
+    'Service is temporarily unavailable.':
+        'Pansamantalang hindi available ang serbisyo.',
+    'Friend requests, messages and activity':
+        'Mga friend request, mensahe, at aktibidad',
+    'Could not load your activity': 'Hindi ma-load ang iyong aktibidad',
+    'This account is not allowed to read its activity feed. Sign out and back in to refresh it.':
+        'Hindi pinapayagan ang account na ito na basahin ang sarili nitong aktibidad. Mag-sign out at mag-sign in ulit para i-refresh ito.',
+    'You are all caught up': 'Nakita mo na ang lahat',
+    'New friend requests, messages and activity will appear here.':
+        'Dito lalabas ang mga bagong friend request, mensahe, at aktibidad.',
+    'Unread messages': 'Mga hindi pa nababasang mensahe',
+    'Mark all read': 'Markahan lahat bilang nabasa',
+    'notifyBell.activity': 'Aktibidad',
+    'Sent you a friend request': 'Nagpadala sa iyo ng friend request',
+    'New message': 'Bagong mensahe',
+    'Read notification. {title}': 'Nabasang notification. {title}',
+    'Unread notification. {title}': 'Hindi pa nababasang notification. {title}',
+    'Notification actions': 'Mga aksyon sa notification',
+    'Delete notification': 'I-delete ang notification',
+    'Friend requests and unread messages could not be loaded. Your activity below is up to date.':
+        'Hindi ma-load ang mga friend request at hindi pa nababasang mensahe. Napapanahon ang iyong aktibidad sa ibaba.',
+    'You don\'t have permission to do that.':
+        'Wala kang pahintulot na gawin iyan.',
   },
   'he': <String, String>{
     '{actor} sent you a friend request': '{actor} שלח/ה לך בקשת חברות',
@@ -2593,6 +3448,26 @@ const notifyFollowTranslations = <String, Map<String, String>>{
     'notifyPrefs.replies': 'תגובות',
     'Could not update this notification setting.':
         'לא ניתן היה לעדכן את הגדרת ההתראות הזו.',
+    'Service is temporarily unavailable.': 'השירות אינו זמין באופן זמני.',
+    'Friend requests, messages and activity': 'בקשות חברות, הודעות ופעילות',
+    'Could not load your activity': 'לא ניתן היה לטעון את הפעילות שלך',
+    'This account is not allowed to read its activity feed. Sign out and back in to refresh it.':
+        'לחשבון הזה אין הרשאה לקרוא את הפעילות שלו. יש להתנתק ולהתחבר מחדש כדי לרענן.',
+    'You are all caught up': 'ראית הכול',
+    'New friend requests, messages and activity will appear here.':
+        'בקשות חברות, הודעות ופעילות חדשות יופיעו כאן.',
+    'Unread messages': 'הודעות שלא נקראו',
+    'Mark all read': 'סימון הכול כנקרא',
+    'notifyBell.activity': 'פעילות',
+    'Sent you a friend request': 'בקשת חברות עבורך',
+    'New message': 'הודעה חדשה',
+    'Read notification. {title}': 'התראה שנקראה. {title}',
+    'Unread notification. {title}': 'התראה שלא נקראה. {title}',
+    'Notification actions': 'פעולות להתראה',
+    'Delete notification': 'מחיקת ההתראה',
+    'Friend requests and unread messages could not be loaded. Your activity below is up to date.':
+        'לא ניתן היה לטעון בקשות חברות והודעות שלא נקראו. הפעילות שלך למטה מעודכנת.',
+    'You don\'t have permission to do that.': 'אין לך הרשאה לעשות זאת.',
   },
   'fa': <String, String>{
     '{actor} sent you a friend request':
@@ -2658,6 +3533,27 @@ const notifyFollowTranslations = <String, Map<String, String>>{
     'notifyPrefs.replies': 'پاسخ‌ها',
     'Could not update this notification setting.':
         'این تنظیم اعلان به‌روزرسانی نشد.',
+    'Service is temporarily unavailable.': 'سرویس موقتاً در دسترس نیست.',
+    'Friend requests, messages and activity':
+        'درخواست‌های دوستی، پیام‌ها و فعالیت',
+    'Could not load your activity': 'بارگیری فعالیت شما ممکن نشد',
+    'This account is not allowed to read its activity feed. Sign out and back in to refresh it.':
+        'این حساب اجازهٔ خواندن فعالیت خود را ندارد. برای تازه‌سازی، از حساب خارج شوید و دوباره وارد شوید.',
+    'You are all caught up': 'همه‌چیز را دیده‌اید',
+    'New friend requests, messages and activity will appear here.':
+        'درخواست‌های دوستی، پیام‌ها و فعالیت‌های تازه اینجا نمایش داده می‌شوند.',
+    'Unread messages': 'پیام‌های خوانده‌نشده',
+    'Mark all read': 'علامت‌گذاری همه به‌عنوان خوانده‌شده',
+    'notifyBell.activity': 'فعالیت',
+    'Sent you a friend request': 'برای شما درخواست دوستی فرستاده است',
+    'New message': 'پیام تازه',
+    'Read notification. {title}': 'اعلان خوانده‌شده. {title}',
+    'Unread notification. {title}': 'اعلان خوانده‌نشده. {title}',
+    'Notification actions': 'کنش‌های اعلان',
+    'Delete notification': 'حذف اعلان',
+    'Friend requests and unread messages could not be loaded. Your activity below is up to date.':
+        'بارگیری درخواست‌های دوستی و پیام‌های خوانده‌نشده ممکن نشد. فعالیت شما در پایین به‌روز است.',
+    'You don\'t have permission to do that.': 'اجازهٔ انجام این کار را ندارید.',
   },
   'sw': <String, String>{
     '{actor} sent you a friend request': '{actor} amekutumia ombi la urafiki',
@@ -2722,5 +3618,26 @@ const notifyFollowTranslations = <String, Map<String, String>>{
     'notifyPrefs.replies': 'Majibu',
     'Could not update this notification setting.':
         'Imeshindwa kusasisha mpangilio huu wa arifa.',
+    'Service is temporarily unavailable.': 'Huduma haipatikani kwa muda.',
+    'Friend requests, messages and activity':
+        'Maombi ya urafiki, ujumbe na shughuli',
+    'Could not load your activity': 'Imeshindwa kupakia shughuli zako',
+    'This account is not allowed to read its activity feed. Sign out and back in to refresh it.':
+        'Akaunti hii hairuhusiwi kusoma shughuli zake. Ondoka kisha uingie tena ili kuonyesha upya.',
+    'You are all caught up': 'Umeona kila kitu',
+    'New friend requests, messages and activity will appear here.':
+        'Maombi mapya ya urafiki, ujumbe na shughuli vitaonekana hapa.',
+    'Unread messages': 'Ujumbe ambao haujasomwa',
+    'Mark all read': 'Weka zote kuwa zimesomwa',
+    'notifyBell.activity': 'Shughuli',
+    'Sent you a friend request': 'Amekutumia ombi la urafiki',
+    'New message': 'Ujumbe mpya',
+    'Read notification. {title}': 'Arifa iliyosomwa. {title}',
+    'Unread notification. {title}': 'Arifa ambayo haijasomwa. {title}',
+    'Notification actions': 'Vitendo vya arifa',
+    'Delete notification': 'Futa arifa',
+    'Friend requests and unread messages could not be loaded. Your activity below is up to date.':
+        'Imeshindwa kupakia maombi ya urafiki na ujumbe ambao haujasomwa. Shughuli zako hapa chini ni za sasa.',
+    'You don\'t have permission to do that.': 'Huna ruhusa ya kufanya hivyo.',
   },
 };
