@@ -413,6 +413,21 @@ abstract interface class ServerQuestionAttentionRepository {
   });
 }
 
+/// The public servers a signed-in account may list inside the Servers tab
+/// (ADR-239): the board's "Serwery publiczne" section.
+///
+/// A capability of its own rather than a method of [ServerRepository], like
+/// [ServerManagementRepository]: a repository that cannot list simply gives
+/// the board no public section.
+abstract interface class ServerPublicDirectoryRepository {
+  /// Active public servers a non-member can open and join, most members
+  /// first. At most [limit] roots are READ; what comes back is every
+  /// joinable one among them, so it can be shorter than [limit]. The caller
+  /// still removes the servers the account already belongs to and shows at
+  /// most [ServerService.publicDirectoryLimit] cards.
+  Stream<List<Server>> watchPublicServers({int limit});
+}
+
 typedef ServerCallable =
     Future<Map<Object?, Object?>> Function(
       String name,
@@ -430,7 +445,8 @@ class ServerService
         ServerPodcastEpisodeRepository,
         ServerPodcastQuestionsRepository,
         ServerQuestionAttentionRepository,
-        ServerWhiteboardRepository {
+        ServerWhiteboardRepository,
+        ServerPublicDirectoryRepository {
   ServerService({
     FirebaseFirestore? firestore,
     FirebaseAuth? auth,
@@ -2050,6 +2066,93 @@ class ServerService
       },
     );
   });
+
+  /// How many public servers the Servers board SHOWS.
+  static const publicDirectoryLimit = 8;
+
+  /// How many public roots the listing READS to fill those cards.
+  ///
+  /// The rule-proven query cannot tell a joinable V1 root from a legacy club
+  /// (both carry the three equalities), and it cannot leave out the servers
+  /// the account is already in. Read exactly eight and those rows take the
+  /// cards' places: with eight legacy public clubs early in document-id
+  /// order the section would stay empty for everybody, for good, although
+  /// joinable public servers exist. Three times the shown number keeps the
+  /// section filled at this product's size for the price of sixteen more
+  /// document reads; the rule has no `limit` clause, so the proof is the
+  /// same. Paging and search belong to the later callable.
+  static const publicDirectoryReadLimit = 24;
+
+  /// The equalities the `clubs` list rule proves a query by. All three are
+  /// sent, always (see [watchPublicServers]).
+  static const publicDirectoryFilters = <String, String>{
+    'privacy': 'public',
+    'type': 'community',
+    'status': 'active',
+  };
+
+  /// "Serwery publiczne" on the Servers board (ADR-239).
+  ///
+  /// ALL THREE EQUALITIES ARE LOAD-BEARING. `match /clubs/{clubId}` allows a
+  /// list only as
+  ///
+  ///     allow list: if isActiveAccount() &&
+  ///         resource.data.privacy == 'public' &&
+  ///         resource.data.type == 'community' &&
+  ///         resource.data.status == 'active';
+  ///
+  /// and a list rule is proven against the QUERY'S constraints, so dropping
+  /// any one filter turns the whole query into permission-denied (see
+  /// `HomeFeedService.watchSuggestedClubs`, which sends the same shape and
+  /// documents the measurement). Three equalities and a limit need no
+  /// composite index.
+  ///
+  /// Public Podcast servers are inside this result: every non-family V1 root
+  /// carries `type: 'community'` (`validServerRoot` in firestore.rules), the
+  /// template lives in `serverType`.
+  ///
+  /// What comes back is narrowed to what a person can actually enter from
+  /// the board: a V1 root that is active, public and Community or Podcast —
+  /// exactly the roots `ServerWorkspaceScreen` offers its public admission
+  /// for. A legacy club or a held root has no join path there, so it is not
+  /// offered. A document this build cannot parse is one missing card, never
+  /// a failed list.
+  @override
+  Stream<List<Server>> watchPublicServers({
+    int limit = publicDirectoryReadLimit,
+  }) => _switchMap(_watchAccountId(), (uid) {
+    if (uid == null) return Stream.value(const <Server>[]);
+    Query<Map<String, dynamic>> query = _firestore.collection('clubs');
+    for (final filter in publicDirectoryFilters.entries) {
+      query = query.where(filter.key, isEqualTo: filter.value);
+    }
+    return query.limit(limit).snapshots().map((snapshot) {
+      final servers = <Server>[];
+      for (final doc in snapshot.docs) {
+        final Server server;
+        try {
+          server = Server.fromFirestore(doc);
+        } on FormatException {
+          continue;
+        }
+        if (isJoinablePublicServer(server)) servers.add(server);
+      }
+      servers.sort((a, b) {
+        final members = b.memberCount.compareTo(a.memberCount);
+        return members != 0 ? members : a.id.compareTo(b.id);
+      });
+      return List<Server>.unmodifiable(servers);
+    });
+  });
+
+  /// Whether [server] is a public root the workspace's admission can join.
+  static bool isJoinablePublicServer(Server server) =>
+      !server.isLegacy &&
+      !server.isHeld &&
+      server.status == 'active' &&
+      server.privacy == ServerPrivacy.public &&
+      (server.type == ServerType.community ||
+          server.type == ServerType.podcast);
 
   @override
   Stream<List<ServerChannel>> watchChannels(String serverId) {

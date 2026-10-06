@@ -11,6 +11,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:yovoice/core/theme/app_sizing.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/features/servers/data/models/server.dart';
@@ -83,7 +84,9 @@ Future<void> _pump(
   await tester.pump();
 }
 
-Finder get _create => find.byKey(const ValueKey('servers-create'));
+/// The board's "+" (it opens `Stwórz serwer` / `Dołącz z linku`): present
+/// whenever the board itself is.
+Finder get _add => find.byKey(const ValueKey('servers-add'));
 Finder _tile(String id) => find.byKey(ValueKey('server-directory-$id'));
 
 void main() {
@@ -106,7 +109,7 @@ void main() {
     expect(find.byType(AppBar), findsNothing, reason: 'the shell owns chrome');
     expect(find.byType(YoEmptyState), findsNothing);
     expect(find.byType(YoErrorState), findsNothing);
-    expect(_create, findsNothing, reason: 'nothing to act on yet');
+    expect(_add, findsNothing, reason: 'nothing to act on yet');
     expect(repository.subscriptions, 1);
     expect(tester.takeException(), isNull);
   });
@@ -122,7 +125,7 @@ void main() {
     expect(find.byType(YoErrorState), findsOneWidget);
     expect(find.text('Spróbuj ponownie'), findsOneWidget);
     expect(find.byType(YoEmptyState), findsNothing);
-    expect(_create, findsNothing);
+    expect(_add, findsNothing);
     expect(repository.subscriptions, 1);
 
     repository.stream = Stream.value([_legacyClub('club-1', 'Nasz dom')]);
@@ -143,13 +146,21 @@ void main() {
     await tester.pump();
 
     expect(find.text('Serwery'), findsOneWidget);
-    expect(find.byType(YoEmptyState), findsOneWidget);
+    // The board's first-run block stands in for "Twoje serwery" (ADR-239).
+    expect(find.byKey(const ValueKey('servers-newcomer')), findsOneWidget);
     expect(find.text('Twoje miejsce na wspólne rozmowy'), findsOneWidget);
     expect(find.byType(YoErrorState), findsNothing);
     expect(find.byType(AppBar), findsNothing);
-    expect(_create, findsOneWidget);
-    expect(tester.widget<FilledButton>(_create).enabled, isTrue);
-    expect(tester.getSize(_create).height, greaterThanOrEqualTo(48));
+    expect(_add, findsOneWidget);
+    final create = find.byKey(const ValueKey('servers-empty-create'));
+    expect(create, findsOneWidget);
+    expect(tester.widget<FilledButton>(create).enabled, isTrue);
+    // The shared gradient CTA at its standard height: the project's minimum
+    // target (it was the 48 px server button before the board).
+    expect(
+      tester.getSize(create).height,
+      greaterThanOrEqualTo(AppSizing.minimumTouchTarget),
+    );
     expect(find.text('Stwórz serwer'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
@@ -181,7 +192,7 @@ void main() {
       expect(find.byType(YoEmptyState), findsNothing);
       expect(find.byType(YoErrorState), findsNothing);
       expect(find.byType(AppBar), findsNothing);
-      expect(_create, findsOneWidget);
+      expect(_add, findsOneWidget);
       expect(repository.subscriptions, 1);
       expect(tester.takeException(), isNull);
     });
@@ -195,7 +206,10 @@ void main() {
     await _pump(tester, ServersScreen(repository: repository, isRootTab: true));
     await tester.pump();
 
-    await tester.tap(_create);
+    // The "+" offers the actions that exist; "Stwórz serwer" is the first.
+    await tester.tap(_add);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('servers-create')));
     await tester.pumpAndSettle();
     // The selector is the gate's front door: the refusal itself is the
     // feature's (server-side, rendered by CreateServerScreen), never Home's.

@@ -290,6 +290,21 @@ invitation/discovery permission. New versioned roots cannot inherit the
 legacy non-family public GET branch. Public discovery uses exact filterable
 fields and contains no private-channel previews.
 
+The one client of that listing inside Servers is the Servers board's "Serwery
+publiczne" (ADR-239): `ServerService.watchPublicServers` sends
+`privacy == 'public'`, `type == 'community'`, `status == 'active'` and
+`limit(24)` — the exact equalities `match /clubs/{clubId}`'s `allow list`
+proves (ADR-083; the rule has no `limit` clause), with no new rule, index or
+callable. Public Podcast roots are inside it because every non-family V1 root
+carries `type: 'community'` (`validServerRoot`). The client then keeps only
+V1 roots that are active, public and Community or Podcast — the roots
+`joinServerV1`'s public admission accepts — drops the servers the account
+already belongs to and shows the first eight
+(`ServerService.publicDirectoryLimit`). It reads three times what it shows
+(`publicDirectoryReadLimit`) because legacy public clubs satisfy the same
+three equalities: with a read of exactly eight, eight of them early in
+document-id order would leave the section empty for everybody.
+
 In the current held implementation, private V1 root GET requires current
 membership; there is no legacy invitation exception. A pending, declined,
 accepted, expired or malformed invitation must not open the current root.

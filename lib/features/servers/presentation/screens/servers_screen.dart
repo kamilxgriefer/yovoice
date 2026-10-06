@@ -1,19 +1,13 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
-import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_finish.dart';
-import 'package:yovoice/core/theme/app_gradients.dart';
-import 'package:yovoice/core/theme/app_motion.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
-import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
-import 'package:yovoice/shared/widgets/branding/yo_logo.dart';
-import 'package:yovoice/shared/widgets/interactions/yo_press_feedback.dart';
+import 'package:yovoice/shared/widgets/inputs/yo_search_field.dart';
+import 'package:yovoice/shared/widgets/layout/home_section_header.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
-import 'package:yovoice/shared/widgets/navigation/yo_server_rail_item.dart';
-import 'package:yovoice/shared/widgets/states/yo_empty_state.dart';
 import 'package:yovoice/shared/widgets/states/yo_error_state.dart';
 
 import 'package:yovoice/features/clubs/data/services/club_chat_service.dart';
@@ -22,18 +16,31 @@ import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_sideb
 import '../../data/models/server.dart';
 import '../../data/models/server_channel.dart';
 import '../../data/models/server_member_role.dart';
+import '../../data/services/server_directory_liveness.dart';
 import '../../data/services/server_media_connector.dart';
 import '../../data/services/server_question_attention.dart';
 import '../../data/services/server_service.dart';
 import '../server_action_failure.dart';
 import '../server_localized_copy.dart';
-import '../theme/server_identity.dart';
-import '../widgets/server_channel_scene.dart';
+import '../servers_board_copy.dart';
 import '../widgets/server_delete_flow.dart';
-import '../widgets/server_waiting_dot.dart';
+import '../widgets/servers_board.dart';
 import 'create_server_screen.dart';
 import 'server_workspace_screen.dart';
 
+/// The Servers tab: one scrolling board (owner's choice 2026-10-03, option A
+/// of sheet `2_hub`; ADR-239).
+///
+/// From the top: the title row (`Serwery`, a name filter and the "+" that
+/// opens `Stwórz serwer` / `Dołącz z linku`), the account's own servers as a
+/// compact list with a LIVE lamp where a conversation is live, then the
+/// public servers a person can look at and join. The public list and the
+/// lamp are part of Servers; they are not the retired Discover surface.
+///
+/// The board's first section, "Na żywo", belongs to the LIVE wave: it needs
+/// a `liveStreams` projection that does not exist yet, so nothing is drawn
+/// for it — no heading, no placeholder. [liveSectionBuilder] is where that
+/// wave mounts it.
 class ServersScreen extends StatefulWidget {
   const ServersScreen({
     this.repository,
@@ -43,12 +50,24 @@ class ServersScreen extends StatefulWidget {
     this.chatService,
     this.connector,
     this.isVisible,
+    this.liveSectionBuilder,
     super.key,
   });
   final ServerRepository? repository;
   final bool isRootTab;
   final ValueChanged<Server>? onOpenServer;
   final VoidCallback? onCreateServer;
+
+  /// The board's "Na żywo" section, mounted between the title row and
+  /// "Twoje serwery". Null — every production caller today — draws nothing
+  /// there. The builder brings its own heading, so an absent section leaves
+  /// no title behind.
+  final WidgetBuilder? liveSectionBuilder;
+
+  /// From this content width the title row carries the name filter inline
+  /// (the desktop slot); below it the filter opens from the search button.
+  static const double inlineSearchWidth = 760;
+  static const double inlineSearchFieldWidth = 300;
 
   /// Whether the shell's content slot that hosts this screen is the one on
   /// screen.
@@ -81,7 +100,34 @@ class _ServersScreenState extends State<ServersScreen> {
   /// real app bar instead. Once hosted it stays hosted at every width — see
   /// the comment in [build].
   String? _inlineServerId;
+
+  /// The channel a pasted link asked for, handed to the inline workspace.
+  String? _inlineChannelId;
   double _width = 0;
+
+  /// "Serwery publiczne": the one listing Rules allow. Null when the
+  /// repository cannot list (a narrow test double), which leaves the board
+  /// without that section.
+  Stream<List<Server>>? _public;
+
+  /// Which of the account's servers are live, for the rows' lamps.
+  late final ServerDirectoryLiveness _liveness;
+
+  /// "Pokaż wszystkie" was pressed.
+  bool _showAll = false;
+
+  /// The name filter: its text, and whether the phone's title row currently
+  /// shows the field instead of the title.
+  final _search = TextEditingController();
+  final _searchFocus = FocusNode(debugLabel: 'ServersBoardSearch');
+
+  /// The search button's own node: closing the field hands focus back to the
+  /// control that opened it. A focused field that leaves the tree drops
+  /// focus to the route, and the next Tab would restart from the top
+  /// (WCAG 2.4.3 — the same reason `YoSearchField` keeps focus on a clear).
+  final _searchButtonFocus = FocusNode(debugLabel: 'ServersBoardSearchButton');
+  bool _searchOpen = false;
+  String _query = '';
 
   /// Rows this directory just deleted or left. They are hidden at once, so
   /// the list never shows a server the person has just removed while the
@@ -102,10 +148,26 @@ class _ServersScreenState extends State<ServersScreen> {
     super.initState();
     _repository = widget.repository ?? ServerService();
     _servers = _repository.watchMyServers();
+    _public = _watchPublic();
     _attention = ServerQuestionAttention(
       repository: _repository,
       isVisible: widget.isVisible,
     )..addListener(_onAttention);
+    _liveness = ServerDirectoryLiveness(
+      repository: _repository,
+      isVisible: widget.isVisible,
+    )..addListener(_onAttention);
+  }
+
+  Stream<List<Server>>? _watchPublic() {
+    final repository = _repository;
+    if (repository is! ServerPublicDirectoryRepository) return null;
+    try {
+      return (repository as ServerPublicDirectoryRepository)
+          .watchPublicServers();
+    } on Object {
+      return null;
+    }
   }
 
   void _onAttention() {
@@ -117,7 +179,55 @@ class _ServersScreenState extends State<ServersScreen> {
     _attention
       ..removeListener(_onAttention)
       ..dispose();
+    _liveness
+      ..removeListener(_onAttention)
+      ..dispose();
+    _search.dispose();
+    _searchFocus.dispose();
+    _searchButtonFocus.dispose();
     super.dispose();
+  }
+
+  /// The "+": the actions that exist today.
+  Future<void> _openAdd() async {
+    final action = await showServersAddSheet(context);
+    if (!mounted || action == null) return;
+    switch (action) {
+      case ServersAddAction.create:
+        _create();
+      case ServersAddAction.joinLink:
+        await _joinWithLink();
+    }
+  }
+
+  /// "Dołącz z linku": the pasted link opens the server it names. A public
+  /// server answers with its admission (`Dołącz do serwera`); one this
+  /// account may not enter answers that it is unavailable — the same two
+  /// outcomes as opening the link from outside the app.
+  Future<void> _joinWithLink() async {
+    final target = await showServerJoinLinkSheet(context);
+    if (!mounted || target == null) return;
+    _openById(target.serverId, channelId: target.channelId);
+  }
+
+  void _openSearch() {
+    setState(() => _searchOpen = true);
+    _searchFocus.requestFocus();
+  }
+
+  void _closeSearch() {
+    setState(() {
+      _searchOpen = false;
+      _search.clear();
+      _query = '';
+    });
+    // The button is back in the tree after this frame (it is absent when the
+    // window has widened to the inline field in the meantime).
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _searchButtonFocus.context != null) {
+        _searchButtonFocus.requestFocus();
+      }
+    });
   }
 
   void _create() {
@@ -139,14 +249,22 @@ class _ServersScreenState extends State<ServersScreen> {
       callback(server);
       return;
     }
+    _openById(server.id);
+  }
+
+  void _openById(String serverId, {String? channelId}) {
     if (_width >= ServerWorkspaceScreen.tabletBreakpoint) {
-      setState(() => _inlineServerId = server.id);
+      setState(() {
+        _inlineServerId = serverId;
+        _inlineChannelId = channelId;
+      });
       return;
     }
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => ServerWorkspaceScreen(
-          serverId: server.id,
+          serverId: serverId,
+          initialChannelId: channelId,
           repository: _repository,
           chatService: widget.chatService,
           connector: widget.connector,
@@ -376,26 +494,32 @@ class _ServersScreenState extends State<ServersScreen> {
                   offstage: hosting,
                   child: TickerMode(
                     enabled: !hosting,
-                    child: _directory(context, copy),
+                    child: _directory(context, copy, onScreen: !hosting),
                   ),
                 ),
                 if (hosting)
                   ServerWorkspaceScreen(
                     key: ValueKey('servers-inline-$inline'),
                     serverId: inline,
+                    initialChannelId: _inlineChannelId,
                     repository: _repository,
                     isRootTab: true,
                     chatService: widget.chatService,
                     connector: widget.connector,
                     isVisible: widget.isVisible,
                     questionAttention: _attention,
-                    onBack: () => setState(() => _inlineServerId = null),
+                    onBack: () => setState(() {
+                      _inlineServerId = null;
+                      _inlineChannelId = null;
+                    }),
                     // The workspace's server rail switches servers IN this
                     // slot. Without this callback it falls back to
                     // `pushReplacement` on the root navigator, which would
                     // replace the route that holds the whole app shell.
-                    onOpenServer: (server) =>
-                        setState(() => _inlineServerId = server.id),
+                    onOpenServer: (server) => setState(() {
+                      _inlineServerId = server.id;
+                      _inlineChannelId = null;
+                    }),
                   ),
               ],
             );
@@ -407,475 +531,465 @@ class _ServersScreenState extends State<ServersScreen> {
 
   Widget _directory(
     BuildContext context,
-    AppLocalizations copy,
-  ) => ResponsiveContentFrame(
+    AppLocalizations copy, {
+    required bool onScreen,
+  }) => ResponsiveContentFrame(
     width: ResponsiveContentWidth.dashboard,
     alignment: ResponsiveContentAlignment.topLeft,
+    // The public listing is subscribed OUTSIDE the account's own list, for
+    // the board's whole life. Nested the other way round its `StreamBuilder`
+    // left the tree whenever the own list showed its error or loading state
+    // and listened to the same single-subscription stream again afterwards:
+    // "Stream has already been listened to", an error box where the board
+    // should be, after nothing more than a failed read and "Spróbuj
+    // ponownie". Here it is only ever resubscribed with a NEW stream (the
+    // public section's own retry).
     child: StreamBuilder<List<Server>>(
-      stream: _servers,
-      builder: (context, snapshot) {
-        if (snapshot.hasError) {
-          return SingleChildScrollView(
-            child: YoErrorState(
-              error: snapshot.error,
-              onRetry: () =>
-                  setState(() => _servers = _repository.watchMyServers()),
-            ),
-          );
-        }
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return Center(
-            child: Semantics(
-              label: copy.text('Loading servers', 'Wczytywanie serwerów'),
-              child: const CircularProgressIndicator(),
-            ),
-          );
-        }
-        final servers = [
-          for (final server in snapshot.data ?? const <Server>[])
-            if (!_removedIds.contains(server.id)) server,
-        ];
-        _attention.trackDirectory(servers);
-        return LayoutBuilder(
-          builder: (context, constraints) {
-            final padding = ResponsiveContentFrame.adaptivePagePadding(
-              constraints.maxWidth,
-            );
-            final contentWidth = constraints.maxWidth - padding.horizontal;
-            // Slim: a compact list, not a stack of bordered cards. From the
-            // list measure up the rows flow into two columns so a desktop
-            // slot is never one phone-width row stretched across 1 200 px.
-            final columns = contentWidth >= ResponsiveContentWidth.form.maxWidth
-                ? 2
-                : 1;
-            // Refine-look §8.2: rows are blocks now, so the gaps are the
-            // block rhythm — 16 between the columns, 12 between the rows.
-            const columnGap = AppRhythm.title;
-            final rowWidth =
-                (contentWidth - columnGap * (columns - 1)) / columns;
-            // The desktop shell's rail draws its own lifted "Stwórz serwer"
-            // beside this slot, so there this identical action keeps the
-            // gradient and gives up the lift: one lift per screen, exactly as
-            // Start does on a desktop. The predicate is MainShell's own
-            // (`usesDesktopLayout`, spelled out as the preview shell does):
-            // 1 100 px wide AND tall enough for the fixed rail — a wide but
-            // short window gets the phone shell, with no rail, and keeps
-            // the lift.
-            final viewport = MediaQuery.sizeOf(context);
-            final railOwnsLift =
-                widget.isRootTab &&
-                viewport.width >= ServerWorkspaceScreen.desktopBreakpoint &&
-                viewport.height >= DesktopSidebar.minimumSupportedHeight;
-            final scheme = Theme.of(context).colorScheme;
-            Widget tile(Server server) => _ServerTile(
-              server: server,
-              width: rowWidth,
-              questionsWaiting: _attention.isWaiting(server.id),
-              onTap: () => _open(server),
-              onActions: _repository is ServerManagementRepository
-                  ? () => _showActions(server)
-                  : null,
-              busy: _busyIds.contains(server.id),
-            );
-            return ListView(
-              padding: padding.add(
-                const EdgeInsets.only(
-                  top: AppRhythm.item,
-                  bottom: AppRhythm.page,
-                ),
+      stream: _public,
+      builder: (context, publicSnapshot) => StreamBuilder<List<Server>>(
+        stream: _servers,
+        builder: (context, snapshot) {
+          if (snapshot.hasError) {
+            return SingleChildScrollView(
+              child: YoErrorState(
+                error: snapshot.error,
+                onRetry: () =>
+                    setState(() => _servers = _repository.watchMyServers()),
               ),
-              children: [
-                // One title row, at most 56 px tall at 100 % text: the
-                // screen's single headline and its single primary action.
-                ConstrainedBox(
-                  constraints: const BoxConstraints(minHeight: 56),
-                  child: Wrap(
-                    alignment: WrapAlignment.spaceBetween,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    spacing: AppRhythm.title,
-                    runSpacing: AppRhythm.item,
-                    children: [
-                      Text(
-                        copy.serversTitle,
-                        style: AppTypography.headlineMedium.copyWith(
-                          fontWeight: FontWeight.w700,
-                          color: context.appPalette.textPrimary,
-                        ),
-                      ),
-                      // The directory's one CTA (refine-look R5): the
-                      // brand action gradient and the rail's lift.
-                      ServerGradientFilledButton(
-                        buttonKey: const ValueKey('servers-create'),
-                        onPressed: _create,
-                        gradient: AppGradients.primaryAction(scheme),
-                        fill: scheme.primary,
-                        foreground: scheme.onPrimary,
-                        liftColor: AppColors.primary,
-                        lifted: !railOwnsLift,
-                        icon: const Icon(Icons.add_rounded),
-                        label: Text(
-                          copy.text('Create server', 'Stwórz serwer'),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: AppRhythm.item),
-                if (servers.isEmpty)
-                  YoEmptyState(
-                    icon: Icons.hub_outlined,
-                    // The first-run invitation carries the real logo (§4):
-                    // a bloom in Dark, a contact shadow in Pearl.
-                    leading: const YoBrandMark(
-                      key: ValueKey('servers-empty-logo'),
-                      size: 72,
-                    ),
-                    title: copy.text(
-                      'Your place for shared conversations',
-                      'Twoje miejsce na wspólne rozmowy',
-                    ),
-                    subtitle: copy.text(
-                      'Create a server or accept an invitation to get started.',
-                      'Stwórz serwer lub przyjmij zaproszenie, aby zacząć.',
-                    ),
-                  )
-                else if (columns == 1)
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      for (var i = 0; i < servers.length; i++) ...[
-                        if (i > 0) const SizedBox(height: AppRhythm.item),
-                        tile(servers[i]),
-                      ],
-                    ],
-                  )
-                else
-                  // Two columns render as row-major pairs, each pair
-                  // stretched to the taller block, so a one-line row never
-                  // sits beside a three-line one at a different height, and
-                  // focus still runs left → right, top → bottom.
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      for (var i = 0; i < servers.length; i += 2) ...[
-                        if (i > 0) const SizedBox(height: AppRhythm.item),
-                        IntrinsicHeight(
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              SizedBox(
-                                width: rowWidth,
-                                child: tile(servers[i]),
-                              ),
-                              const SizedBox(width: columnGap),
-                              SizedBox(
-                                width: rowWidth,
-                                child: i + 1 < servers.length
-                                    ? tile(servers[i + 1])
-                                    : null,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-              ],
             );
-          },
-        );
-      },
+          }
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return Center(
+              child: Semantics(
+                label: copy.serversBoardLoading,
+                child: const CircularProgressIndicator(),
+              ),
+            );
+          }
+          final servers = [
+            for (final server in snapshot.data ?? const <Server>[])
+              if (!_removedIds.contains(server.id)) server,
+          ];
+          _attention.trackDirectory(servers);
+          // A board hidden under a hosted workspace keeps no lamp listeners.
+          _liveness.track(servers, active: onScreen);
+          return LayoutBuilder(
+            builder: (context, constraints) =>
+                _board(context, copy, constraints, servers, publicSnapshot),
+          );
+        },
+      ),
     ),
   );
-}
 
-enum _DirectoryAction { delete, leave }
-
-/// One server in the directory (refine-look §8.2): squircle, name, what kind
-/// of server it is and how many members it has, the description on one more
-/// line — on the neutral R2 block. The identity lives only in the squircle,
-/// never as a tint on the block.
-///
-/// The block is painted with `Ink` inside the row's own keyed `Material`
-/// (`server-directory-<id>`), so the press wash lands on it; Pearl's shadow
-/// pair sits on an outer box that the clip cannot cut, and the edge is that
-/// box's foreground (as in `YoCard`): `Ink` would pad its child by a border
-/// of its own. Hover moves the hairline to `hairlineHover` (and sinks
-/// Pearl's drop), keyboard focus swaps it for a 2 px `focus` ring, and
-/// neither moves a pixel of layout. No ink ripple except InkSparkle on
-/// Android. At least 72 px tall.
-class _ServerTile extends StatefulWidget {
-  const _ServerTile({
-    required this.server,
-    required this.width,
-    required this.onTap,
-    this.onActions,
-    this.busy = false,
-    this.questionsWaiting = false,
-  });
-  final Server server;
-
-  /// The row's own width. The stacked 200 % layout is decided from it
-  /// rather than from a `LayoutBuilder`, because two-column pairs measure
-  /// their rows' intrinsic height and a `LayoutBuilder` has none.
-  final double width;
-  final VoidCallback onTap;
-
-  /// Listener questions on this podcast server wait for this host: the
-  /// squircle carries the shared waiting dot, so the host sees it before
-  /// opening the server.
-  final bool questionsWaiting;
-
-  /// Opens the row's action sheet (delete for the owner, leave otherwise)
-  /// from the trailing button, a long press or a secondary click. Null for a
-  /// read-only repository that cannot administer a server.
-  final VoidCallback? onActions;
-
-  /// A delete or leave for this row is in flight.
-  final bool busy;
-
-  static const double _tileSize = 44;
-  static const double minHeight = 72;
-
-  /// The resting edge's width. The edge is a foreground, so this much inset
-  /// keeps the content exactly where the in-layout hairline used to leave it.
-  static const double _edgeInset = 1;
-
-  @override
-  State<_ServerTile> createState() => _ServerTileState();
-}
-
-class _ServerTileState extends State<_ServerTile> {
-  bool _hovered = false;
-
-  /// The row's own node. The ring follows its PRIMARY focus: the InkWell's
-  /// `onFocusChange` reports focus-within, so the row's "…" button taking
-  /// focus would otherwise light a second ring around the whole row
-  /// (as `YoChannelRow` does it).
-  final FocusNode _focusNode = FocusNode(debugLabel: 'ServerDirectoryRow');
-  bool _focused = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _focusNode.addListener(_handleFocus);
+  /// The public servers this account can still join: the listing minus the
+  /// servers it already belongs to (they are in "Twoje serwery").
+  static List<Server> _joinable(List<Server> listed, List<Server> mine) {
+    final own = {for (final server in mine) server.id};
+    return [
+      for (final server in listed)
+        if (!own.contains(server.id) &&
+            ServerService.isJoinablePublicServer(server))
+          server,
+    ];
   }
 
-  void _handleFocus() {
-    final focused = _focusNode.hasPrimaryFocus;
-    if (focused != _focused) setState(() => _focused = focused);
-  }
+  static bool _matches(Server server, String query) =>
+      query.isEmpty || server.name.toLowerCase().contains(query);
 
-  @override
-  void dispose() {
-    _focusNode
-      ..removeListener(_handleFocus)
-      ..dispose();
-    super.dispose();
-  }
-
-  static InteractiveInkFeatureFactory get _splashFactory =>
-      !kIsWeb && defaultTargetPlatform == TargetPlatform.android
-      ? InkSparkle.splashFactory
-      : NoSplash.splashFactory;
-
-  @override
-  Widget build(BuildContext context) {
-    final server = widget.server;
-    final onTap = widget.onTap;
-    final busy = widget.busy;
-    final copy = AppLocalizations.of(context);
+  Widget _board(
+    BuildContext context,
+    AppLocalizations copy,
+    BoxConstraints constraints,
+    List<Server> servers,
+    AsyncSnapshot<List<Server>> publicSnapshot,
+  ) {
     final palette = context.appPalette;
-    final highContrast = MediaQuery.highContrastOf(context);
-    final avatar = ServerWaitingDot.on(
-      waiting: widget.questionsWaiting,
-      semanticLabel: copy.serverQuestionsWaitingLabel,
-      dotKey: ValueKey('server-directory-questions-waiting-${server.id}'),
-      child: YoServerTile(
-        initial: server.initial,
-        type: server.type,
-        size: _ServerTile._tileSize,
-      ),
+    final padding = ResponsiveContentFrame.adaptivePagePadding(
+      constraints.maxWidth,
     );
-    final details = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
+    final contentWidth = constraints.maxWidth - padding.horizontal;
+    final textScale = MediaQuery.textScalerOf(context).scale(16) / 16;
+    // Text grows the measure a row or a card needs, up to 200 %.
+    final measure = textScale.clamp(1.0, 2.0);
+    final inlineSearch = contentWidth >= ServersScreen.inlineSearchWidth;
+    final headerScale = inlineSearch
+        ? HomeSectionHeaderScale.expanded
+        : HomeSectionHeaderScale.compact;
+    // The desktop shell's rail draws its own lifted "Stwórz serwer" beside
+    // this slot, so there the board's create actions keep the gradient and
+    // give up the lift: one lift per screen, exactly as Start does on a
+    // desktop. The predicate is MainShell's own (`usesDesktopLayout`):
+    // 1 100 px wide AND tall enough for the fixed rail.
+    final viewport = MediaQuery.sizeOf(context);
+    final railOwnsLift =
+        widget.isRootTab &&
+        viewport.width >= ServerWorkspaceScreen.desktopBreakpoint &&
+        viewport.height >= DesktopSidebar.minimumSupportedHeight;
+    final newcomer = servers.isEmpty;
+
+    final query = _query.trim().toLowerCase();
+    final filtering = query.isNotEmpty;
+    // Live servers first, otherwise the directory's own order: a lamp is
+    // never hidden behind "Pokaż wszystkie".
+    final mine = [
+      for (final server in servers)
+        if (_matches(server, query) && _liveness.isLive(server.id)) server,
+      for (final server in servers)
+        if (_matches(server, query) && !_liveness.isLive(server.id)) server,
+    ];
+    // The error is read before the data (ADR-083): a failed listing is
+    // never drawn from whatever an earlier snapshot left behind.
+    final publicFailed = publicSnapshot.hasError;
+    // The listing reads more roots than the board shows
+    // (`ServerService.publicDirectoryReadLimit`), so legacy clubs and the
+    // account's own servers do not take the cards' places; the filter looks
+    // through all of them, the board shows the first eight.
+    final public = [
+      for (final server in _joinable(
+        publicFailed
+            ? const <Server>[]
+            : publicSnapshot.data ?? const <Server>[],
+        servers,
+      ))
+        if (_matches(server, query)) server,
+    ].take(ServerService.publicDirectoryLimit).toList(growable: false);
+
+    const gap = ServersBoardMetrics.gap;
+    final rowColumns =
+        ((contentWidth + gap) /
+                (ServersBoardMetrics.rowColumnMinWidth * measure + gap))
+            .floor()
+            .clamp(1, ServersBoardMetrics.rowMaxColumns);
+    final rowLimit = ServersBoardMetrics.collapsedRows * rowColumns;
+    final collapsible = !filtering && mine.length > rowLimit;
+    final visible = collapsible && !_showAll
+        ? mine.take(rowLimit).toList()
+        : mine;
+
+    final cardCap = contentWidth < 560
+        ? 2
+        : contentWidth < 1000
+        ? 3
+        : 4;
+    final cardColumns = ((contentWidth + gap) / (150 * measure + gap))
+        .floor()
+        .clamp(1, cardCap);
+
+    final manageable = _repository is ServerManagementRepository;
+    Widget row(Server server) => ServerBoardRow(
+      key: ValueKey('servers-board-row-${server.id}'),
+      server: server,
+      live: _liveness.isLive(server.id),
+      questionsWaiting: _attention.isWaiting(server.id),
+      busy: _busyIds.contains(server.id),
+      onTap: () => _open(server),
+      onActions: manageable ? () => _showActions(server) : null,
+    );
+
+    final liveSection = widget.liveSectionBuilder?.call(context);
+    final nothingMatches =
+        filtering && mine.isEmpty && public.isEmpty && !newcomer;
+
+    return ListView(
+      padding: padding.add(
+        const EdgeInsets.only(top: AppRhythm.item, bottom: AppRhythm.page),
+      ),
       children: [
-        Text(
-          server.name.isEmpty ? copy.serversTitle : server.name,
-          style: AppTypography.titleMedium.copyWith(
-            fontWeight: FontWeight.w700,
-            color: palette.textPrimary,
-          ),
+        _titleRow(
+          context,
+          copy,
+          inlineSearch: inlineSearch,
+          // One lift per screen: the first-run invitation's own CTA takes it
+          // from the disc, and on a desktop the rail has it.
+          discLifted: !railOwnsLift && !newcomer,
         ),
-        const SizedBox(height: 2),
-        Text(
-          // Non-breaking spaces keep "184 osoby" whole and the dot with the
-          // words before it.
-          serverMetaLine(
-            copy.serverTypeTitle(server.type),
-            copy.serverMembers(server.memberCount),
-          ),
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: AppTypography.bodySmall.copyWith(color: palette.textSecondary),
-        ),
-        if (server.description.isNotEmpty) ...[
-          const SizedBox(height: 2),
-          Text(
-            server.description,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: AppTypography.bodySmall.copyWith(
-              color: palette.textTertiary,
+        ?liveSection,
+        if (newcomer) ...[
+          HomeSectionHeader(title: copy.serversBoardYours, scale: headerScale),
+          Align(
+            alignment: AlignmentDirectional.topStart,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 560),
+              child: ServersNewcomerBlock(
+                onCreate: _create,
+                onJoinLink: _joinWithLink,
+                lifted: !railOwnsLift,
+              ),
             ),
           ),
+        ] else if (mine.isNotEmpty) ...[
+          HomeSectionHeader(title: copy.serversBoardYours, scale: headerScale),
+          _columns(
+            [for (final server in visible) row(server)],
+            rowColumns,
+            (rows) => ServersBoardGroup(children: rows),
+          ),
+          if (collapsible)
+            Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: TextButton(
+                key: const ValueKey('servers-show-all'),
+                onPressed: () => setState(() => _showAll = !_showAll),
+                style: TextButton.styleFrom(
+                  foregroundColor: palette.interactiveForeground,
+                  minimumSize: const Size(48, 44),
+                ),
+                child: Text(
+                  _showAll
+                      ? copy.serversBoardShowFewer
+                      : copy.serversBoardShowAll,
+                ),
+              ),
+            ),
+        ],
+        if (nothingMatches)
+          Padding(
+            key: const ValueKey('servers-no-matches'),
+            padding: const EdgeInsets.only(top: AppRhythm.section),
+            child: Text(
+              copy.serversBoardNoMatches,
+              style: AppTypography.bodyMedium.copyWith(
+                color: palette.textSecondary,
+              ),
+            ),
+          ),
+        if (public.isNotEmpty) ...[
+          HomeSectionHeader(title: copy.serversBoardPublic, scale: headerScale),
+          _grid([
+            for (final server in public)
+              ServerPublicCard(
+                key: ValueKey('servers-board-public-${server.id}'),
+                server: server,
+                onOpen: () => _open(server),
+              ),
+          ], cardColumns),
+        ] else if (publicFailed && !filtering) ...[
+          // A denied or failed listing is said, not swallowed: the silent
+          // version of this is how Start's old rail stayed broken unseen.
+          HomeSectionHeader(title: copy.serversBoardPublic, scale: headerScale),
+          _publicError(context, copy),
         ],
       ],
     );
-    final chevron = Icon(
-      Icons.chevron_right_rounded,
-      size: 22,
-      color: palette.textTertiary,
+  }
+
+  Widget _titleRow(
+    BuildContext context,
+    AppLocalizations copy, {
+    required bool inlineSearch,
+    required bool discLifted,
+  }) {
+    final palette = context.appPalette;
+    final title = Text(
+      copy.serversTitle,
+      style: AppTypography.headlineMedium.copyWith(
+        fontWeight: FontWeight.w700,
+        color: palette.textPrimary,
+      ),
     );
-    final actions = widget.onActions;
-    final Widget arrow = actions == null
-        ? chevron
-        : Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (busy)
-                const SizedBox.square(
-                  dimension: 48,
-                  child: Center(
-                    child: SizedBox.square(
-                      dimension: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                  ),
-                )
-              else
-                IconButton(
-                  key: ValueKey('server-directory-actions-${server.id}'),
-                  onPressed: actions,
-                  tooltip: copy.serverManage,
-                  style: IconButton.styleFrom(
-                    minimumSize: const Size(48, 48),
-                    foregroundColor: palette.textSecondary,
-                  ),
-                  icon: const Icon(Icons.more_horiz_rounded),
-                ),
-              chevron,
-            ],
-          );
-    final padding = EdgeInsetsDirectional.only(
-      start: AppRhythm.item,
-      end: actions == null ? AppRhythm.item : AppRhythm.hairline,
-      top: AppRhythm.item,
-      bottom: AppRhythm.item,
+    final field = YoSearchField(
+      key: const ValueKey('servers-search-field'),
+      controller: _search,
+      focusNode: _searchFocus,
+      hint: copy.serversBoardSearch,
+      onChanged: (value) => setState(() => _query = value),
     );
-    final textScale = MediaQuery.textScalerOf(context).scale(16) / 16;
-    final innerWidth = widget.width - padding.horizontal;
-    final stacked =
-        textScale > 1.3 &&
-        innerWidth - (actions == null ? 96 : 144) < 160 * textScale;
-    final content = stacked
-        ? Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(children: [avatar, const Spacer(), arrow]),
-              const SizedBox(height: AppRhythm.item),
-              // The row's tight end inset is for the "…" button; the text
-              // under it keeps the same 12 px as at the start.
-              Padding(
-                padding: EdgeInsetsDirectional.only(
-                  end: AppRhythm.item - padding.end,
-                ),
-                child: details,
-              ),
-            ],
-          )
-        : Row(
-            children: [
-              avatar,
-              const SizedBox(width: AppRhythm.item),
-              Expanded(child: details),
-              const SizedBox(width: AppRhythm.tight),
-              arrow,
-            ],
-          );
-    final hovered = _hovered && !busy;
-    final fill = AppFinish.blockFill(
-      palette,
-      hovered: hovered,
-      highContrast: highContrast,
+    final add = ServersAddButton(
+      onPressed: _openAdd,
+      size: inlineSearch ? 44 : 40,
+      lifted: discLifted,
     );
-    final Border edge = _focused
-        ? Border.all(color: palette.focus, width: 2)
-        : AppFinish.blockEdge(
-            palette,
-            hovered: hovered,
-            highContrast: highContrast,
-          );
-    final pressedWash = AppFinish.blockPressedWash(palette);
-    // R2's touch press: the block settles by .985 (none under Reduce
-    // Motion). It listens to raw pointers only, so the row's tap, long press
-    // and secondary click keep their own gesture handling.
-    return YoPressFeedback(
-      enabled: !busy,
-      child: AnimatedContainer(
-        // Pearl's shadow pair, outside the row's clip.
-        duration: AppMotion.resolve(context, AppMotion.quick),
-        curve: AppMotion.standardCurve,
-        decoration: BoxDecoration(
-          borderRadius: AppRadius.block,
-          boxShadow: fill.boxShadow,
-        ),
-        // The hairline, or the focus ring, drawn over the block: a
-        // foreground never takes layout, so neither moves the content.
-        foregroundDecoration: BoxDecoration(
-          borderRadius: AppRadius.block,
-          border: edge,
-        ),
-        child: Material(
-          key: ValueKey('server-directory-${server.id}'),
-          color: Colors.transparent,
-          shape: const RoundedRectangleBorder(borderRadius: AppRadius.block),
-          clipBehavior: Clip.antiAlias,
-          child: Ink(
-            decoration: BoxDecoration(
-              color: fill.color,
-              gradient: fill.gradient,
-              borderRadius: AppRadius.block,
+    final highContrast = MediaQuery.highContrastOf(context);
+    ButtonStyle discStyle() =>
+        AppFinish.tonalNeutral(palette, highContrast: highContrast).merge(
+          IconButton.styleFrom(
+            minimumSize: const Size(40, 40),
+            fixedSize: const Size(40, 40),
+            padding: EdgeInsets.zero,
+          ),
+        );
+    final Widget child;
+    if (inlineSearch) {
+      // The desktop slot: the filter sits in the row, where a pointer and a
+      // keyboard reach it without opening anything.
+      child = Row(
+        children: [
+          Expanded(child: title),
+          const SizedBox(width: AppRhythm.title),
+          SizedBox(width: ServersScreen.inlineSearchFieldWidth, child: field),
+          const SizedBox(width: AppRhythm.item),
+          add,
+        ],
+      );
+    } else if (_searchOpen || _query.isNotEmpty) {
+      // A filter typed in the desktop slot stays visible when the window
+      // narrows: a list is never filtered by a field nobody can see.
+      child = Row(
+        children: [
+          Expanded(child: field),
+          // 12 px between the field and the 40 px disc; the button's 48 px
+          // target brings 4 of them and the gutter shift gives 4 back.
+          const SizedBox(width: AppRhythm.tight - 4),
+          _onGutter(
+            context,
+            inset: 4,
+            child: IconButton.outlined(
+              key: const ValueKey('servers-search-close'),
+              onPressed: _closeSearch,
+              tooltip: copy.serversBoardCloseSearch,
+              style: discStyle(),
+              icon: const Icon(Icons.close_rounded, size: 20),
             ),
-            child: InkWell(
-              focusNode: _focusNode,
-              onTap: busy ? null : onTap,
-              onLongPress: busy ? null : actions,
-              onSecondaryTap: busy ? null : actions,
-              splashFactory: _splashFactory,
-              onHover: (value) {
-                if (_hovered != value) setState(() => _hovered = value);
-              },
-              overlayColor: WidgetStateProperty.resolveWith((states) {
-                if (states.contains(WidgetState.pressed)) return pressedWash;
-                // Hover and focus are carried by the edge, not a wash.
-                return Colors.transparent;
-              }),
-              child: Padding(
-                padding: const EdgeInsets.all(_ServerTile._edgeInset),
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(
-                    minHeight: _ServerTile.minHeight,
-                  ),
-                  child: Padding(padding: padding, child: content),
+          ),
+        ],
+      );
+    } else {
+      child = Wrap(
+        alignment: WrapAlignment.spaceBetween,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: AppRhythm.title,
+        runSpacing: AppRhythm.item,
+        children: [
+          title,
+          _onGutter(
+            context,
+            inset: 2,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton.outlined(
+                  key: const ValueKey('servers-search'),
+                  focusNode: _searchButtonFocus,
+                  onPressed: _openSearch,
+                  tooltip: copy.serversBoardSearch,
+                  style: discStyle(),
+                  icon: const Icon(Icons.search_rounded, size: 20),
                 ),
+                // 10 px between the two 40 px visuals: the button's 48 px
+                // and the disc's 44 px targets already bring 6 of them.
+                const SizedBox(width: 4),
+                add,
+              ],
+            ),
+          ),
+        ],
+      );
+    }
+    // One title row, 56 px tall at 100 % text, its content centred in it.
+    return Container(
+      constraints: const BoxConstraints(minHeight: 56),
+      alignment: AlignmentDirectional.centerStart,
+      child: SizedBox(width: double.infinity, child: child),
+    );
+  }
+
+  /// Puts a control's visible SHAPE on the page gutter. The search and close
+  /// buttons and the "+" disc are 40 px shapes inside larger touch targets,
+  /// so laid out plainly their edge stops [inset] px short of the edge the
+  /// blocks under them share. The shift is paint and hit-test only; nothing
+  /// in the row moves.
+  static Widget _onGutter(
+    BuildContext context, {
+    required double inset,
+    required Widget child,
+  }) => Transform.translate(
+    offset: Offset(
+      Directionality.of(context) == TextDirection.rtl ? -inset : inset,
+      0,
+    ),
+    child: child,
+  );
+
+  /// [cells] dealt into [columns] balanced columns, column-major, each
+  /// wrapped by [group] — "Twoje serwery" as one block per column. A column
+  /// with nothing in it keeps its width, so one server on a desktop is one
+  /// row of a sensible measure, not a row stretched across the page.
+  static Widget _columns(
+    List<Widget> cells,
+    int columns,
+    Widget Function(List<Widget> rows) group,
+  ) {
+    if (columns <= 1) return group(cells);
+    final base = cells.length ~/ columns;
+    final extra = cells.length % columns;
+    final slots = <Widget>[];
+    var index = 0;
+    for (var column = 0; column < columns; column++) {
+      final take = base + (column < extra ? 1 : 0);
+      final rows = cells.sublist(index, index + take);
+      index += take;
+      if (column > 0) slots.add(const SizedBox(width: ServersBoardMetrics.gap));
+      slots.add(
+        Expanded(child: rows.isEmpty ? const SizedBox.shrink() : group(rows)),
+      );
+    }
+    return Row(crossAxisAlignment: CrossAxisAlignment.start, children: slots);
+  }
+
+  /// [cells] in rows of [columns], each row stretched to its tallest card.
+  static Widget _grid(List<Widget> cells, int columns) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      for (var i = 0; i < cells.length; i += columns) ...[
+        if (i > 0) const SizedBox(height: ServersBoardMetrics.gap),
+        IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (var j = 0; j < columns; j++) ...[
+                if (j > 0) const SizedBox(width: ServersBoardMetrics.gap),
+                Expanded(
+                  child: i + j < cells.length
+                      ? cells[i + j]
+                      : const SizedBox.shrink(),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ],
+    ],
+  );
+
+  Widget _publicError(BuildContext context, AppLocalizations copy) {
+    final palette = context.appPalette;
+    return Container(
+      key: const ValueKey('servers-public-error'),
+      // The line carries the button's own 12 px text inset, so when the
+      // button wraps under it the two start on one edge.
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+      decoration: AppFinish.block(
+        palette,
+        highContrast: MediaQuery.highContrastOf(context),
+      ),
+      child: Wrap(
+        alignment: WrapAlignment.spaceBetween,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: AppRhythm.item,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+            child: Text(
+              copy.serversBoardPublicFailed,
+              style: AppTypography.bodyMedium.copyWith(
+                color: palette.textSecondary,
               ),
             ),
           ),
-        ),
+          TextButton(
+            key: const ValueKey('servers-public-retry'),
+            onPressed: () => setState(() => _public = _watchPublic()),
+            style: TextButton.styleFrom(
+              foregroundColor: palette.interactiveForeground,
+              minimumSize: const Size(48, 44),
+            ),
+            child: Text(copy.serversBoardRetry),
+          ),
+        ],
       ),
     );
   }
 }
+
+enum _DirectoryAction { delete, leave }

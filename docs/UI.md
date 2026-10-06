@@ -691,8 +691,9 @@ Everything above still holds.
   icons. Every section heading on Start, More, Friends, Add friends and the
   notification preferences is `HomeSectionHeader`; Settings keeps its 11 px
   uppercase group labels (a different primitive).
-- **Rows.** Start servers 56 px (`YoServerTile`), server directory 64–68 px
-  flat rows (two columns on wide), Chats conversation rows 68 px, Settings and
+- **Rows.** Start servers 56 px (`YoServerTile`), the Servers board's rows
+  64 px inside one grouped block per column (two columns from the tablet
+  tier; see "The Servers board" below), Chats conversation rows 68 px, Settings and
   Friends rows 64 px with 1 px dividers indented to the text edge. A row is
   one layer: a wash on hover/press, no card per row.
 - **Cards.** Radius 12, 1 px `palette.border`, no decorative gradient, glow or
@@ -1062,6 +1063,62 @@ renders of the real widgets (Dark; composer text/photos/voice at 390, 320 at
 200 %, 800 and 1440; detail at 390, 320 at 200 %, 800 and 1440) in the
 session scratchpad (`c4/shots`). **Not verified on a device, simulator or
 real browser.**
+
+## The Servers board (ADR-239, source only)
+
+`ServersScreen` is one scrolling board; its parts are in
+`lib/features/servers/presentation/widgets/servers_board.dart` and its numbers
+in `ServersBoardMetrics`. The owner chose it from sheet `2_hub` (option A) on
+2026-10-03; the frames are in `yovoice-evidence/2026-10-03/w42/hub/`
+(`test/servers_board_capture.dart`).
+
+- **Title row**, 56 px at 100 % text: `Serwery` (headlineMedium w700), then a
+  40 px tonal search button and the 40 px brand "+" disc (`ServersAddButton`,
+  44 px target). From a 760 px content width (the desktop slot) the filter is
+  a 300 px `YoSearchField` in the row and the disc is 44 px. On a phone the
+  search button swaps the title for the field and a close button; closing
+  hands focus back to the search button. Title and actions wrap at enlarged
+  text. The 40 px shapes sit ON the page gutter: their larger touch targets
+  are shifted past it by the difference (paint and hit-test only), so the
+  disc's edge and the blocks' edge under it are one line.
+- **One lift per screen.** The disc carries it; for a brand-new account the
+  invitation's `Stwórz serwer` takes it and the disc rests; beside the desktop
+  rail's own `Stwórz serwer` neither is lifted (the same `usesDesktopLayout`
+  predicate as before).
+- **Twoje serwery** — `ServersBoardGroup`: one R2 block (top-lit fill,
+  hairline edge as a foreground, Pearl's shadow pair) with 64 px
+  `ServerBoardRow`s parted by hairlines indented 68 px to the name. Squircle
+  44, name `rowTitle`, kind and count `rowPreview`, then the lamp
+  (`ServerLiveLamp`, key `server-directory-live-<id>`, label "na żywo", said
+  once to a screen reader) or a chevron. The kind-and-count line may take two
+  lines at any text size: one fits Polish and English (the 64 px frame), the
+  longer languages wrap and the row grows, because an ellipsis there would
+  take exactly the member count. One column on a phone, two from a 652 px
+  content width (column-major, balanced), five rows per column before
+  `Pokaż wszystkie`.
+  Hover is a wash on the row; keyboard focus is a 2 px `focus` ring 3 px
+  inside the row (never cut by the block's corners, never in layout). The `…`
+  button exists only under a pointer or keyboard focus and takes the
+  chevron's 40 px slot, so nothing moves.
+- **Serwery publiczne** — `ServerPublicCard`: a 72 px band in the template's
+  unlit gradient with its corner light, the 40 px squircle overlapping it,
+  name (two lines), kind and count, and a 36 px tonal pill `Zobacz`. The whole
+  card is one control (one focus stop, one button named after the server);
+  the pill is its affordance, not a second button. Two columns on a phone,
+  three on a tablet, four on a desktop; cards in a row share one height.
+- **First run** — `ServersNewcomerBlock`: `YoBrandMark` 56, one line,
+  `YoGradientFilledButton` and a tonal `Dołącz z linku`; at most 560 px wide.
+- **200 % text.** A narrow row stacks (squircle and chevron on the first
+  line, the words under them at the row's full width, the lamp on a line of
+  its own) and the hairlines between stacked rows start at the row's own
+  12 px inset, where the words then begin
+  (`ServersBoardMetrics.rowStacks`); cards go to one column on a phone and
+  two on a tablet. Rendered in all 43 locales without overflow
+  (`test/servers_board_localization_test.dart`).
+- **Right-to-left.** Everything is directional; the divider indent, the
+  squircle's side and the chevron mirror.
+- **Seam.** `ServersScreen.liveSectionBuilder` is where the LIVE wave mounts
+  "Na żywo", above "Twoje serwery". It is null today and nothing is drawn.
 
 ## The "Coming soon" pattern
 

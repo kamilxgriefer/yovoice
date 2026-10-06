@@ -669,7 +669,7 @@ void main() {
           light: light,
           child: _directory(),
           before: (tester) =>
-              _tabTo(tester, find.byKey(const ValueKey('servers-create'))),
+              _tabTo(tester, find.byKey(const ValueKey('servers-add'))),
         );
       });
       final focusRow = _name('directory', width, light, 1, 'focus-row');

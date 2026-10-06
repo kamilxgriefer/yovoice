@@ -55,7 +55,7 @@ void main() {
         reason: 'the conversation lost its dock on the phone tier',
       );
       expect(
-        find.byKey(const ValueKey('servers-create')),
+        find.byKey(const ValueKey('servers-add')),
         findsNothing,
         reason: 'the surface fell back to the directory',
       );

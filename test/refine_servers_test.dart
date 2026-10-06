@@ -21,7 +21,10 @@ import 'package:yovoice/features/servers/presentation/theme/server_identity.dart
 import 'package:yovoice/features/servers/presentation/widgets/server_channel_scene.dart';
 import 'package:yovoice/features/servers/presentation/widgets/server_voice_stage.dart';
 import 'package:yovoice/features/servers/presentation/widgets/server_waiting_dot.dart';
+import 'package:yovoice/features/servers/presentation/widgets/servers_board.dart';
 import 'package:yovoice/shared/widgets/branding/yo_logo.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_gradient_disc.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_gradient_filled_button.dart';
 import 'package:yovoice/shared/widgets/inputs/yo_segmented_pill.dart';
 import 'package:yovoice/shared/widgets/profile/user_avatar.dart';
 import 'package:yovoice/shared/widgets/rows/yo_channel_row.dart';
@@ -84,68 +87,132 @@ void main() {
 
   Finder row(String id) => find.byKey(ValueKey('server-directory-$id'));
 
-  BoxDecoration rowFinish(WidgetTester tester, String id) =>
-      tester
-              .widget<Ink>(
-                find.descendant(of: row(id), matching: find.byType(Ink)).first,
-              )
-              .decoration!
-          as BoxDecoration;
+  /// The grouped block a row sits in (ADR-239: "Twoje serwery" is one R2
+  /// block per column, not one block per server).
+  Container groupBox(WidgetTester tester, String id) => tester.widget(
+    find
+        .descendant(
+          of: find.ancestor(
+            of: row(id),
+            matching: find.byType(ServersBoardGroup),
+          ),
+          matching: find.byType(Container),
+        )
+        .first,
+  );
 
-  /// The row's outer box: Pearl's shadow pair, and its edge as a foreground.
-  AnimatedContainer rowBox(WidgetTester tester, String id) =>
-      tester.widget<AnimatedContainer>(
-        find
-            .ancestor(of: row(id), matching: find.byType(AnimatedContainer))
-            .first,
-      );
+  BoxDecoration groupFinish(WidgetTester tester, String id) =>
+      groupBox(tester, id).decoration! as BoxDecoration;
 
-  Border rowEdge(WidgetTester tester, String id) =>
-      (rowBox(tester, id).foregroundDecoration! as BoxDecoration).border!
+  /// The group's edge, drawn as a foreground over the rows.
+  Border groupEdge(WidgetTester tester, String id) =>
+      (groupBox(tester, id).foregroundDecoration! as BoxDecoration).border!
           as Border;
+
+  /// The keyboard ring of a row: a 2 px `focus` foreground inside it.
+  Finder rowRing(String id, AppPalette palette) => find.descendant(
+    of: find.byKey(ValueKey('servers-board-row-$id')),
+    matching: find.byWidgetPredicate((widget) {
+      if (widget is! DecoratedBox) return false;
+      final decoration = widget.decoration;
+      if (decoration is! BoxDecoration) return false;
+      final border = decoration.border;
+      return border is Border &&
+          border.top.color == palette.focus &&
+          border.top.width == 2;
+    }),
+  );
+
+  YoGradientDisc addDisc(WidgetTester tester) => tester.widget(
+    find.descendant(
+      of: find.byKey(const ValueKey('servers-add')),
+      matching: find.byType(YoGradientDisc),
+    ),
+  );
 
   group('the directory', () {
     for (final light in [false, true]) {
       final palette = light ? AppPalette.light : AppPalette.dark;
-      testWidgets('rows are neutral R2 blocks (light=$light)', (tester) async {
+      testWidgets('rows share one neutral R2 group (light=$light)', (
+        tester,
+      ) async {
         addTearDown(() => tester.binding.setSurfaceSize(null));
         await pumpServers(tester, directory(), light: light);
+        expect(find.byType(ServersBoardGroup), findsOneWidget);
         for (final id in ['a', 'b', 'c']) {
-          final finish = rowFinish(tester, id);
+          final finish = groupFinish(tester, id);
           // The same top-lit block for every template: identity lives only
           // in the squircle, never as a tint on the block.
           expect(finish.gradient, palette.blockGradient, reason: id);
           expect(finish.borderRadius, AppRadius.block, reason: id);
-          // The edge is a foreground over the block: an `Ink` border would
-          // pad the content by its width and move it on focus.
+          // The edge is a foreground over the rows: a hover wash never
+          // covers it and it takes no layout.
           expect(finish.border, isNull, reason: id);
-          expect(rowEdge(tester, id).top.color, palette.hairline, reason: id);
-          expect(rowEdge(tester, id).top.width, 1, reason: id);
+          expect(groupEdge(tester, id).top.color, palette.hairline, reason: id);
+          expect(groupEdge(tester, id).top.width, 1, reason: id);
+          // Never shorter than the chosen frame's compact row.
           expect(
             tester.getSize(row(id)).height,
-            greaterThanOrEqualTo(72),
+            greaterThanOrEqualTo(ServersBoardMetrics.rowMinHeight),
             reason: id,
           );
         }
-        // Pearl's shadow pair sits outside the row's clip; Dark has none.
+        // Pearl's shadow pair belongs to the group; Dark has none.
         expect(
-          (rowBox(tester, 'a').decoration! as BoxDecoration).boxShadow ??
-              const [],
+          groupFinish(tester, 'a').boxShadow ?? const [],
           light ? palette.blockShadows : isEmpty,
         );
-        // Rows keep the block rhythm: 12 px between them.
+        // Rows are parted by one hairline that starts under the name.
         expect(
           tester.getTopLeft(row('b')).dy - tester.getBottomLeft(row('a')).dy,
-          12,
+          1,
+        );
+        final dividers = tester.widgetList<Divider>(
+          find.descendant(
+            of: find.byType(ServersBoardGroup),
+            matching: find.byType(Divider),
+          ),
+        );
+        expect(dividers, hasLength(2));
+        for (final divider in dividers) {
+          expect(divider.color, palette.hairline);
+          expect(divider.indent, ServersBoardMetrics.rowDividerIndent);
+        }
+        expect(
+          tester.getRect(find.text('Klub książki')).left -
+              tester.getRect(row('b')).left,
+          ServersBoardMetrics.rowDividerIndent,
         );
         // The member count never parts from its noun, and the dot never
         // starts a line.
-        expect(find.textContaining('\u00A0· 12\u00A0osób'), findsOneWidget);
+        expect(find.textContaining(' · 12 osób'), findsOneWidget);
+        // The compact row names the kind of server; the description is the
+        // server's own to show, once it is open.
+        expect(find.text('Prywatna społeczność · 184 osoby'), findsOne);
+        expect(find.textContaining('Co miesiąc'), findsNothing);
+
+        // The chosen frame's compact row is exactly 64 px at 100 % text
+        // whenever the kind-and-count line fits on one line. That line may
+        // wrap instead of being cut (the count is at its end), and the test
+        // font is about twice as wide as Inter, so at 390 px it wraps here
+        // where the real font does not: the frame is measured at a width
+        // where even the test font keeps it on one line, and with real
+        // Inter metrics in `servers_board_localization_test.dart`.
+        await pumpServers(
+          tester,
+          directory(),
+          light: light,
+          size: const Size(640, 844),
+        );
+        expect(find.byType(ServersBoardGroup), findsOneWidget);
+        for (final id in ['a', 'b', 'c']) {
+          expect(tester.getSize(row(id)).height, 64, reason: id);
+        }
       });
     }
 
     testWidgets('high contrast drops the finish for a flat, strongly edged '
-        'row', (tester) async {
+        'group', (tester) async {
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await pumpServers(
         tester,
@@ -156,10 +223,23 @@ void main() {
           ),
         ),
       );
-      final finish = rowFinish(tester, 'a');
+      final finish = groupFinish(tester, 'a');
       expect(finish.gradient, isNull);
       expect(finish.color, AppPalette.dark.surface);
-      expect(rowEdge(tester, 'a').top.color, AppPalette.dark.borderStrong);
+      expect(groupEdge(tester, 'a').top.color, AppPalette.dark.borderStrong);
+      expect(
+        tester
+            .widget<Divider>(
+              find
+                  .descendant(
+                    of: find.byType(ServersBoardGroup),
+                    matching: find.byType(Divider),
+                  )
+                  .first,
+            )
+            .color,
+        AppPalette.dark.borderStrong,
+      );
     });
 
     for (final (label, size) in [
@@ -171,6 +251,7 @@ void main() {
       ) async {
         addTearDown(() => tester.binding.setSurfaceSize(null));
         await pumpServers(tester, directory(), size: size);
+        const palette = AppPalette.dark;
         final watched = [
           row('a'),
           find.text('Po godzinach'),
@@ -179,22 +260,25 @@ void main() {
           row('c'),
         ];
         final before = [for (final finder in watched) tester.getRect(finder)];
+        final more = find.byKey(const ValueKey('server-directory-actions-a'));
+        // At rest the row is the chosen frame: no "…" button at all.
+        expect(more, findsNothing);
         // Tab onto the first row, exactly as a keyboard user would (the
-        // create action comes first).
+        // filter and the "+" come first).
         for (var tabs = 0; tabs < 8; tabs++) {
           await tester.sendKeyEvent(LogicalKeyboardKey.tab);
           await tester.pumpAndSettle();
-          if (rowEdge(tester, 'a').top.width == 2) break;
+          if (rowRing('a', palette).evaluate().isNotEmpty) break;
         }
-        final edge = rowEdge(tester, 'a');
-        expect(edge.top.color, AppPalette.dark.focus);
-        expect(rowEdge(tester, 'b').top.width, 1);
+        expect(rowRing('a', palette), findsOneWidget);
+        expect(rowRing('b', palette), findsNothing);
         expect([for (final finder in watched) tester.getRect(finder)], before);
+        // Keyboard focus brings the row's "…" button in the chevron's slot.
+        expect(more, findsOneWidget);
 
-        // One more Tab lands on the row's own "…" button: that button
-        // carries the focus indicator alone, never a second ring around the
-        // whole row (the row ring follows its PRIMARY focus).
-        final more = find.byKey(const ValueKey('server-directory-actions-a'));
+        // One more Tab lands on that button: it carries the focus indicator
+        // alone, never a second ring around the whole row (the row ring
+        // follows its PRIMARY focus), and it stays while focus is inside.
         await tester.sendKeyEvent(LogicalKeyboardKey.tab);
         await tester.pumpAndSettle();
         expect(more, findsOneWidget);
@@ -210,8 +294,7 @@ void main() {
           isTrue,
           reason: 'the Tab after the row is its "…" button',
         );
-        expect(rowEdge(tester, 'a').top.color, isNot(AppPalette.dark.focus));
-        expect(rowEdge(tester, 'a').top.width, 1);
+        expect(rowRing('a', palette), findsNothing);
         expect([for (final finder in watched) tester.getRect(finder)], before);
       });
     }
@@ -229,63 +312,73 @@ void main() {
             )
             .first,
       );
-      expect(details.width, lessThan(block.width - 20), reason: 'stacked');
-      // 12 px of padding plus the 1 px edge, at the start and at the end.
-      expect(details.left - block.left, 13);
-      expect(block.right - details.right, 13);
+      // Stacked: the words run under the squircle at the row's full width.
+      expect(
+        details.top,
+        greaterThan(
+          tester
+              .getRect(find.descendant(of: row('b'), matching: find.text('K')))
+              .bottom,
+        ),
+      );
+      expect(details.left - block.left, 12);
+      expect(block.right - details.right, 12);
+      // The hairlines between stacked rows start where the words now
+      // start, not 68 px in under a name that is no longer there.
+      final dividers = tester.widgetList<Divider>(
+        find.descendant(
+          of: find.byType(ServersBoardGroup),
+          matching: find.byType(Divider),
+        ),
+      );
+      expect(dividers, isNotEmpty);
+      for (final divider in dividers) {
+        expect(divider.indent, ServersBoardMetrics.rowPaddingH);
+      }
+      expect(tester.takeException(), isNull);
     });
 
-    testWidgets('two columns are equal-height pairs in row-major order', (
+    testWidgets('two columns are column-major groups of one measure', (
       tester,
     ) async {
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await pumpServers(tester, directory(), size: const Size(1440, 900));
+      expect(find.byType(ServersBoardGroup), findsNWidgets(2));
       final a = tester.getRect(row('a'));
       final b = tester.getRect(row('b'));
       final c = tester.getRect(row('c'));
-      // `a` and `b` share a row; the longer description stretches both.
-      expect(a.top, b.top);
-      expect(a.height, b.height);
-      expect(b.left, greaterThan(a.right));
-      expect(b.left - a.right, 16, reason: 'the column gap is 16');
-      // `c` starts the next pair under `a`, 12 px lower.
-      expect(c.left, a.left);
-      expect(c.top - a.bottom, 12);
+      // `a` and `b` are the first column, one hairline apart.
+      expect(b.left, a.left);
+      expect(b.top - a.bottom, 1);
+      // `c` starts the second column level with `a`, 12 px to its end.
+      expect(c.top, a.top);
+      expect(c.left - a.right, 12, reason: 'the column gap is 12');
+      expect(c.width, a.width);
     });
 
-    testWidgets('the create action is the one lift; the rail owns it on a '
-        'desktop', (tester) async {
+    testWidgets('the "+" is the one lift; the rail owns it on a desktop', (
+      tester,
+    ) async {
       addTearDown(() => tester.binding.setSurfaceSize(null));
-      ServerGradientFilledButton create() => tester.widget(
-        find.ancestor(
-          of: find.byKey(const ValueKey('servers-create')),
-          matching: find.byType(ServerGradientFilledButton),
-        ),
-      );
       await pumpServers(tester, directory());
-      expect(
-        tester
-            .widget<FilledButton>(find.byKey(const ValueKey('servers-create')))
-            .enabled,
-        isTrue,
-      );
-      expect(create().lifted, isTrue);
-      expect(create().gradient, isA<LinearGradient>());
+      expect(addDisc(tester).emphasis, YoDiscEmphasis.lift);
+      expect(addDisc(tester).size, 40);
       // The shell decides from the window (MediaQuery), not from the slot.
       tester.view
         ..physicalSize = const Size(1440, 900)
         ..devicePixelRatio = 1;
       addTearDown(tester.view.reset);
       await pumpServers(tester, directory(), size: const Size(1440, 900));
-      expect(create().lifted, isFalse);
+      expect(addDisc(tester).emphasis, YoDiscEmphasis.rest);
+      expect(addDisc(tester).size, 44);
       // A wide but short window gets the phone shell (MainShell also needs
-      // the rail's minimum height): no rail, so the action keeps its lift.
+      // the rail's minimum height): no rail, so the disc keeps its lift.
       tester.view.physicalSize = const Size(1440, 600);
       await pumpServers(tester, directory(), size: const Size(1440, 600));
-      expect(create().lifted, isTrue);
+      expect(addDisc(tester).emphasis, YoDiscEmphasis.lift);
     });
 
-    testWidgets('the first-run directory carries the real logo', (
+    testWidgets('the first-run block carries the real logo and the one lift', (
       tester,
     ) async {
       addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -293,8 +386,34 @@ void main() {
       final mark = tester.widget<YoBrandMark>(
         find.byKey(const ValueKey('servers-empty-logo')),
       );
-      expect(mark.size, 72);
+      expect(mark.size, 56);
       expect(find.text('Twoje miejsce na wspólne rozmowy'), findsOneWidget);
+      expect(find.text('Twoje serwery'), findsOneWidget);
+      YoGradientFilledButton create() => tester.widget(
+        find.ancestor(
+          of: find.byKey(const ValueKey('servers-empty-create')),
+          matching: find.byType(YoGradientFilledButton),
+        ),
+      );
+      // The invitation's own CTA is the screen's lift, so the disc rests.
+      expect(create().emphasis, YoActionEmphasis.lifted);
+      expect(addDisc(tester).emphasis, YoDiscEmphasis.rest);
+      expect(
+        find.byKey(const ValueKey('servers-empty-join-link')),
+        findsOneWidget,
+      );
+      // Beside the desktop rail's own "Stwórz serwer" neither is lifted.
+      tester.view
+        ..physicalSize = const Size(1440, 900)
+        ..devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await pumpServers(
+        tester,
+        directory(servers: const []),
+        size: const Size(1440, 900),
+      );
+      expect(create().emphasis, YoActionEmphasis.flat);
+      expect(addDisc(tester).emphasis, YoDiscEmphasis.rest);
     });
   });
 
@@ -1189,7 +1308,7 @@ void main() {
       final brightness = theme.brightness;
       final scheme = theme.colorScheme;
       final cases = <String, (Gradient, Color, Color)>{
-        'servers-create': (
+        'brand action': (
           AppGradients.primaryAction(scheme),
           scheme.primary,
           scheme.onPrimary,

@@ -50,6 +50,14 @@ YO Moments (Voice + Reels), Achievements/Awards, Creator Studio, Settings and
 Notifications — see [Features.md](Features.md) for what each one actually does
 today, what's real vs. "Coming soon," and which files/Cloud Functions back it.
 
+Servers are the only shared-space product, and the Servers tab is where a
+person finds them: their own servers, and the public servers they can look at
+and join. Those lists — and, when LIVE ships, the list of what is live — are
+part of Servers and live inside that tab. Discover, standalone Rooms and Clubs
+stay retired as surfaces: nothing in navigation, links, notifications or copy
+leads to a separate discovery destination (owner decision 2026-10-03,
+[ADR-239](Decisions.md)).
+
 ## What YO Voice is explicitly not (yet)
 
 Not a general text-first chat app, not app-store-distributed today (see

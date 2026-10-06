@@ -44,7 +44,7 @@ void main() {
       reason: 'the tab host (and the shell around it) was replaced',
     );
     expect(
-      find.byKey(const ValueKey('servers-create'), skipOffstage: false),
+      find.byKey(const ValueKey('servers-add'), skipOffstage: false),
       findsOneWidget,
       reason: 'the directory must stay mounted under the hosted workspace',
     );

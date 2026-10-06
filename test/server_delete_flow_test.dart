@@ -76,8 +76,12 @@ Future<void> _pumpDirectory(
   );
 }
 
+/// The row's action sheet as a touch screen opens it: a long press. The
+/// board (ADR-239) draws the `…` button only under a pointer or keyboard
+/// focus — `test/servers_board_test.dart` covers those two paths and the
+/// screen reader's custom action.
 Future<void> _openActions(WidgetTester tester, String serverId) async {
-  await tester.tap(find.byKey(ValueKey('server-directory-actions-$serverId')));
+  await tester.longPress(find.byKey(ValueKey('server-directory-$serverId')));
   await tester.pumpAndSettle();
 }
 

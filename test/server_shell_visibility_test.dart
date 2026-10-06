@@ -55,7 +55,9 @@ const _mainShell = 'lib/features/home/presentation/screens/main_shell.dart';
 const _moreSheet = 'lib/features/home/presentation/widgets/more_sheet.dart';
 
 Finder get _stateBack => find.byKey(const ValueKey('server-state-back'));
-Finder get _directoryCreate => find.byKey(const ValueKey('servers-create'));
+
+/// The board's "+": on screen exactly when the directory is.
+Finder get _directoryCreate => find.byKey(const ValueKey('servers-add'));
 
 /// The dock, wherever it is in the tree — including inside a retained slot
 /// the shell has moved off screen. A dock that is merely offstage is exactly

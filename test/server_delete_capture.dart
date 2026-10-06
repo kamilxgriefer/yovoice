@@ -30,9 +30,15 @@ import 'package:yovoice/features/servers/presentation/screens/servers_screen.dar
 
 import 'server_test_support.dart';
 
-const _outputDirectory =
-    '/Users/kamil/Documents/GitHub/yovoice-evidence/2026-09-19/'
-    'server-delete-frames';
+// `--dart-define=YO_CAPTURE_DIR=<absolute dir>` sends the frames elsewhere,
+// like the other capture harnesses. Without it a run REPLACES the frames in
+// the dated evidence folder below, which is not versioned.
+const _outputDirectory = String.fromEnvironment(
+  'YO_CAPTURE_DIR',
+  defaultValue:
+      '/Users/kamil/Documents/GitHub/yovoice-evidence/2026-09-19/'
+      'server-delete-frames',
+);
 
 final _exceptions = File('$_outputDirectory/_exceptions.log');
 
@@ -251,8 +257,10 @@ void main() {
           name: 'directory-$suffix',
           width: width,
         );
-        await tester.tap(
-          find.byKey(const ValueKey('server-directory-actions-s')),
+        // The board draws the `…` button only under a pointer or keyboard
+        // focus; a touch screen opens the same sheet with a long press.
+        await tester.longPress(
+          find.byKey(const ValueKey('server-directory-s')),
         );
         await _settle(tester);
         await _shoot(
@@ -282,8 +290,10 @@ void main() {
         );
         await tester.tap(find.byKey(const ValueKey('server-delete-cancel')));
         await _settle(tester);
-        await tester.tap(
-          find.byKey(const ValueKey('server-directory-actions-k')),
+        // The board draws the `…` button only under a pointer or keyboard
+        // focus; a touch screen opens the same sheet with a long press.
+        await tester.longPress(
+          find.byKey(const ValueKey('server-directory-k')),
         );
         await _settle(tester);
         await _shoot(

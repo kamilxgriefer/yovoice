@@ -479,10 +479,25 @@ extension ServerLocalizedCopy on AppLocalizations {
       };
 
   /// "12 osób w serwerze" — the phone header line.
-  String serverMembersInServer(int count) => text(
-    '${serverMembers(count)} in the server',
-    '${serverMembers(count)} w serwerze',
-  );
+  ///
+  /// Two whole templates, like [serverMembers], and never the count phrase
+  /// interpolated into an English sentence: a catalog key that carries a
+  /// value is a key no locale can have, so with the count translated
+  /// (ADR-239) that spelling read "12 Personen in the server".
+  String serverMembersInServer(int count) {
+    if (isPolish) return '${serverMembers(count)} w serwerze';
+    return count == 1
+        ? template(
+            '{count} person in the server',
+            '{count} osoba w serwerze',
+            values: {'count': count},
+          )
+        : template(
+            '{count} people in the server',
+            '{count} osób w serwerze',
+            values: {'count': count},
+          );
+  }
 
   /// Group headings by template and kind (contract decision B): derived
   /// from the kind because categories have no callable and no Rules.

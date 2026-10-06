@@ -28,6 +28,54 @@ navigation layout and behavior. Its former Rooms destination now shows the
 Servers hub with a server-hub icon and Server label. The standalone Rooms,
 Discover and Clubs destinations are no longer exposed in the product UI.
 
+**The Servers tab is one scrolling board** (owner decision 2026-10-03,
+ADR-239; source only until the build that carries it ships). The public-server
+list and the live list inside this tab are part of Servers, not a return of
+Discover: Discover, Rooms and Clubs stay retired as surfaces, and nothing
+outside the Servers tab links to these lists. From the top:
+
+- **Title row** — `Serwery`, a name filter and a "+" that opens the actions
+  that exist: **Stwórz serwer** and **Dołącz z linku**. `Nadaj LIVE` joins the
+  sheet with the LIVE wave; it is not shown, disabled or hinted at today.
+  The filter is local: it narrows the account's servers and the listed public
+  servers by name (a backend search of all public servers is a later
+  callable).
+- **Twoje serwery** — the account's servers as compact 64 px rows in one block
+  (two columns from the tablet tier): squircle, name, kind and member count,
+  then a chevron (the kind-and-count line wraps to a second line in the
+  longer languages rather than lose the count). A row shows the lower-case
+  **na żywo** lamp only while one
+  of that server's voice, stage or meeting channels carries the server-owned
+  liveness projection (ADR-177); such a server leads the list. There is no
+  viewer, listener or participant count anywhere. The lamp watches at most the
+  first eight servers and only while the board is on screen. After five rows
+  per column the rest sit behind **Pokaż wszystkie**. Delete (owner) and leave
+  (member) open from a long press, a secondary click, a screen reader's
+  "Zarządzaj serwerem" action, or the `…` button that replaces the chevron
+  under a pointer or keyboard focus.
+- **Serwery publiczne** — up to eight public Community and Podcast servers the
+  account is not in yet, most members first, as cards with **Zobacz**. It is
+  the one `clubs` listing Rules allow (`privacy == public`, `type ==
+  community`, `status == active`); legacy clubs and servers still being
+  prepared are left out because they cannot be joined from here. The listing
+  reads 24 roots to fill the eight cards, because the rule-proven query
+  cannot leave those rows (or the account's own servers) out and they would
+  otherwise take the cards' places. A card opens
+  the server's existing public admission (name, description, **Dołącz do
+  serwera** → `joinServerV1`); looking joins nothing. With nothing to offer the
+  section is absent; a failed listing says so and offers a retry.
+- **A brand-new account** gets, in place of the list, the logo, "Twoje miejsce
+  na wspólne rozmowy" and the same two actions — and still sees the public
+  servers under it.
+- **Dołącz z linku** takes a pasted `https://app.yovoice.app/?server=…` link
+  (or a historic `?club=` one) through the same parsers as the app's entry
+  URL and opens that server: a public one answers with its admission, one the
+  account may not enter says it is unavailable. It is not an invitation
+  mechanism and grants nothing.
+- **Na żywo** (the board's first section on the owner's sheet) and the desktop
+  "Obserwowani twórcy" card belong to the LIVE wave: they need a `liveStreams`
+  projection that does not exist, so nothing is drawn for them.
+
 Servers use a versioned facade over the existing `clubs` and `rooms` Firebase
 graph so existing identities, membership, moderation and media history remain
 compatible. Those collection names and legacy model types are implementation

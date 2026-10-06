@@ -53,6 +53,11 @@ void main() {
         expect(find.text('Clubs'), findsNothing);
         expect(tester.takeException(), isNull);
 
+        // The board's "+" offers the actions that exist; "Stwórz serwer"
+        // is the first of them.
+        await tester.tap(find.byKey(const ValueKey('servers-add')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
         await tester.tap(find.byKey(const ValueKey('servers-create')));
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 400));

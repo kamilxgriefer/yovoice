@@ -69,7 +69,8 @@ class TestServerRepository
         ServerSharedListRepository,
         ServerFollowRepository,
         ServerWhiteboardRepository,
-        ServerCompanyFileRepository {
+        ServerCompanyFileRepository,
+        ServerPublicDirectoryRepository {
   final requests = <ServerCreationRequest>[];
   Completer<ServerCreationResult>? pending;
   bool failNext = false;
@@ -274,11 +275,35 @@ class TestServerRepository
 
   @override
   Stream<List<Server>> watchMyServers() => Stream.value(servers);
+
+  /// What the public listing returns: "Serwery publiczne" on the board.
+  List<Server> publicServers = const [];
+
+  /// When set, the public listing follows this stream instead (a denied or
+  /// never-answering list).
+  Stream<List<Server>>? publicServersStream;
+
+  /// Every public listing opened, with the limit it asked for.
+  final publicServerLimits = <int>[];
+
+  @override
+  Stream<List<Server>> watchPublicServers({
+    int limit = ServerService.publicDirectoryReadLimit,
+  }) {
+    publicServerLimits.add(limit);
+    return publicServersStream ??
+        Stream.value(publicServers.take(limit).toList());
+  }
+
   @override
   Stream<Server?> watchServer(String serverId) =>
       serverStream ??
       Stream.value(
-        servers.where((server) => server.id == serverId).firstOrNull,
+        // A public root is readable before membership, as Rules allow.
+        servers
+            .followedBy(publicServers)
+            .where((server) => server.id == serverId)
+            .firstOrNull,
       );
   @override
   Stream<List<ServerChannel>> watchChannels(String serverId) {
