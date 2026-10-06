@@ -523,6 +523,8 @@ void main() {
         ),
         findsOneWidget,
       );
+      // The button shows `Będę` itself, so the answer is not said twice.
+      expect(_key('server-page-event-answer'), findsNothing);
       // Saved: the button now leads to the event, where it can be changed.
       await tester.tap(respond);
       await tester.pumpAndSettle();
@@ -574,7 +576,8 @@ void main() {
           ),
         ],
       );
-      await pumpServers(tester, pageWorkspace(repository));
+      // "Today" is read against a held clock: see [pageNoon].
+      await pumpServers(tester, pageWorkspace(repository, now: pageNoon()));
       final card = _key('server-page-next-event');
       expect(
         find.descendant(of: card, matching: find.text('NASTĘPNY ODCINEK')),
@@ -594,6 +597,15 @@ void main() {
       // Asking to be reminded is not a promise to come.
       expect(repository.calls.single.$2['response'], 'maybe');
       expect(repository.calls.single.$2['reminderRequested'], isTrue);
+      // The reminder was saved together with an answer other people see
+      // counted on the programme, so the page says which one.
+      expect(
+        find.descendant(
+          of: _key('server-page-next-event'),
+          matching: find.text('Twoja odpowiedź: Może'),
+        ),
+        findsOneWidget,
+      );
       expect(
         find.descendant(
           of: respond,
@@ -606,6 +618,107 @@ void main() {
       await tester.pumpAndSettle();
       expect(repository.calls.last.$2['response'], 'maybe');
       expect(repository.calls.last.$2['reminderRequested'], isFalse);
+      expect(find.text('Twoja odpowiedź: Może'), findsOneWidget);
+    });
+
+    testWidgets('an event that has already started keeps the card and offers '
+        'no answer', (tester) async {
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final repository = pageRepository(
+        ServerType.podcast,
+        role: ServerMemberRole.member,
+        events: [
+          pageEvent(
+            ServerType.podcast,
+            id: 'p1',
+            title: 'Rozmowa o nocnych pociągach',
+            startsAt: pageDay(0, 11),
+          ),
+        ],
+      );
+      // 12:00 on the page's clock: the programme began at 11:00 and runs
+      // until 13:00, so it is still the next thing and takes no answer.
+      await pumpServers(tester, pageWorkspace(repository, now: pageNoon()));
+      expect(_key('server-page-next-event'), findsOneWidget);
+      expect(find.text('Rozmowa o nocnych pociągach'), findsWidgets);
+      expect(_key('server-page-event-respond'), findsNothing);
+      expect(_key('server-page-event-answer'), findsNothing);
+    });
+
+    testWidgets('an answer the button does not show is said under it; before '
+        'any answer nothing is', (tester) async {
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final answer = _key('server-page-event-answer');
+
+      // No answer yet, on either kind of event.
+      await pumpServers(
+        tester,
+        pageWorkspace(
+          pageRepository(
+            ServerType.community,
+            role: ServerMemberRole.member,
+            events: _communityEvents(),
+          ),
+        ),
+      );
+      expect(_key('server-page-event-respond'), findsOneWidget);
+      expect(answer, findsNothing);
+
+      // An RSVP given on the events board that is not `Będę`: the button
+      // still offers `Będę`, and the line says what is on record.
+      for (final (response, label) in const [
+        (ServerEventResponse.maybe, 'Twoja odpowiedź: Może'),
+        (ServerEventResponse.declined, 'Twoja odpowiedź: Nie mogę'),
+      ]) {
+        final repository =
+            pageRepository(
+                ServerType.community,
+                role: ServerMemberRole.member,
+                events: _communityEvents(),
+              )
+              ..eventResponses['e1'] = ServerEventAttendance(
+                response: response,
+                reminderRequested: false,
+              );
+        await pumpServers(tester, pageWorkspace(repository));
+        expect(tester.widget<Text>(answer).data, label);
+        expect(
+          find.descendant(
+            of: _key('server-page-event-respond'),
+            matching: find.byIcon(Icons.check_circle_rounded),
+          ),
+          findsNothing,
+        );
+      }
+
+      // A reminder kind never shows the answer on its button, so `Będę` is
+      // said too.
+      final podcast =
+          pageRepository(
+              ServerType.podcast,
+              role: ServerMemberRole.member,
+              events: [
+                pageEvent(
+                  ServerType.podcast,
+                  id: 'p1',
+                  title: 'Rozmowa o nocnych pociągach',
+                  startsAt: pageDay(0, 23),
+                ),
+              ],
+            )
+            ..eventResponses['p1'] = const ServerEventAttendance(
+              response: ServerEventResponse.going,
+              reminderRequested: true,
+            );
+      await pumpServers(tester, pageWorkspace(podcast, now: pageNoon()));
+      expect(tester.widget<Text>(answer).data, 'Twoja odpowiedź: Będę');
+      expect(
+        find.descendant(
+          of: _key('server-page-event-respond'),
+          matching: find.byIcon(Icons.notifications_active_rounded),
+        ),
+        findsOneWidget,
+      );
     });
 
     testWidgets('a quiet stage without an event says so and offers a listener '
@@ -622,10 +735,92 @@ void main() {
       expect(_key('server-page-stage-waiting'), findsOneWidget);
       expect(_join, findsNothing);
       expect(_key('server-page-next-event'), findsNothing);
+      // The card is the stage, so the stage is not also a row under `Głos`.
+      expect(_key('server-page-channel-stage'), findsNothing);
       // The events section says there is nothing planned, and leads to the
       // board where something can be.
       await _tap(tester, _key('server-page-events-empty'));
       expect(_key('server-events-board'), findsOneWidget);
+    });
+
+    testWidgets('a quiet stage stays one tap away: its card opens it, and so '
+        'does its row while the next event has the hero', (tester) async {
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      // No event: the card states the stage is quiet and its header opens
+      // the stage, where `Obserwuj` lives.
+      await pumpServers(
+        tester,
+        pageWorkspace(
+          pageRepository(ServerType.community, role: ServerMemberRole.member),
+        ),
+      );
+      final open = _key('server-page-hero-open');
+      expect(open, findsOneWidget);
+      expect(
+        find.descendant(
+          of: open,
+          matching: find.byIcon(Icons.chevron_right_rounded),
+        ),
+        findsOneWidget,
+      );
+      await tester.tap(open);
+      await tester.pumpAndSettle();
+      expect(_page, findsNothing);
+      expect(_key('server-community-stage'), findsOneWidget);
+      expect(_key('server-community-follow'), findsOneWidget);
+
+      // With a next event the hero is that event, so the stage gets a row
+      // under `Głos` — after the lounge, in the server's own order.
+      await pumpServers(
+        tester,
+        pageWorkspace(
+          pageRepository(
+            ServerType.community,
+            role: ServerMemberRole.member,
+            events: _communityEvents(),
+          ),
+        ),
+        size: const Size(390, 1800),
+      );
+      expect(_key('server-page-next-event'), findsOneWidget);
+      expect(_key('server-page-hero-open'), findsNothing);
+      final row = _key('server-page-channel-stage');
+      expect(row, findsOneWidget);
+      expect(
+        tester.getTopLeft(_key('server-page-channel-lounge')).dy,
+        lessThan(tester.getTopLeft(row).dy),
+      );
+      // A listener cannot start it, so the row has no join of its own.
+      expect(_key('server-page-join-stage'), findsNothing);
+      await tester.tap(row);
+      await tester.pumpAndSettle();
+      expect(_key('server-community-stage'), findsOneWidget);
+      expect(_key('server-community-follow'), findsOneWidget);
+    });
+
+    testWidgets('a lounge, a meeting and a live stage keep their own way in: '
+        'only the quiet stage card opens from its header', (tester) async {
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      for (final type in const [ServerType.friends, ServerType.company]) {
+        await pumpServers(
+          tester,
+          pageWorkspace(pageRepository(type, role: ServerMemberRole.member)),
+        );
+        expect(_key('server-page-hero'), findsOneWidget, reason: '$type');
+        expect(_key('server-page-hero-open'), findsNothing, reason: '$type');
+      }
+      await pumpServers(
+        tester,
+        pageWorkspace(
+          pageRepository(
+            ServerType.community,
+            role: ServerMemberRole.member,
+            live: pageLive,
+          ),
+        ),
+      );
+      expect(_key('server-page-live-hero'), findsOneWidget);
+      expect(_key('server-page-hero-open'), findsNothing);
     });
 
     testWidgets('the friends lounge is joined in place and shows the '

@@ -279,13 +279,6 @@ class _ServerHomePageState extends State<ServerHomePage> {
     final eventsChannel = _eventsChannel;
 
     final conversations = _conversations();
-    // The lounge the board already carries, or the hero's own channel, is
-    // not repeated as a row.
-    final skip = hero?.id ?? main?.id;
-    final voices = widget.channels
-        .where((channel) => channel.kind.isMedia && channel.id != skip)
-        .take(ServerHomePage.maxVoiceRows)
-        .toList(growable: false);
     final waiting = widget.questionsWaitingChannelId;
     final waitingShown =
         waiting != null &&
@@ -374,22 +367,40 @@ class _ServerHomePageState extends State<ServerHomePage> {
                     ]),
                   ),
                 ],
-                if (voices.isNotEmpty) ...[
-                  HomeSectionHeader(title: copy.serverPageVoice),
-                  _ServerPageBlock(
-                    child: _dividedRows(context, [
-                      for (final channel in voices)
-                        _VoiceRow(
-                          server: server,
-                          channel: channel,
-                          role: widget.role,
-                          session: widget.session,
-                          onOpen: () => widget.onOpenChannel(channel),
-                          onJoin: () => _join(channel),
+                // The section follows the session: which card the hero is
+                // decides whether the stage needs a row of its own here.
+                AnimatedBuilder(
+                  animation: widget.session,
+                  builder: (context, _) {
+                    final voices = _voices(
+                      hero: hero,
+                      boardLounge: main,
+                      eventsChannel: eventsChannel,
+                      upcoming: upcoming,
+                    );
+                    if (voices.isEmpty) return const SizedBox.shrink();
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        HomeSectionHeader(title: copy.serverPageVoice),
+                        _ServerPageBlock(
+                          child: _dividedRows(context, [
+                            for (final channel in voices)
+                              _VoiceRow(
+                                server: server,
+                                channel: channel,
+                                role: widget.role,
+                                session: widget.session,
+                                onOpen: () => widget.onOpenChannel(channel),
+                                onJoin: () => _join(channel),
+                              ),
+                          ]),
                         ),
-                    ]),
-                  ),
-                ],
+                      ],
+                    );
+                  },
+                ),
                 if (eventsChannel != null && upcoming != null) ...[
                   HomeSectionHeader(
                     title: copy.serverChannelKindTitle(eventsChannel.kind),
@@ -465,6 +476,44 @@ class _ServerHomePageState extends State<ServerHomePage> {
     ];
   }
 
+  /// The media channels listed under `Głos`.
+  ///
+  /// The channel the hero card stands for is not repeated as a row, and
+  /// neither is the lounge the family's board already carries. A quiet stage
+  /// whose place in the hero is taken by the next event is NOT on the page
+  /// otherwise, so then it gets its row: the stage (with its `Obserwuj`, its
+  /// share and its own start) stays one tap away for everybody.
+  List<ServerChannel> _voices({
+    required ServerChannel? hero,
+    required ServerChannel? boardLounge,
+    required ServerChannel? eventsChannel,
+    required List<ServerEvent>? upcoming,
+  }) {
+    final skip = hero == null
+        ? boardLounge?.id
+        : _heroShowsNextEvent(hero, eventsChannel, upcoming)
+        ? null
+        : hero.id;
+    return widget.channels
+        .where((channel) => channel.kind.isMedia && channel.id != skip)
+        .take(ServerHomePage.maxVoiceRows)
+        .toList(growable: false);
+  }
+
+  /// A quiet stage this device is not in gives the hero to the server's next
+  /// real event, when there is one.
+  bool _heroShowsNextEvent(
+    ServerChannel hero,
+    ServerChannel? eventsChannel,
+    List<ServerEvent>? upcoming,
+  ) =>
+      hero.kind == ServerChannelKind.stage &&
+      !hero.liveness.isLive &&
+      !widget.session.isIn(hero.id) &&
+      !widget.server.isHeld &&
+      eventsChannel != null &&
+      (upcoming?.isNotEmpty ?? false);
+
   /// `Nadaj LIVE` is offered to a role that may start the stage, while the
   /// stage is quiet and this device is not already in it. It opens the stage;
   /// the stage's own action starts the broadcast.
@@ -501,20 +550,14 @@ class _ServerHomePageState extends State<ServerHomePage> {
           onJoin: () => _join(channel),
         );
       }
-      final next = upcoming?.firstOrNull;
-      if (stage &&
-          !live &&
-          !here &&
-          !server.isHeld &&
-          next != null &&
-          eventsChannel != null) {
+      if (_heroShowsNextEvent(channel, eventsChannel, upcoming)) {
         return _NextEventHero(
           server: server,
           stage: channel,
-          event: next,
+          event: upcoming!.first,
           now: _now,
           repository: widget.repository,
-          onOpen: () => widget.onOpenChannel(eventsChannel),
+          onOpen: () => widget.onOpenChannel(eventsChannel!),
         );
       }
       return _SessionHero(
@@ -1358,16 +1401,21 @@ class _EventDateBlock extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          // Tabular figures: "19:00" and "20:00" are equally wide, so two
+          // rows' blocks — and the titles beside them — line up at any text
+          // size (at 200 % the clock, not the 52 px floor, sets the width).
           Text(
             day,
             style: AppTypography.titleMedium.copyWith(
               color: palette.textPrimary,
+              fontFeatures: const [FontFeature.tabularFigures()],
             ),
           ),
           Text(
             time,
             style: AppTypography.labelSmall.copyWith(
               color: palette.textSecondary,
+              fontFeatures: const [FontFeature.tabularFigures()],
             ),
           ),
         ],
@@ -1558,6 +1606,10 @@ class _NextEventHero extends StatelessWidget {
 /// not a promise to come. Every other kind has no reminder at all, so its
 /// action is the RSVP it does have (`Będę`). Once that answer is saved the
 /// button shows it and leads to the event, where it can be changed.
+///
+/// Whatever answer is on record and not shown by the button itself is said
+/// in words under it (`Twoja odpowiedź: Może`): other people see that answer
+/// counted on the events board, so the person it belongs to sees it here.
 class _EventAction extends StatefulWidget {
   const _EventAction({
     required this.event,
@@ -1684,6 +1736,16 @@ class _EventActionState extends State<_EventAction> {
           );
         }
         final error = _error;
+        // The answer on record, said in words wherever the button shows
+        // something else: the reminder button never shows an answer, and the
+        // RSVP button only shows `Będę`. A first reminder is saved together
+        // with `Może`, so this is also where the page tells the person that.
+        final answer = switch (attendance?.response) {
+          null => null,
+          ServerEventResponse.going => reminder ? copy.serverEventGoing : null,
+          ServerEventResponse.maybe => copy.serverEventMaybe,
+          ServerEventResponse.declined => copy.serverEventDeclined,
+        };
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,
@@ -1724,6 +1786,17 @@ class _EventActionState extends State<_EventAction> {
                 ),
               ),
             ),
+            if (answer != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                copy.serverPageYourAnswer(answer),
+                key: const ValueKey('server-page-event-answer'),
+                textAlign: TextAlign.center,
+                style: AppTypography.bodySmall.copyWith(
+                  color: palette.textSecondary,
+                ),
+              ),
+            ],
             if (error != null) ...[
               const SizedBox(height: 8),
               Text(
@@ -1872,6 +1945,68 @@ class _SessionHero extends StatelessWidget {
       );
     }
     final hasAction = action is! SizedBox;
+    // A quiet stage has no control on its card, and the stage is a scene of
+    // its own (its `Obserwuj`, its share, its start): the card's header leads
+    // there, the way the next event's header leads to the events.
+    final opensScene =
+        channel.kind == ServerChannelKind.stage &&
+        !live &&
+        !here &&
+        !server.isHeld;
+
+    final header = Row(
+      children: [
+        Container(
+          width: 48,
+          height: 48,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: colors.iconSurface,
+            border: Border.all(color: colors.iconBorder),
+          ),
+          child: Icon(
+            channel.access == ServerChannelAccess.restricted
+                ? Icons.lock_outline
+                : serverChannelIcon(channel.kind),
+            size: 22,
+            color: colors.foreground,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                channel.name,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: AppTypography.titleMedium.copyWith(
+                  color: palette.textPrimary,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 8,
+                runSpacing: 4,
+                children: [
+                  if (live) ServerLivePill(label: copy.serverLivePill),
+                  Text(
+                    status,
+                    key: const ValueKey('server-page-hero-status'),
+                    style: AppTypography.bodySmall.copyWith(
+                      color: palette.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        if (opensScene) ...[const SizedBox(width: 8), const _RowTrailing()],
+      ],
+    );
 
     return ServerSessionCard(
       key: const ValueKey('server-page-hero'),
@@ -1889,58 +2024,18 @@ class _SessionHero extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: MainAxisSize.min,
         children: [
-          Row(
-            children: [
-              Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: colors.iconSurface,
-                  border: Border.all(color: colors.iconBorder),
-                ),
-                child: Icon(
-                  channel.access == ServerChannelAccess.restricted
-                      ? Icons.lock_outline
-                      : serverChannelIcon(channel.kind),
-                  size: 22,
-                  color: colors.foreground,
-                ),
+          if (opensScene)
+            Material(
+              type: MaterialType.transparency,
+              child: InkWell(
+                key: const ValueKey('server-page-hero-open'),
+                onTap: onOpen,
+                borderRadius: AppRadius.md,
+                child: header,
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      channel.name,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: AppTypography.titleMedium.copyWith(
-                        color: palette.textPrimary,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Wrap(
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      spacing: 8,
-                      runSpacing: 4,
-                      children: [
-                        if (live) ServerLivePill(label: copy.serverLivePill),
-                        Text(
-                          status,
-                          key: const ValueKey('server-page-hero-status'),
-                          style: AppTypography.bodySmall.copyWith(
-                            color: palette.textSecondary,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
+            )
+          else
+            header,
           if (inRoom && lounge) ...[
             const SizedBox(height: 16),
             ServerVoiceStage(
@@ -2138,6 +2233,9 @@ class _ServerPageEvents extends StatelessWidget {
         trailing: const _RowTrailing(),
       );
     }
+    // At 200 % text a two-line title cuts an ordinary one ("Rozmowa o nocnych
+    // pocią…"); the row is as tall as it needs to be, so it gets a third.
+    final titleLines = MediaQuery.textScalerOf(context).scale(16) > 24 ? 3 : 2;
     return _dividedRows(context, indent: 76, [
       for (final event in events)
         InkWell(
@@ -2158,7 +2256,7 @@ class _ServerPageEvents extends StatelessWidget {
                         children: [
                           Text(
                             event.title,
-                            maxLines: 2,
+                            maxLines: titleLines,
                             overflow: TextOverflow.ellipsis,
                             style: AppTypography.rowTitle.copyWith(
                               color: palette.textPrimary,

@@ -30,6 +30,13 @@
 //   its way back, the `Wszystkie kanały` sheet, the `⋯` menu and the page a
 //   non-member of a public server sees (`Dołącz`).
 //
+// * another language: German (long labels in the action row, the family
+//   board and the channel column's group headings) and Arabic in its own
+//   script, right to left by locale. The Arabic frames need an Arabic face;
+//   the harness registers the host's `SFArabic.ttf` under the theme's own
+//   fallback family (`Noto Sans Arabic`) and skips those frames on a host
+//   that has none, rather than writing tofu.
+//
 // Every frame renders with Reduce Motion on and with real blurred shadows.
 
 import 'dart:io';
@@ -97,7 +104,23 @@ Future<void> _loadRealFonts() async {
   final icons = FontLoader('MaterialIcons')
     ..addFont(Future.value(_read('$_fontRoot/MaterialIcons-Regular.otf')));
   await icons.load();
+  // The theme falls back to `Noto Sans Arabic` for Arabic script
+  // (`AppTypography.fontFamilyFallback`); a test host has no such family, so
+  // the system's Arabic face stands in under that name.
+  final arabic = _arabicFace;
+  if (arabic != null) {
+    final loader = FontLoader('Noto Sans Arabic')
+      ..addFont(Future.value(_read(arabic)));
+    await loader.load();
+  }
 }
+
+/// A system Arabic face, or null on a host without one.
+String? get _arabicFace => const [
+  '/System/Library/Fonts/SFArabic.ttf',
+  '/System/Library/Fonts/Supplemental/Tahoma.ttf',
+  '/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf',
+].where((path) => File(path).existsSync()).firstOrNull;
 
 double _pixelRatio(double width) => width <= 768 ? 2 : 1;
 
@@ -119,6 +142,7 @@ Future<void> _render(
   required bool light,
   double textScale = 1,
   TextDirection? direction,
+  Locale locale = const Locale('pl'),
 }) async {
   final ratio = _pixelRatio(size.width);
   tester.view.physicalSize = size * ratio;
@@ -131,7 +155,7 @@ Future<void> _render(
       key: captureKey,
       child: MaterialApp(
         debugShowCheckedModeBanner: false,
-        locale: const Locale('pl'),
+        locale: locale,
         theme: light ? AppTheme.lightTheme : AppTheme.darkTheme,
         supportedLocales: AppLocalizations.supportedLocales,
         localizationsDelegates: const [
@@ -197,8 +221,9 @@ String _name(
   double textScale,
   String state, {
   String screen = 'page',
+  String language = 'pl',
 }) =>
-    '${screen}_${width.toInt()}_${light ? 'pearl' : 'dark'}_pl_'
+    '${screen}_${width.toInt()}_${light ? 'pearl' : 'dark'}_${language}_'
     '${(textScale * 100).round()}_$state';
 
 void _captureWidgets(String name, WidgetTesterCallback body) =>
@@ -323,6 +348,21 @@ Future<FakeFirebaseFirestore> _chat() async {
   return db;
 }
 
+/// The viewer's own membership row and nothing else: the desktop context
+/// panel of a server without seeded messages then shows the empty thread
+/// with its composer, as a member sees it, instead of "read-only for your
+/// role" (which is what a missing row resolves to).
+Future<FakeFirebaseFirestore> _membership(ServerMemberRole role) async {
+  final db = FakeFirebaseFirestore();
+  await db.collection('clubs').doc('s').set(<String, dynamic>{
+    'ownerId': role == ServerMemberRole.owner ? 'owner' : 'somebody-else',
+  });
+  await db.collection('clubs').doc('s').collection('members').doc('owner').set(
+    <String, dynamic>{'role': role.name},
+  );
+  return db;
+}
+
 void main() {
   setUpAll(() async {
     await _loadRealFonts();
@@ -339,6 +379,7 @@ void main() {
     bool light = false,
     double textScale = 1,
     TextDirection? direction,
+    Locale locale = const Locale('pl'),
     Future<void> Function(WidgetTester tester)? before,
   }) async {
     final captureKey = GlobalKey();
@@ -350,6 +391,7 @@ void main() {
       child: child,
       textScale: textScale,
       direction: direction,
+      locale: locale,
     );
     if (before != null) await before(tester);
     await _shoot(tester, captureKey: captureKey, name: name, width: width);
@@ -535,6 +577,7 @@ void main() {
         textScale: 2,
         child: pageWorkspace(
           _community(role: ServerMemberRole.owner, live: true),
+          chat: pageChat(await _chat()),
         ),
       );
     });
@@ -572,8 +615,12 @@ void main() {
       width: 1440,
       height: 900,
       direction: TextDirection.rtl,
+      // The same seeded conversation as the left-to-right desktop frame, so
+      // the mirrored context panel shows messages and a composer rather than
+      // an empty, read-only thread.
       child: pageWorkspace(
         _community(role: ServerMemberRole.owner, live: true),
+        chat: pageChat(await _chat()),
       ),
     );
   });
@@ -591,12 +638,16 @@ void main() {
     ]) {
       final name = _name(width, false, 1, state);
       _captureWidgets(name, (tester) async {
+        final fixture = repository();
         await capture(
           tester,
           name: name,
           width: width,
           height: height,
-          child: pageWorkspace(repository()),
+          child: pageWorkspace(
+            fixture,
+            chat: pageChat(await _membership(fixture.myRole!)),
+          ),
         );
       });
     }
@@ -692,7 +743,11 @@ void main() {
         name: joined,
         width: width,
         height: height,
-        child: pageWorkspace(_friends(), connector: connector),
+        child: pageWorkspace(
+          _friends(),
+          connector: connector,
+          chat: pageChat(await _membership(ServerMemberRole.owner)),
+        ),
         before: (tester) async {
           await tester.tap(find.byKey(const ValueKey('server-join')));
           await _settle(tester);
@@ -813,6 +868,149 @@ void main() {
         child: pageWorkspace(repository),
       );
     });
+  }
+
+  // ------------------------------------------- review pass (2026-10-06)
+  // A member while the stage is quiet and an event has the hero: the stage
+  // is a row under `Głos`, one tap away (its `Obserwuj` lives there).
+  final memberQuiet = _name(390, false, 1, 'A1-community-member-offline');
+  _captureWidgets(memberQuiet, (tester) async {
+    await capture(
+      tester,
+      name: memberQuiet,
+      width: 390,
+      height: 844,
+      child: pageWorkspace(_community(role: ServerMemberRole.member)),
+    );
+  });
+  final memberQuietScrolled = _name(
+    390,
+    false,
+    1,
+    'A1-community-member-offline-scrolled',
+  );
+  _captureWidgets(memberQuietScrolled, (tester) async {
+    await capture(
+      tester,
+      name: memberQuietScrolled,
+      width: 390,
+      height: 844,
+      child: pageWorkspace(_community(role: ServerMemberRole.member)),
+      before: scrollToEnd,
+    );
+  });
+
+  // `Przypomnij mi` pressed: the bell is on and the page says which answer
+  // went with it.
+  for (final scale in [1.0, 2.0]) {
+    final reminded = _name(390, false, scale, 'podcast-reminder-set');
+    _captureWidgets(reminded, (tester) async {
+      await capture(
+        tester,
+        name: reminded,
+        width: 390,
+        height: 844,
+        textScale: scale,
+        child: pageWorkspace(_podcast()),
+        before: (tester) async {
+          final respond = find.byKey(
+            const ValueKey('server-page-event-respond'),
+          );
+          await tester.ensureVisible(respond);
+          await _settle(tester);
+          await tester.tap(respond);
+          await _settle(tester);
+        },
+      );
+    });
+  }
+
+  // Right after creation: the invitation card above the main thing.
+  final created = _name(390, false, 1, 'friends-just-created');
+  _captureWidgets(created, (tester) async {
+    await capture(
+      tester,
+      name: created,
+      width: 390,
+      height: 844,
+      child: pageWorkspace(_friends(), justCreated: true),
+    );
+  });
+
+  // Another language, in the chrome the page and its neighbours draw.
+  for (final (language, direction) in const [
+    ('de', TextDirection.ltr),
+    ('ar', TextDirection.rtl),
+  ]) {
+    if (language == 'ar' && _arabicFace == null) continue;
+    final locale = Locale(language);
+    for (final (state, width, height, scale, repository, scrolls) in [
+      (
+        'A1-community-owner-offline',
+        390.0,
+        844.0,
+        1.0,
+        () => _community(role: ServerMemberRole.owner),
+        0,
+      ),
+      (
+        'A1-community-owner-offline-scrolled',
+        390.0,
+        844.0,
+        1.0,
+        () => _community(role: ServerMemberRole.owner),
+        1,
+      ),
+      (
+        'A1-community-owner-offline',
+        390.0,
+        844.0,
+        2.0,
+        () => _community(role: ServerMemberRole.owner),
+        0,
+      ),
+      (
+        'A2-community-member-live',
+        768.0,
+        1024.0,
+        1.0,
+        () => _community(role: ServerMemberRole.owner, live: true),
+        0,
+      ),
+      ('family', 390.0, 844.0, 1.0, _family, 0),
+      ('family-scrolled', 390.0, 844.0, 1.0, _family, 1),
+      ('family-scrolled-2', 390.0, 844.0, 1.0, _family, 3),
+      ('family', 768.0, 1024.0, 1.0, _family, 0),
+      (
+        'friends-held',
+        390.0,
+        844.0,
+        1.0,
+        () => pageRepository(ServerType.friends, held: true),
+        0,
+      ),
+    ]) {
+      final name = _name(width, false, scale, state, language: language);
+      _captureWidgets(name, (tester) async {
+        await capture(
+          tester,
+          name: name,
+          width: width,
+          height: height,
+          textScale: scale,
+          locale: locale,
+          // The locale already sets the direction; saying it again keeps the
+          // frame honest if a delegate ever resolved it differently.
+          direction: direction,
+          child: pageWorkspace(repository()),
+          before: (tester) async {
+            for (var index = 0; index < scrolls; index++) {
+              await scrollToEnd(tester);
+            }
+          },
+        );
+      });
+    }
   }
 
   final pushed = _name(390, false, 1, 'A1-pushed-route-status-bar');

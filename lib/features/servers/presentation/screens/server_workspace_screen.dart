@@ -113,11 +113,17 @@ class ServerWorkspaceScreen extends StatefulWidget {
     this.isVisible,
     this.onOpenServer,
     this.questionAttention,
+    this.now,
     super.key,
   });
   final String serverId;
   final ServerRepository? repository;
   final String? initialChannelId;
+
+  /// A test seam for the server page's clock ("dziś / jutro", which events
+  /// are still ahead, whether one still takes an answer). Null in the app:
+  /// the page then reads the real time.
+  final DateTime Function()? now;
 
   /// True when hosted in a desktop content slot (no app bar of its own);
   /// false when pushed as a route, which carries a real app bar with Back.
@@ -985,6 +991,7 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
                 )
               : null,
           questionsWaitingChannelId: waitingQuestions,
+          now: widget.now,
         );
         // Board 02's phone surface keeps the broadcast on screen above the
         // conversation, so the stage owns the whole surface there instead of

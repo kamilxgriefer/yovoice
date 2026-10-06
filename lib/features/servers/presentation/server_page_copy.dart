@@ -48,4 +48,14 @@ extension ServerPageCopy on AppLocalizations {
   /// The short join on a voice row; the hero keeps the full sentence.
   String get serverPageJoin =>
       contextualText('serverPage.join', 'Join', 'Dołącz');
+
+  /// Under the next event's action: the answer this person has on record,
+  /// whenever the button does not show it itself. A first `Przypomnij mi` is
+  /// saved with the answer `Może` (the callable keeps no reminder without an
+  /// answer), and this line is where the page says so.
+  String serverPageYourAnswer(String answer) => template(
+    'Your answer: {answer}',
+    'Twoja odpowiedź: {answer}',
+    values: {'answer': answer},
+  );
 }

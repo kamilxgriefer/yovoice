@@ -375,6 +375,24 @@ void main() {
       onTap: () {},
     );
 
+    // The tablet's 264 px channel column at 200 % text: the marker and the
+    // clock no longer share (and cut) one line under the name.
+    testWidgets('at 240 px and 2x the clock takes the line under the marker', (
+      tester,
+    ) async {
+      await pump(tester, liveRow(), width: 240, textScale: 2);
+      expect(tester.takeException(), isNull);
+      final marker = tester.getRect(find.byKey(liveKey));
+      final clock = tester.getRect(find.text('od 19:40'));
+      expect(clock.top, greaterThanOrEqualTo(marker.bottom));
+      expect(
+        tester
+            .renderObject<RenderParagraph>(find.text('od 19:40'))
+            .didExceedMaxLines,
+        isFalse,
+      );
+    });
+
     // 240 / 256: the desktop panel (264 / 280) inside its 12 + 12 list
     // padding; 296: the phone sheet; 340+: where the join control fits too.
     for (final (width, scale) in [
@@ -387,6 +405,27 @@ void main() {
       (420.0, 1.5),
       (296.0, 2.0),
     ]) {
+      testWidgets('a live channel says its marker and its clock whole at '
+          '$width px, ${scale}x', (tester) async {
+        await pump(tester, liveRow(), width: width, textScale: scale);
+        expect(tester.takeException(), isNull);
+        // Neither is cut to make room for the other: where the two do not
+        // fit one line under the name, the clock takes the next one.
+        for (final text in const ['NA ŻYWO', 'od 19:40']) {
+          final paragraph = tester.renderObject<RenderParagraph>(
+            find.text(text),
+          );
+          expect(paragraph.didExceedMaxLines, isFalse, reason: text);
+          expect(
+            paragraph.size.width,
+            greaterThanOrEqualTo(
+              paragraph.getMaxIntrinsicWidth(double.infinity) - .5,
+            ),
+            reason: '"$text" is drawn narrower than it is',
+          );
+        }
+      });
+
       testWidgets('a live channel keeps a readable name with the marker and '
           'the join path at $width px, ${scale}x', (tester) async {
         await pump(tester, liveRow(), width: width, textScale: scale);

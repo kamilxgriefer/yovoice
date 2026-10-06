@@ -181,6 +181,17 @@ DateTime pageDay(int days, int hour) {
   return DateTime.utc(day.year, day.month, day.day, hour);
 }
 
+/// The page's clock held at today's noon in Warsaw.
+///
+/// A fixture that plans something for "today at 23:00" is ahead of this clock
+/// at every hour the suite runs; read from the real clock, the same fixture
+/// has already started between 23:00 and midnight, and the page rightly stops
+/// offering its answer.
+DateTime Function() pageNoon() {
+  final noon = ServerEventTime.wallClockToUtc(pageDay(0, 12), 'Europe/Warsaw');
+  return () => noon;
+}
+
 final pageLive = ServerChannelLiveness(
   isLive: true,
   startedAt: DateTime(2026, 10, 3, 21, 4),
@@ -222,6 +233,7 @@ Widget pageWorkspace(
   Future<void> Function(Uri link)? shareServer,
   bool isRootTab = true,
   bool justCreated = false,
+  DateTime Function()? now,
 }) => ServerWorkspaceScreen(
   key: UniqueKey(),
   serverId: 's',
@@ -233,4 +245,5 @@ Widget pageWorkspace(
   onBack: onBack ?? (isRootTab ? () {} : null),
   shareServer: shareServer,
   justCreated: justCreated,
+  now: now,
 );

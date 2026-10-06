@@ -48,7 +48,14 @@ events, and `Wszystkie kanały (N)`, the one entry to the full channel list.
 - The next-event card's action is the real one for that event kind: a podcast
   programme (and a family plan) has a reminder, so it says `Przypomnij mi`; a
   community event has no reminder on the backend, so it offers the RSVP
-  (`Będę`) and never promises a reminder nobody would send.
+  (`Będę`) and never promises a reminder nobody would send. A first reminder
+  is saved together with the answer `Może` (the callable keeps no reminder
+  without an answer), and the card says so: whatever answer is on record and
+  not shown by the button itself stands under it (`Twoja odpowiedź: Może`).
+- A quiet stage stays one tap away for everybody (its `Obserwuj`, its share
+  and its own start live there): the quiet stage card's header opens the
+  stage, and while the next event has the hero the stage is a row under
+  `Głos`.
 - No viewer, listener or participant count, no host name and no session title
   anywhere on the page, and no unread mark on a conversation row: none of them
   has a readable source. The one mark is the waiting dot on a podcast host's
@@ -63,6 +70,12 @@ events, and `Wszystkie kanały (N)`, the one entry to the full channel list.
 - Somebody who has not joined a public community or podcast sees the same
   cover, name and meta line with `Dołącz do serwera` as the one action and
   nothing channel-derived.
+- Languages: everything the page draws, and the channel list beside it, is
+  translated in all 41 other locales (`translations_server_page.dart`, 151
+  keys) — including the family's `Dom` board with its quick check-ins and
+  album preview, the session card's failure lines and the screen-reader names
+  of channel kinds. Channel scenes, the conversation dock and the management
+  sheets still fall back to English there.
 - Inside a media channel the phone and tablet keep one switch between the
   scene and the conversation beside it (`Scena | Czat`, the podcast's
   `Studio | Pytania`, the company's `Spotkanie | Czat`); everything that used

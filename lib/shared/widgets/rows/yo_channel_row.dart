@@ -365,15 +365,15 @@ class YoVoiceChannelRow extends StatelessWidget {
             : badge != null && !badgeBesideName
             ? Padding(
                 padding: const EdgeInsets.only(top: 2),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    Flexible(child: badge),
-                    if (clockText != null) ...[
-                      const SizedBox(width: 6),
-                      Flexible(child: clockText),
-                    ],
-                  ],
+                // The marker and its clock share a line where both fit
+                // whole; otherwise the clock takes the next line. Neither is
+                // cut to make room for the other — at 200 % text in the
+                // 264 px channel column a shared line read "NA…  od 21:…".
+                child: Wrap(
+                  spacing: 6,
+                  runSpacing: 2,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: <Widget>[badge, ?clockText],
                 ),
               )
             : clockText;

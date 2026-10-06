@@ -729,11 +729,17 @@ Everything above still holds.
     live stage is a 16:9 frame with the live rim and under-glow, `ServerLivePill`
     top-start and a `YoMetricPill` overlay clock top-end; a quiet stage with an
     upcoming event is a card with the event's date block, an identity-ink
-    overline, the title and one tonal action.
+    overline, the title and one tonal action. Under that action one centred
+    `bodySmall` line states the answer on record when the button does not
+    show it (`Twoja odpowiedź: Może`). A quiet stage's own card has no
+    control, so its header (disc, name, status, a trailing chevron) is the
+    ink well that opens the stage.
   - *Sections.* `HomeSectionHeader`, then an R2 block of 56 px `YoChannelRow`s
     with hairline dividers indented to the text edge: glyph + name + chevron.
     A voice row carries a 36 px tonal `Dołącz`; an event row the 52 px date
-    block. The page ends with one row, `Wszystkie kanały (N)`.
+    block. A quiet stage whose place in the hero is taken by the next event
+    is a row under `Głos` (glyph, name, chevron). The page ends with one row,
+    `Wszystkie kanały (N)`.
   - *Widths.* Phone: the page is the whole surface and takes the status-bar
     inset itself (no app bar). Tablet: rail + 264 px channel column + the page.
     Desktop: rail + channel column + the page (720 px measure, top-aligned) +
@@ -748,8 +754,13 @@ Everything above still holds.
     (squircle, name, meta) carries the template's selection wash and no channel
     row is selected; the header is a button (`Strona serwera`) with a hover
     wash and a 2 px foreground focus ring.
+  - *Live line in the channel column.* Under a channel's name the `NA ŻYWO`
+    marker and its clock share a line only where both fit whole; otherwise
+    the clock takes the next line (`YoVoiceChannelRow`, a `Wrap`). At 200 %
+    text in the 264 px column neither is cut.
   Frames: `test/server_page_capture.dart` →
-  `yovoice-evidence/2026-10-03/w42/serverpage/`.
+  `yovoice-evidence/2026-10-03/w42/serverpage/` (Polish at 320 / 390 / 768 /
+  1440, Pearl, 200 %, mirrored; German; Arabic in its own script).
 - **Start live cards.** "Teraz na żywo" is real data only: a 16:9 card per live
   channel with `YoBadge` live and the real start time in a `YoMetricPill`,
   from a bounded listener on at most 3 servers; the section is absent when

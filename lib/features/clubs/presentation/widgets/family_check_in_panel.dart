@@ -112,19 +112,27 @@ class _FamilyCheckInPanelState extends State<FamilyCheckInPanel> {
     if (at == null) return copy.text('just now', 'przed chwilą');
     final elapsed = DateTime.now().difference(at);
     if (elapsed.inMinutes < 1) return copy.text('just now', 'przed chwilą');
+    // Templates, so the three phrases are the catalog's own keys (already
+    // translated for the feed's time labels) instead of one key per number.
     if (elapsed.inMinutes < 60) {
-      return copy.text(
-        '${elapsed.inMinutes}m ago',
-        '${elapsed.inMinutes} min temu',
+      return copy.template(
+        '{count}m ago',
+        '{count} min temu',
+        values: {'count': elapsed.inMinutes},
       );
     }
     if (elapsed.inHours < 24) {
-      return copy.text(
-        '${elapsed.inHours}h ago',
-        '${elapsed.inHours} godz. temu',
+      return copy.template(
+        '{count}h ago',
+        '{count} godz. temu',
+        values: {'count': elapsed.inHours},
       );
     }
-    return copy.text('${elapsed.inDays}d ago', '${elapsed.inDays} dni temu');
+    return copy.template(
+      '{count}d ago',
+      '{count} dni temu',
+      values: {'count': elapsed.inDays},
+    );
   }
 
   String _statusLabel(FamilyCheckInStatus status) {

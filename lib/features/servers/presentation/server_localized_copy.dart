@@ -424,6 +424,10 @@ extension ServerLocalizedCopy on AppLocalizations {
       }
       return '$count osób';
     }
+    // Every other language counts with its own plural forms, which the
+    // shared member count already carries (`{count} member.*`); English keeps
+    // "1 person / 12 people" as the boards write it.
+    if (locale.languageCode != 'en') return peopleCount(count);
     return count == 1
         ? template('{count} person', '{count} osoba', values: {'count': count})
         : template('{count} people', '{count} osób', values: {'count': count});
@@ -479,9 +483,13 @@ extension ServerLocalizedCopy on AppLocalizations {
       };
 
   /// "12 osób w serwerze" — the phone header line.
-  String serverMembersInServer(int count) => text(
-    '${serverMembers(count)} in the server',
-    '${serverMembers(count)} w serwerze',
+  ///
+  /// A template around the counted phrase, so the sentence has one catalog
+  /// key in every language instead of one per number.
+  String serverMembersInServer(int count) => template(
+    '{members} in the server',
+    '{members} w serwerze',
+    values: {'members': serverMembers(count)},
   );
 
   /// Group headings by template and kind (contract decision B): derived
@@ -779,7 +787,12 @@ extension ServerLocalizedCopy on AppLocalizations {
       text('Could not join.', 'Nie udało się dołączyć.');
   String get serverConnectionLost =>
       text('The connection was lost.', 'Połączenie zostało przerwane.');
-  String get serverDismiss => text('Dismiss', 'Zamknij');
+
+  /// Closes a failure line. A context key: the moderation centre's `Dismiss`
+  /// (`Odrzuć`, rejecting a report) is a different action with the same
+  /// English word, so the two must not share one catalog entry.
+  String get serverDismiss =>
+      contextualText('serverPage.dismiss', 'Dismiss', 'Zamknij');
   String get serverHeadphones => text('Headphones', 'Słuchawki');
 
   /// The `Słuchawki` control is local output only — it never mutes anyone
@@ -978,8 +991,11 @@ extension ServerLocalizedCopy on AppLocalizations {
   );
 
   /// The small "waiting" dot's spoken form.
-  String serverHandWaitingLabel(int count) =>
-      text('$count waiting to speak', 'Czekające prośby o głos: $count');
+  String serverHandWaitingLabel(int count) => template(
+    '{count} waiting to speak',
+    'Czekające prośby o głos: {count}',
+    values: {'count': count},
+  );
   String get serverHandSending => text('Sending…', 'Wysyłanie…');
 
   /// `setServerSessionHandV1` refused a new raise because a host declined

@@ -105,6 +105,21 @@ was just created opens on its page with the invitation card. The public
 admission before membership is the same header with `Dołącz do serwera` and
 nothing channel-derived.
 
+Two rules keep the page honest about what it does not show itself:
+
+- **A quiet stage is one tap away.** The stage carries `Obserwuj`, its own
+  share and `Rozpocznij nadawanie`. While it is quiet and nothing is planned,
+  the hero is the stage's own card and its header opens the stage
+  (`server-page-hero-open`). While the next event has the hero, the stage is
+  not on the page otherwise, so it is a row under `Głos`
+  (`server-page-channel-<stageId>`), without a join of its own.
+- **The answer on record is said.** `respondToServerEventV1` keeps no
+  reminder without an answer, so a first `Przypomnij mi` is saved with
+  `Może`, which other members see counted on the events board. The card
+  therefore states the person's own answer under the button whenever the
+  button does not show it (`Twoja odpowiedź: Może`, `server-page-event-answer`);
+  the card's header opens the event, where the answer can be changed.
+
 ## Source audit baseline
 
 The following describes source observed on 2026-09-10 before this feature's
