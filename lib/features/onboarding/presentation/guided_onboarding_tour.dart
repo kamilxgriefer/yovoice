@@ -354,6 +354,23 @@ class _GuidedOnboardingTourState extends State<GuidedOnboardingTour> {
       );
     }
 
+    // The spotlight target can be off the screen: Start grew above it, or
+    // moved, while the tour was open. A card placed from such a rect lands
+    // off the screen with its Next and Skip, and a phone without a Back
+    // button has no other way out. The step is shown centred instead, like
+    // one without a target.
+    final onScreen =
+        anchor.top < size.height - safePadding.bottom &&
+        anchor.bottom > safePadding.top;
+    if (!onScreen) {
+      return SafeArea(
+        minimum: const EdgeInsets.all(16),
+        child: Center(
+          child: _TourCardBounds(maxHeight: size.height - 32, child: child),
+        ),
+      );
+    }
+
     final availableAbove = (anchor.top - safePadding.top - 28)
         .clamp(180.0, size.height)
         .toDouble();

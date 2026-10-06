@@ -89,6 +89,65 @@ ordinary-user follow discovery are removed. Creator audience discovery remains
 available through YO Moments and the Find creators destination in More; both
 surfaces expose only eligible, opted-in Creators.
 
+### "Zacznij tutaj" — first steps (firstSteps A, 2026-10-03; source only)
+
+Directly under the greeting, above the friends row (phone and tablet; on the
+two-column desktop Start it heads the secondary column), Start shows a
+checklist card: **Zacznij tutaj**, a real count ("1 z 5"), a close X and one
+row per step. There is no backend for it — every step is ticked only from
+state the client already holds:
+
+| step | ticked when | tapping an open step opens |
+| --- | --- | --- |
+| Dodaj zdjęcie profilowe | the avatar grant (`getProfileMediaAccess`) answers `available` | the profile editor |
+| Dodaj pierwszego znajomego | the friends stream holds ≥ 1 friend (an empty list counts as "none" only when the account's own `friendCount` is 0 too) | Friends |
+| Dołącz do serwera albo stwórz własny | `watchMyServers()` holds ≥ 1 server | the Servers tab |
+| Nagraj pierwszy Głos | the Moments achievement counter `momentCount` ≥ 1 | the Voice recorder |
+| Zaobserwuj stronę lub twórcę | the account's own `followingCount` ≥ 1 | the Treści tab |
+
+The fifth step is listed only while Treści (Premium Pages) exists for the
+account; without it the card counts four. The card draws nothing until every
+source has answered (profile, friends, servers, avatar grant, the Pages
+availability check and the local store) and stays hidden when one fails, so
+it never shows a step as open on a guess. One source needs a second witness:
+`FriendService.watchFriends()` answers with an empty list before it has
+joined the public profiles of the friends it found, so the card believes
+"no friends" only when `users/{uid}.friendCount` (kept by the social-graph
+callables, already in the profile the card reads) is 0 as well, and waits
+while the two disagree. Without that, an account with friends would see
+"Dodaj pierwszego znajomego" for a moment at every cold start and an account
+that had done everything would be congratulated. It closes for good with its X or
+once every step is done; that is remembered on the device per account
+(`home.first_steps.v1.<uid>.outcome` in SharedPreferences, like the guided
+tour's progress) and nothing is written to the account. Finishing the last
+step of a checklist this device showed earns one line, "Gotowe. Znasz już
+YO Voice.", for the rest of that session; an account that already had
+everything done never sees the card. A new account meets the guided tour
+first: the shell holds the card until the tour has been finished or skipped
+(or is known not to run), because the tour points at Start's create pill and
+the card would push that pill off the screen. Code: `lib/features/home/data/first_steps.dart`,
+`first_steps_store.dart`, `presentation/widgets/shared/home_first_steps_card.dart`,
+copy in `presentation/first_steps_copy.dart` (43 locales through
+`translations_first_steps.dart`).
+
+The same decision gives three former dead ends one action each:
+
+- **Server invite sheet with nobody to invite** — on a server anyone may join:
+  "Udostępnij link do serwera" (the canonical `?server=` link through the
+  system share sheet, as the Server's own Share action, anchored on the
+  button because iPadOS refuses a share popover without one; a share that
+  cannot open says so under the button, inside the sheet) and "Dodaj
+  znajomych";
+  on every other server "Dodaj znajomych" alone, because there the invitation
+  is the admission and a link would not help.
+- **Empty Notifications** — "Znajdź strony do obserwowania" opens Find Pages
+  (hosted by the shell over the screen, Back returns) while Treści exists for
+  the account; otherwise the action is "Dodaj znajomych" (Add friend screen),
+  so the screen is never a dead end.
+- **Empty friends list** — "Dodaj znajomego" under the message (the header's
+  action repeated as a tonal button). A search or the Online filter that
+  matched nobody keeps the message alone.
+
 ## Friends & Social
 
 `lib/features/friends/`: friend requests (must exist before a friendship

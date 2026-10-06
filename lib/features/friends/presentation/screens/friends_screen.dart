@@ -20,6 +20,7 @@ import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/friends/data/services/social_graph_service.dart';
 import 'package:yovoice/features/friends/presentation/friend_request_error_copy.dart';
 import 'package:yovoice/features/friends/presentation/screens/add_friend_screen.dart';
+import 'package:yovoice/features/home/presentation/first_steps_copy.dart';
 import 'package:yovoice/features/friends/presentation/screens/blocked_users_screen.dart';
 import 'package:yovoice/features/friends/presentation/screens/friend_profile_screen.dart';
 import 'package:yovoice/features/friends/presentation/widgets/friend_request_decision.dart';
@@ -191,6 +192,34 @@ class _FriendsScreenState extends State<FriendsScreen> {
       ),
     ),
   );
+
+  /// firstSteps A: the genuinely empty list is not a dead end — the screen's
+  /// own "Add friend" is repeated under the message, as the R7 accent tonal
+  /// (the header's gradient stays the page's one violet fill). A search or
+  /// the Online filter that matched nobody keeps the message alone: adding
+  /// someone is not the answer to those.
+  Widget? _emptyListAction({required bool noFriendsYet}) {
+    if (!noFriendsYet || _filter != _FriendsFilter.all) return null;
+    return FilledButton.icon(
+      key: const ValueKey('friends-empty-add-friend'),
+      onPressed: _openAddFriend,
+      style:
+          AppFinish.tonalAccent(
+            context.appPalette,
+            highContrast: MediaQuery.highContrastOf(context),
+          ).copyWith(
+            minimumSize: const WidgetStatePropertyAll(Size(64, 44)),
+            padding: const WidgetStatePropertyAll(
+              EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+            ),
+          ),
+      icon: const Icon(AppIcons.addFriend, size: 20),
+      label: Text(
+        FirstStepsCopy(AppLocalizations.of(context)).addFriend,
+        textAlign: TextAlign.center,
+      ),
+    );
+  }
 
   Future<void> _openBlockedUsers() => _runNavigation(
     () => Navigator.of(context).push<void>(
@@ -761,6 +790,9 @@ class _FriendsScreenState extends State<FriendsScreen> {
         SliverToBoxAdapter(
           child: _EmptyState(
             scrollable: false,
+            action: _emptyListAction(
+              noFriendsYet: allFriends.isEmpty && !isSearching,
+            ),
             icon: isSearching
                 ? Icons.search_off_rounded
                 : _filter == _FriendsFilter.online
@@ -977,7 +1009,9 @@ class _FriendsScreenState extends State<FriendsScreen> {
             ),
             icon: const Icon(Icons.person_add_alt_1_rounded, size: 20),
             child: Text(
-              copy.text('Add friend', 'Dodaj znajomego'),
+              // The same catalogued words as the empty list's action below,
+              // so the two read alike in every language (firstSteps A).
+              FirstStepsCopy(copy).addFriend,
               textAlign: TextAlign.center,
               style: const TextStyle(fontWeight: FontWeight.w700),
             ),
@@ -1188,6 +1222,9 @@ class _FriendsScreenState extends State<FriendsScreen> {
         if (filtered.isEmpty) {
           final isSearching = _query.isNotEmpty;
           final empty = _EmptyState(
+            action: _emptyListAction(
+              noFriendsYet: allFriends.isEmpty && !isSearching,
+            ),
             icon: isSearching
                 ? Icons.search_off_rounded
                 : _filter == _FriendsFilter.online
@@ -2097,6 +2134,7 @@ class _EmptyState extends StatelessWidget {
     required this.title,
     required this.subtitle,
     this.footer,
+    this.action,
     this.scrollable = true,
   });
 
@@ -2104,6 +2142,10 @@ class _EmptyState extends StatelessWidget {
   final String title;
   final String subtitle;
   final bool scrollable;
+
+  /// The one next step under the message (firstSteps A: "Dodaj znajomego"
+  /// on the genuinely empty list).
+  final Widget? action;
 
   /// Optional full-width content under the message. It owns its own gutter
   /// so a horizontally scrolling rail is not inset by the 28 px the centred
@@ -2154,6 +2196,7 @@ class _EmptyState extends StatelessWidget {
                     height: 1.45,
                   ),
                 ),
+                if (action != null) ...[const SizedBox(height: 20), action!],
               ],
             ),
           ),

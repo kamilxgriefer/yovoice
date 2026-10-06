@@ -4,6 +4,7 @@ import 'dart:async';
 // aggregate helpers that collide with this file's own callback parameters.
 import 'package:cloud_firestore/cloud_firestore.dart' show FirebaseFirestore;
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
 import 'package:yovoice/shared/widgets/badges/yo_metric_pill.dart';
@@ -11,16 +12,22 @@ import 'package:yovoice/shared/widgets/branding/yo_logo.dart';
 import 'package:flutter/semantics.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_finish.dart';
+import 'package:yovoice/core/theme/app_icons.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
 import 'package:yovoice/features/friends/data/models/friend_request.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
+import 'package:yovoice/features/friends/presentation/screens/add_friend_screen.dart';
 import 'package:yovoice/features/friends/presentation/widgets/friend_request_decision.dart';
+import 'package:yovoice/features/home/presentation/first_steps_copy.dart';
 import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
 import 'package:yovoice/features/notifications/data/models/app_notification.dart';
+import 'package:yovoice/features/pages/data/services/pages_availability.dart';
+import 'package:yovoice/features/pages/presentation/page_navigation.dart';
 import 'package:yovoice/features/pages/presentation/page_notice_copy.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 import 'package:yovoice/features/notifications/presentation/notification_router.dart';
@@ -43,6 +50,9 @@ class NotificationsScreen extends StatefulWidget {
     this.auth,
     this.acknowledgeOnVisible = true,
     this.openNotification,
+    this.pagesEnabled,
+    this.onFindPages,
+    this.onAddFriends,
     super.key,
   });
 
@@ -80,6 +90,16 @@ class NotificationsScreen extends StatefulWidget {
   /// Production passes nothing and routes through [NotificationRouter],
   /// which needs an initialised Firebase app a widget test does not have.
   final Future<void> Function(AppNotification notification)? openNotification;
+
+  /// The empty screen's one action (firstSteps A). While Treści exists for
+  /// the account it is "Znajdź strony do obserwowania" and opens Find Pages
+  /// through the shell; otherwise it is "Dodaj znajomych" and opens the Add
+  /// friend screen, so the screen is never a dead end. Test seams, as above:
+  /// production passes nothing and uses [PagesAvailability.instance], the
+  /// shell's [PagesShellBridge.findHost] and a pushed [AddFriendScreen].
+  final ValueListenable<bool>? pagesEnabled;
+  final Future<void> Function(BuildContext context)? onFindPages;
+  final VoidCallback? onAddFriends;
 
   @override
   State<NotificationsScreen> createState() => _NotificationsScreenState();
@@ -328,6 +348,65 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     );
   }
 
+  /// The empty feed's one action (firstSteps A). While Treści exists for the
+  /// account and the shell can host Find Pages, it is "Znajdź strony do
+  /// obserwowania"; otherwise it is "Dodaj znajomych" — both lead to a real
+  /// place, and the label follows the Pages kill switch live.
+  Widget _buildEmptyAction() {
+    return ValueListenableBuilder<bool>(
+      valueListenable:
+          widget.pagesEnabled ?? PagesAvailability.instance.enabled,
+      builder: (context, pagesEnabled, _) {
+        final copy = FirstStepsCopy(AppLocalizations.of(context));
+        final findPages = widget.onFindPages ?? PagesShellBridge.findHost;
+        final toPages = pagesEnabled && findPages != null;
+        return FilledButton.icon(
+          key: ValueKey(
+            toPages
+                ? 'notifications-empty-find-pages'
+                : 'notifications-empty-add-friends',
+          ),
+          onPressed: toPages
+              ? () => unawaited(findPages(context))
+              : _openAddFriends,
+          style:
+              AppFinish.tonalAccent(
+                context.appPalette,
+                highContrast: MediaQuery.highContrastOf(context),
+              ).copyWith(
+                minimumSize: const WidgetStatePropertyAll(Size(64, 44)),
+                padding: const WidgetStatePropertyAll(
+                  EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                ),
+              ),
+          icon: Icon(
+            toPages ? Icons.search_rounded : AppIcons.addFriend,
+            size: 20,
+          ),
+          label: Text(
+            toPages ? copy.findPagesToFollow : copy.addFriends,
+            textAlign: TextAlign.center,
+          ),
+        );
+      },
+    );
+  }
+
+  void _openAddFriends() {
+    final override = widget.onAddFriends;
+    if (override != null) {
+      override();
+      return;
+    }
+    unawaited(
+      Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => AddFriendScreen(friendService: _friendService),
+        ),
+      ),
+    );
+  }
+
   String _readableError(Object error) {
     final copy = AppLocalizations.of(context);
     final message = error.toString();
@@ -555,6 +634,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                           'appear here.',
                       'Nowe zaproszenia, wiadomości i aktywność pojawią się tutaj.',
                     ),
+                    action: _buildEmptyAction(),
                   );
                 }
 
@@ -1756,6 +1836,7 @@ class _EmptyState extends StatelessWidget {
     required this.title,
     required this.subtitle,
     this.onRetry,
+    this.action,
   });
 
   final IconData icon;
@@ -1765,6 +1846,10 @@ class _EmptyState extends StatelessWidget {
   /// Present only on the feed's own error state, so a failure the user
   /// can do something about is retryable instead of terminal.
   final VoidCallback? onRetry;
+
+  /// The one next step of the genuinely empty feed (firstSteps A), under the
+  /// message. Never drawn beside [onRetry].
+  final Widget? action;
 
   @override
   Widget build(BuildContext context) {
@@ -1806,6 +1891,10 @@ class _EmptyState extends StatelessWidget {
                 height: 1.45,
               ),
             ),
+            if (action != null && onRetry == null) ...[
+              const SizedBox(height: 20),
+              action!,
+            ],
             if (onRetry != null) ...[
               const SizedBox(height: 14),
               TextButton(

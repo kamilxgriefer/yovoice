@@ -3,9 +3,15 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/theme/app_finish.dart';
+import 'package:yovoice/core/theme/app_icons.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
+import 'package:yovoice/features/friends/presentation/screens/add_friend_screen.dart';
+import 'package:yovoice/features/home/presentation/first_steps_copy.dart';
+import 'package:yovoice/shared/widgets/buttons/yo_gradient_filled_button.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
@@ -16,6 +22,7 @@ import 'package:yovoice/shared/widgets/states/yo_error_state.dart';
 import '../../data/models/server.dart';
 import '../../data/models/server_invite_authority.dart';
 import '../../data/models/server_session.dart';
+import '../../data/server_links.dart';
 import '../../data/services/server_service.dart';
 import '../server_action_failure.dart';
 import '../server_localized_copy.dart';
@@ -30,6 +37,8 @@ Future<void> showServerInviteSheet(
   required ServerRepository repository,
   FirebaseFirestore? firestore,
   FirebaseAuth? auth,
+  Future<void> Function(Uri link)? shareServer,
+  VoidCallback? onAddFriends,
 }) => showModalBottomSheet<void>(
   context: context,
   isScrollControlled: true,
@@ -43,6 +52,8 @@ Future<void> showServerInviteSheet(
       repository: repository,
       firestore: firestore,
       auth: auth,
+      shareServer: shareServer,
+      onAddFriends: onAddFriends,
     ),
   ),
 );
@@ -53,10 +64,19 @@ class ServerInviteSheet extends StatefulWidget {
     required this.repository,
     this.firestore,
     this.auth,
+    this.shareServer,
+    this.onAddFriends,
     super.key,
   });
   final Server server;
   final ServerRepository repository;
+
+  /// The two actions of the "nobody to invite yet" state (firstSteps A).
+  /// Test seams: production passes nothing, shares the canonical server link
+  /// through the system share sheet (as the Server's own Share action does)
+  /// and pushes the Add friend screen.
+  final Future<void> Function(Uri link)? shareServer;
+  final VoidCallback? onAddFriends;
 
   /// Test-only, as elsewhere in the app: production passes nothing and the
   /// profile preview opened from a candidate row resolves its own Firebase
@@ -74,6 +94,134 @@ class _ServerInviteSheetState extends State<ServerInviteSheet> {
   late Stream<List<ServerInviteCandidate>> _candidates;
   final _rows = <String, _RowState>{};
   final _failures = <String, String>{};
+  bool _sharing = false;
+
+  /// Why the last share did not open, shown under the button: a snackbar
+  /// would be drawn on the page under this sheet, where nobody sees it.
+  String? _shareFailure;
+
+  /// A link only helps on a server anyone may join by opening it; on every
+  /// other server the invitation is the admission, so the link is not offered.
+  bool get _canShareLink =>
+      serverAdmitsPublicJoin(widget.server) &&
+      isSafeServerLinkId(widget.server.id);
+
+  Future<void> _shareLink(BuildContext buttonContext) async {
+    if (_sharing) return;
+    final copy = FirstStepsCopy(AppLocalizations.of(context));
+    // iPadOS presents the system share sheet as a popover and refuses to open
+    // it without an anchor inside the window: the button it was asked from.
+    final box = buttonContext.findRenderObject();
+    final origin = box is RenderBox && box.hasSize && !box.size.isEmpty
+        ? box.localToGlobal(Offset.zero) & box.size
+        : null;
+    setState(() {
+      _sharing = true;
+      _shareFailure = null;
+    });
+    try {
+      final link = buildServerLink(widget.server.id);
+      final override = widget.shareServer;
+      if (override != null) {
+        await override(link);
+      } else {
+        await SharePlus.instance.share(
+          ShareParams(
+            text: '${widget.server.name}\n$link',
+            sharePositionOrigin: origin,
+          ),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => _shareFailure = copy.shareServerLinkFailed);
+      }
+    } finally {
+      if (mounted) setState(() => _sharing = false);
+    }
+  }
+
+  void _addFriends() {
+    final override = widget.onAddFriends;
+    if (override != null) {
+      override();
+      return;
+    }
+    unawaited(
+      Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(builder: (_) => const AddFriendScreen()),
+      ),
+    );
+  }
+
+  /// "Nobody to invite yet" is not a dead end (firstSteps A): a server
+  /// anyone may join offers its link first and "Dodaj znajomych" second; an
+  /// invite-only server offers "Dodaj znajomych" alone, as the one primary.
+  Widget _emptyActions(BuildContext context) {
+    final copy = FirstStepsCopy(AppLocalizations.of(context));
+    final palette = context.appPalette;
+    final shareLink = _canShareLink;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (shareLink) ...[
+            Builder(
+              builder: (buttonContext) => YoGradientFilledButton(
+                buttonKey: const ValueKey('server-invite-share-link'),
+                onPressed: () => unawaited(_shareLink(buttonContext)),
+                busy: _sharing,
+                minimumSize: const Size(64, 48),
+                icon: const Icon(Icons.ios_share_rounded, size: 20),
+                child: Text(copy.shareServerLink, textAlign: TextAlign.center),
+              ),
+            ),
+            if (_shareFailure != null) ...[
+              const SizedBox(height: 8),
+              Semantics(
+                liveRegion: true,
+                child: Text(
+                  _shareFailure!,
+                  key: const ValueKey('server-invite-share-failed'),
+                  textAlign: TextAlign.center,
+                  style: AppTypography.bodySmall.copyWith(
+                    color: palette.dangerForeground,
+                  ),
+                ),
+              ),
+            ],
+            const SizedBox(height: 10),
+            FilledButton.icon(
+              key: const ValueKey('server-invite-add-friends'),
+              onPressed: _addFriends,
+              style:
+                  AppFinish.tonalNeutral(
+                    palette,
+                    foreground: palette.textPrimary,
+                    highContrast: MediaQuery.highContrastOf(context),
+                  ).copyWith(
+                    minimumSize: const WidgetStatePropertyAll(Size(64, 48)),
+                    padding: const WidgetStatePropertyAll(
+                      EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                    ),
+                  ),
+              icon: const Icon(AppIcons.addFriend, size: 20),
+              label: Text(copy.addFriends, textAlign: TextAlign.center),
+            ),
+          ] else
+            YoGradientFilledButton(
+              buttonKey: const ValueKey('server-invite-add-friends'),
+              onPressed: _addFriends,
+              minimumSize: const Size(64, 48),
+              icon: const Icon(Icons.person_add_alt_1_rounded, size: 20),
+              child: Text(copy.addFriends, textAlign: TextAlign.center),
+            ),
+        ],
+      ),
+    );
+  }
 
   @override
   void initState() {
@@ -186,11 +334,17 @@ class _ServerInviteSheetState extends State<ServerInviteSheet> {
               final people = snapshot.data ?? const <ServerInviteCandidate>[];
               if (people.isEmpty) {
                 return SingleChildScrollView(
-                  child: YoEmptyState(
-                    icon: Icons.person_add_outlined,
-                    title: copy.serverInviteNoFriendsTitle,
-                    subtitle: copy.serverInviteNoFriendsBody,
-                    compact: true,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      YoEmptyState(
+                        icon: Icons.person_add_outlined,
+                        title: copy.serverInviteNoFriendsTitle,
+                        subtitle: copy.serverInviteNoFriendsBody,
+                        compact: true,
+                      ),
+                      _emptyActions(context),
+                    ],
                   ),
                 );
               }

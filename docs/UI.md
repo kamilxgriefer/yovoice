@@ -1063,6 +1063,71 @@ renders of the real widgets (Dark; composer text/photos/voice at 390, 320 at
 session scratchpad (`c4/shots`). **Not verified on a device, simulator or
 real browser.**
 
+## Start's "Zacznij tutaj" card and the dead-end actions (firstSteps A, source only)
+
+Owner's choice of 2026-10-03 (sheet `7_firstSteps`, row A). One primitive,
+`HomeFirstSteps` (`lib/features/home/presentation/widgets/shared/home_first_steps_card.dart`),
+hosts the card on both Homes; it is an empty box while it has nothing true to
+show, so Start's rhythm without the card is unchanged
+(`test/first_steps_home_test.dart` pins both).
+
+- **Block.** The same plain R2 `YoCard` as `HomeRecordMomentCard` (no tint,
+  radius 20). Padding 16 / 8 / 8 / 12 (start / top / end / bottom) so the
+  48 px close target sits 8 px from the edge; title `titleMedium` w700, the
+  count `labelMedium` in `textSecondary`, a 4 px progress line in the
+  primary-action gradient (a solid `interactiveForeground` on
+  `borderStrong` under high contrast), then the rows.
+- **Rows.** 48 px minimum, a 22 px mark (logo gradient + white tick when
+  done, a 1.5 px ring otherwise). A done row is `textSecondary` and is a
+  ticked line, not a control. The first open row is the highlighted one: a
+  tonal-accent frame (radius 12, 1.5 px `interactiveForeground` at .55, a
+  .06 wash), w700 label, its hint in `bodySmall`, a chevron. Every open row
+  is an `AccessibleTapRegion` button; only the highlighted one carries the
+  hint and the chevron. Labels wrap, they are never clipped.
+- **Widths.** Phone (< 600): one column, 12 px under the greeting, inset to
+  the 16 px margin. Tablet (600–1099): the same place at the 24 px margin,
+  rows in two columns (3 + 2, or 2 + 2 without the follow step) from 520 px
+  of card at 100 % text; enlarged text falls back to one column. Desktop
+  with two Start columns: the card heads the secondary column (its existing
+  300–344 px), 12 px above the record card, rows in one column; with one
+  Start column it sits under the greeting like the tablet. One keyed host,
+  so the card keeps its state when the window crosses the threshold.
+- **States.** Hidden (a source unknown or failed, closed, completed) ·
+  checklist · the one-line "Gotowe. Znasz już YO Voice." with the same close
+  target. The card opens and closes by height only, 180 ms, instantly under
+  Reduce Motion; a window resize is never animated.
+- **After the guided tour, never under it.** On phones the tour's create
+  step spotlights Start's own create pill and places its card above it. The
+  shell therefore holds the checklist (it passes `contentEnabled: null`)
+  until this session knows the tour is not coming, or until the tour has been
+  finished or skipped; a card of some 340 px arriving above the pill would
+  otherwise push it off the screen under the open tour. As the safety net
+  under that, the tour shows a step centred whenever its target is not on
+  screen instead of placing its card from an off-screen rect
+  (`test/guided_onboarding_offscreen_anchor_test.dart`).
+- **RTL.** Directional paddings, the progress line grows from the start
+  edge, and `Icons.chevron_right_rounded` mirrors itself (do not swap it for
+  `chevron_left` by hand: that double-mirrors).
+- **Dead-end actions.** Empty Notifications and the empty friends list use
+  the R7 accent tonal (`AppFinish.tonalAccent`, 44 px, icon 20) because
+  another violet fill may already own the screen; the invite sheet's empty
+  state uses the gradient primary plus one neutral tonal (48 px, full
+  width), or the gradient alone when there is one action. A share that could
+  not open is said in the sheet, under the button, in `dangerForeground`
+  `bodySmall` as a live region; a snackbar would be drawn on the page under
+  the sheet. The share call passes the button's rect as
+  `sharePositionOrigin` (iPadOS refuses a share popover without an anchor).
+
+Evidence: `test/first_steps_card_test.dart`, `test/first_steps_home_test.dart`,
+`test/first_steps_dead_ends_test.dart`, `test/first_steps_localization_test.dart`,
+and real-font harness renders of the real widgets from
+`test/first_steps_capture.dart` (Start at 390 / 768 / 1180 / 1440 in Dark,
+Pearl, 200 % text, Arabic and German; the three dead ends at 390 / 768 / 1440
+with Pearl, 200 % text and Arabic spot frames, and the invite sheet's failed
+share). **Not verified on a device,
+simulator or real browser**; `MainShell` is not pumpable in tests, so its
+wiring of the card's destinations is covered by analysis and reading only.
+
 ## The "Coming soon" pattern
 
 When a screen needs a feature with no real backend support yet:

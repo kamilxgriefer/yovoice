@@ -423,7 +423,17 @@ void main() {
 
     // The existing empty message is preserved, not replaced.
     expect(find.text('No friends yet'), findsOneWidget);
-    expect(find.widgetWithText(FilledButton, 'Add friend'), findsOneWidget);
+    // firstSteps A (2026-10-03): the header's "Add friend" and its repeat
+    // under the empty message, above the rail.
+    expect(find.widgetWithText(FilledButton, 'Add friend'), findsNWidgets(2));
+    final emptyListAction = find.byKey(
+      const ValueKey('friends-empty-add-friend'),
+    );
+    expect(emptyListAction, findsOneWidget);
+    expect(
+      tester.getTopLeft(find.text('People you may know')).dy,
+      greaterThan(tester.getBottomLeft(emptyListAction).dy),
+    );
     expect(find.text('People you may know'), findsOneWidget);
     expect(find.text('Riley'), findsOneWidget);
     expect(

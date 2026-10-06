@@ -38,7 +38,10 @@ import 'package:yovoice/features/pages/data/services/pages_availability.dart';
 import 'package:yovoice/features/pages/presentation/page_navigation.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/features/pages/presentation/screens/content_screen.dart';
+import 'package:yovoice/features/pages/presentation/screens/find_pages_host.dart';
 import 'package:yovoice/features/pages/presentation/screens/page_profile_screen.dart';
+import 'package:yovoice/features/profile/data/models/user_profile.dart';
+import 'package:yovoice/features/profile/presentation/screens/edit_profile_screen.dart';
 import 'package:yovoice/features/permissions/data/permission_readiness_service.dart';
 import 'package:yovoice/features/permissions/presentation/permission_setup_sheet.dart';
 import 'package:yovoice/features/premium/data/models/subscription_entitlements.dart';
@@ -559,6 +562,12 @@ class _MainShellState extends State<MainShell>
     onSeeAllChats: () => _onDestinationSelected(1),
     // "View all" on the followed-Moments rail: the dock's Your Moments.
     onSeeAllMoments: () => _onDestinationSelected(_momentsSlot),
+    // "Zacznij tutaj" (firstSteps A): the follow step exists only while
+    // Treści does. Null makes the card wait: until that is known, and until
+    // the guided tour has had its turn.
+    contentEnabled: _startChecklistContent,
+    onOpenContent: _openContentFromStart,
+    onAddProfilePhoto: _openEditProfile,
   );
 
   /// Desktop Home. Every tab-level destination below goes through
@@ -593,7 +602,32 @@ class _MainShellState extends State<MainShell>
     onSeeAllChats: () => _onDestinationSelected(1),
     onOpenClubs: () => _onDestinationSelected(_serversSlot),
     trailingContent: trailingContent,
+    // "Zacznij tutaj" (firstSteps A): the follow step exists only while
+    // Treści does. Null makes the card wait: until that is known, and until
+    // the guided tour has had its turn.
+    contentEnabled: _startChecklistContent,
+    onOpenContent: _openContentFromStart,
+    onAddProfilePhoto: _openEditProfile,
   );
+
+  /// The "Zacznij tutaj" follow step: the Treści destination, where an
+  /// account that follows nobody gets the suggested Pages and Find Pages.
+  void _openContentFromStart() {
+    if (!_contentEnabled) return;
+    _onDestinationSelected(_contentSlot);
+  }
+
+  /// The "Zacznij tutaj" photo step: the profile editor, where the avatar is
+  /// picked — the same screen Profile's "Edytuj profil" opens.
+  void _openEditProfile(UserProfile profile) {
+    unawaited(
+      Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => EditProfileScreen(profile: profile),
+        ),
+      ),
+    );
+  }
 
   /// Opens an existing conversation in the existing ChatScreen — the same
   /// arguments the Chats screen passes, so read receipts, presence and
@@ -648,6 +682,31 @@ class _MainShellState extends State<MainShell>
   late final PagesAvailability _pagesAvailability;
   bool _contentEnabled = false;
 
+  /// True once this session's availability check has answered (or failed,
+  /// which leaves the last known answer standing). Start's "Zacznij tutaj"
+  /// card waits for it, so a late "Pages are on" cannot follow a card that
+  /// already counted four steps.
+  bool _contentKnown = false;
+
+  /// False until this session knows whether the guided tour runs, and while
+  /// that tour is still waiting to run or is open. Start's "Zacznij tutaj"
+  /// card waits for it: on phones the tour spotlights Start's own create
+  /// pill, and a card of some 340 px arriving above it would push the pill
+  /// (and the tour card placed from it) off the screen, or scroll Start away
+  /// from the card it had just shown. The checklist follows the tour instead.
+  bool _startChecklistReleased = false;
+
+  /// What Start's "Zacznij tutaj" card may assume about Treści, or null
+  /// while the card has to wait (see [_contentKnown] and
+  /// [_startChecklistReleased]).
+  bool? get _startChecklistContent =>
+      _contentKnown && _startChecklistReleased ? _contentEnabled : null;
+
+  void _releaseStartChecklist() {
+    if (!mounted || _startChecklistReleased) return;
+    setState(() => _startChecklistReleased = true);
+  }
+
   /// A validated `?page=` link handed to the Treści destination.
   final ValueNotifier<PageLinkTarget?> _pendingPageLink =
       ValueNotifier<PageLinkTarget?>(null);
@@ -685,11 +744,16 @@ class _MainShellState extends State<MainShell>
 
     _pagesAvailability = widget.pagesAvailability ?? PagesAvailability.instance;
     _pagesAvailability.enabled.addListener(_handlePagesAvailability);
-    unawaited(_pagesAvailability.refresh(_currentUserId));
+    unawaited(
+      _pagesAvailability.refresh(_currentUserId).whenComplete(() {
+        if (mounted && !_contentKnown) setState(() => _contentKnown = true);
+      }),
+    );
     _contentEnabled =
         _pagesAvailability.userId == _currentUserId &&
         _pagesAvailability.enabled.value;
     PagesShellBridge.host = _hostPage;
+    PagesShellBridge.findHost = _hostFindPages;
     accountProfileRedirect = _redirectAccountProfile;
 
     _screens = <Widget>[
@@ -717,7 +781,13 @@ class _MainShellState extends State<MainShell>
     unawaited(_messageService.resumeOutbox());
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      unawaited(_prepareGuidedOnboarding());
+      unawaited(
+        _prepareGuidedOnboarding().whenComplete(() {
+          // Also when the check failed: the "Zacznij tutaj" card must not
+          // wait for a tour that is not coming.
+          if (!_onboardingPending) _releaseStartChecklist();
+        }),
+      );
     });
 
     _conversationSubscription = _conversationsStream.listen(
@@ -826,6 +896,7 @@ class _MainShellState extends State<MainShell>
       await _showPendingGuidedOnboarding();
       return;
     }
+    _releaseStartChecklist();
     await _preparePermissionSetup();
   }
 
@@ -835,6 +906,8 @@ class _MainShellState extends State<MainShell>
     final outcome = await _presentGuidedOnboarding();
     if (!mounted || outcome == null) return;
     _onboardingPending = false;
+    // The tour is over: Start's checklist may arrive now.
+    _releaseStartChecklist();
     try {
       await _onboardingProgress.markDismissed(
         _onboardingUserId,
@@ -1159,6 +1232,37 @@ class _MainShellState extends State<MainShell>
     await _pushHostedDestination(route);
   }
 
+  /// Find Pages opened from outside Treści (the empty Notifications screen's
+  /// "Znajdź strony do obserwowania"): hosted over the caller exactly like a
+  /// Page profile, so nothing under it is popped and Back returns there.
+  Future<void> _hostFindPages(BuildContext context) async {
+    if (!mounted || !_contentEnabled) return;
+    final route = MaterialPageRoute<void>(
+      settings: const RouteSettings(name: 'pages/find'),
+      builder: (_) => MoreDestinationHost(
+        body: const FindPagesHost(),
+        selectedIndex: _contentSlot,
+        unreadConversationCount: _unreadConversationCount,
+        unreadConversationCountListenable: _unreadConversationCountListenable,
+        unreadNotificationCount: _unreadNotificationCount,
+        unreadNotificationCountListenable: _unreadNotificationCountListenable,
+        activeDesktopItem: DesktopNavItem.content,
+        onDestinationSelected: _onDestinationSelected,
+        onVoicePressed: _openVoiceAction,
+        onMorePressed: _openMoreMenu,
+        onDesktopNavSelected: (item) => unawaited(_onDesktopNavSelected(item)),
+        onCreateRoom: () => unawaited(_openCreateServer()),
+        onCreateMoment: _openCreateMoment,
+        onOpenProfile: () => unawaited(_openProfile()),
+        onOpenProfileSettings: () => unawaited(_openProfileSettings()),
+        canForwardNavigation: _hostNavigationEpochIsCurrent,
+        contentEnabled: _contentEnabled,
+        contentEnabledListenable: _pagesAvailability.enabled,
+      ),
+    );
+    await _pushHostedDestination(route);
+  }
+
   /// A Page link opens Treści only while Pages exist for this account; the
   /// destination takes the validated target from there. With Pages off the
   /// link opens nothing, exactly as if the feature did not exist.
@@ -1177,6 +1281,9 @@ class _MainShellState extends State<MainShell>
   @override
   void dispose() {
     if (PagesShellBridge.host == _hostPage) PagesShellBridge.host = null;
+    if (PagesShellBridge.findHost == _hostFindPages) {
+      PagesShellBridge.findHost = null;
+    }
     if (accountProfileRedirect == _redirectAccountProfile) {
       accountProfileRedirect = null;
     }

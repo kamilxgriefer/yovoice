@@ -49,6 +49,7 @@ class UserProfile {
     required this.followerCount,
     this.accountFollowerCount = 0,
     required this.followingCount,
+    this.accountFollowingCount = 0,
     required this.roomCount,
     required this.communityCount,
     required this.voiceMinutes,
@@ -125,6 +126,14 @@ class UserProfile {
   /// public projection never carries more than [followerCount] here.
   final int accountFollowerCount;
   final int followingCount;
+
+  /// How many accounts and Pages this account follows, exactly as stored on
+  /// `users/{uid}` (`setFollow` keeps it), NOT gated by
+  /// [creatorAudienceVisible]. For the owner's own surfaces only: Start's
+  /// "Zacznij tutaj" card ticks its follow step from it (firstSteps A).
+  /// Public audience surfaces keep using [followingCount]; another account's
+  /// public projection never carries more than [followingCount] here.
+  final int accountFollowingCount;
   final int roomCount;
   final int communityCount;
   final int voiceMinutes;
@@ -212,6 +221,7 @@ class UserProfile {
       followerCount: creatorAudienceVisible ? readInt('followerCount') : 0,
       accountFollowerCount: readInt('followerCount'),
       followingCount: creatorAudienceVisible ? readInt('followingCount') : 0,
+      accountFollowingCount: readInt('followingCount'),
       roomCount: readInt('roomCount'),
       communityCount: readInt('communityCount'),
       voiceMinutes: readInt('voiceMinutes'),

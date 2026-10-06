@@ -204,10 +204,27 @@ void main() {
         );
         expect(currentSearch.decoration?.hintText, localeCase.currentSearch);
 
-        final addFriend = find.bySemanticsLabel(localeCase.add);
+        // firstSteps A (2026-10-03): the empty list repeats "Add friend"
+        // under its message, so an account with no friends has the header's
+        // primary CTA (first in reading order) and that second, tonal one.
+        final addFriendActions = find.bySemanticsLabel(localeCase.add);
+        expect(addFriendActions, findsNWidgets(2));
+        final addFriend = addFriendActions.first;
+        final emptyListAction = find.byKey(
+          const ValueKey('friends-empty-add-friend'),
+        );
+        expect(emptyListAction, findsOneWidget);
+        expect(
+          tester.getTopLeft(emptyListAction).dy,
+          greaterThan(tester.getBottomLeft(addFriend).dy),
+          reason: 'the header CTA stays first; the repeat sits under the list',
+        );
+        expect(
+          tester.getSize(emptyListAction).height,
+          greaterThanOrEqualTo(44),
+        );
         final requests = find.bySemanticsLabel(localeCase.requests);
         final blocked = find.bySemanticsLabel(localeCase.blocked);
-        expect(addFriend, findsOneWidget);
         expect(requests, findsOneWidget);
         expect(blocked, findsOneWidget);
         expect(tester.getSize(addFriend).height, greaterThanOrEqualTo(48));

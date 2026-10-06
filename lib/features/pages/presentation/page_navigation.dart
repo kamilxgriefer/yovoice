@@ -42,10 +42,20 @@ typedef PagesShellHost =
       String? displayName,
     });
 
+/// Hosts Find Pages opened from OUTSIDE Treści (the empty Notifications
+/// screen): the shell shows it with the same persistent chrome as a hosted
+/// Page, and Back returns to where it was opened.
+typedef PagesFindShellHost = Future<void> Function(BuildContext context);
+
 abstract final class PagesShellBridge {
   /// Registered by `MainShell` while it is mounted; null elsewhere (tests,
   /// a route above the shell without one).
   static PagesShellHost? host;
+
+  /// Registered by `MainShell` while it is mounted; null elsewhere. A caller
+  /// offers its "find Pages" action only while this exists and Pages are
+  /// enabled for the account.
+  static PagesFindShellHost? findHost;
 }
 
 /// The route every Page profile is pushed with.

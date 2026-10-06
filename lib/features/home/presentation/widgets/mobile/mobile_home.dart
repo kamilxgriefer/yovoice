@@ -15,7 +15,9 @@ import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
+import 'package:yovoice/features/home/data/first_steps_store.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
+import 'package:yovoice/features/home/presentation/widgets/shared/home_first_steps_card.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_friend_tile.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_greeting_header.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_live_now.dart';
@@ -90,6 +92,10 @@ class MobileHome extends StatefulWidget {
     this.currentUserId,
     this.isVisible,
     this.createRoomKey,
+    this.contentEnabled = false,
+    this.onOpenContent,
+    this.onAddProfilePhoto,
+    this.firstStepsStore,
     super.key,
   });
 
@@ -136,6 +142,23 @@ class MobileHome extends StatefulWidget {
   final GlobalKey? createRoomKey;
   final ValueListenable<bool>? isVisible;
 
+  /// Whether Treści (Premium Pages) exists for the account: the "Zacznij
+  /// tutaj" card lists its fifth step (follow a Page or creator) only then.
+  /// Null while the shell cannot say yet — the Pages check is still out, or
+  /// the guided tour has not had its turn — and the card waits rather than
+  /// counting four steps and then five, or arriving under the tour.
+  final bool? contentEnabled;
+
+  /// The Treści destination, where the card's follow step leads.
+  final VoidCallback? onOpenContent;
+
+  /// Where the card's "add a profile photo" step leads (the profile editor).
+  /// Null falls back to [onOpenProfile].
+  final ValueChanged<UserProfile>? onAddProfilePhoto;
+
+  /// Test seam for the card's local dismissal memory.
+  final FirstStepsStore? firstStepsStore;
+
   @override
   State<MobileHome> createState() => _MobileHomeState();
 }
@@ -165,6 +188,10 @@ class _MobileHomeState extends State<MobileHome> {
 
   VoidCallback get _openServers =>
       widget.onOpenServers ?? widget.onOpenDiscover;
+
+  /// Where "follow a Page or creator" leads: Treści, else Find creators.
+  VoidCallback? get _followDestination =>
+      widget.onOpenContent ?? widget.onOpenFindCreators;
 
   @override
   void initState() {
@@ -382,6 +409,30 @@ class _MobileHomeState extends State<MobileHome> {
                 onOpenNotifications: widget.onOpenNotifications,
                 onOpenProfile: widget.onOpenProfile,
                 unreadNotificationCount: widget.unreadNotificationCount,
+              ),
+            ),
+            // "Zacznij tutaj" (firstSteps A): directly under the greeting,
+            // above the friends row. An empty box while it has nothing true
+            // to show, so the rhythm below is unchanged without it.
+            _Gutter(
+              margin: margin,
+              child: HomeFirstSteps(
+                userId: _resolvedUserId,
+                profile: _profile,
+                friendsSnapshot: friendSnapshot,
+                serversSnapshot: serverSnapshot,
+                contentEnabled: _followDestination == null
+                    ? false
+                    : widget.contentEnabled,
+                profileMediaService: widget.profileMediaService,
+                store: widget.firstStepsStore,
+                padding: const EdgeInsets.only(top: AppRhythm.item),
+                onAddPhoto:
+                    widget.onAddProfilePhoto ?? (_) => widget.onOpenProfile(),
+                onAddFriend: widget.onOpenFriends,
+                onOpenServers: _openServers,
+                onRecordVoice: widget.onCreateMoment,
+                onFollow: _followDestination ?? _openServers,
               ),
             ),
             _Rail(

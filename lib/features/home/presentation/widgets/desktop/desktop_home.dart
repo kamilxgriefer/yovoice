@@ -11,7 +11,9 @@ import 'package:yovoice/features/clubs/data/services/club_chat_service.dart';
 import 'package:yovoice/features/clubs/data/services/club_service.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
+import 'package:yovoice/features/home/data/first_steps_store.dart';
 import 'package:yovoice/features/home/data/services/home_feed_service.dart';
+import 'package:yovoice/features/home/presentation/widgets/shared/home_first_steps_card.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_friend_tile.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_greeting_header.dart';
 import 'package:yovoice/features/home/presentation/widgets/shared/home_live_now.dart';
@@ -84,6 +86,10 @@ class DesktopHome extends StatefulWidget {
     this.presenceService,
     this.trailingContent,
     this.isVisible,
+    this.contentEnabled = false,
+    this.onOpenContent,
+    this.onAddProfilePhoto,
+    this.firstStepsStore,
     super.key,
   });
 
@@ -126,6 +132,22 @@ class DesktopHome extends StatefulWidget {
   final Widget? trailingContent;
   final ValueListenable<bool>? isVisible;
 
+  /// Whether Treści (Premium Pages) exists for the account: the "Zacznij
+  /// tutaj" card lists its fifth step (follow a Page or creator) only then.
+  /// Null while the shell cannot say yet (the Pages check is still out, or
+  /// the guided tour has not had its turn) — the card waits.
+  final bool? contentEnabled;
+
+  /// The Treści destination, where the card's follow step leads.
+  final VoidCallback? onOpenContent;
+
+  /// Where the card's "add a profile photo" step leads (the profile editor).
+  /// Null falls back to [onOpenProfile].
+  final ValueChanged<UserProfile>? onAddProfilePhoto;
+
+  /// Test seam for the card's local dismissal memory.
+  final FirstStepsStore? firstStepsStore;
+
   static const double twoColumnThreshold = 1000;
 
   @override
@@ -139,6 +161,7 @@ class _DesktopHomeState extends State<DesktopHome> {
   final _quickActionsKey = GlobalKey();
   final _placesKey = GlobalKey();
   final _recordKey = GlobalKey();
+  final _firstStepsKey = GlobalKey();
 
   Stream<List<FriendUser>>? _friends;
   Stream<UserProfile>? _profile;
@@ -152,6 +175,10 @@ class _DesktopHomeState extends State<DesktopHome> {
   final Map<String, Stream<String>> _recentChatPhotoStreams = {};
 
   VoidCallback get _openServers => widget.onOpenServers ?? widget.onSeeAllRooms;
+
+  /// Where "follow a Page or creator" leads: Treści, else Find creators.
+  VoidCallback? get _followDestination =>
+      widget.onOpenContent ?? widget.onFindCreators;
 
   @override
   void initState() {
@@ -361,6 +388,32 @@ class _DesktopHomeState extends State<DesktopHome> {
       key: _recordKey,
       child: HomeRecordMomentCard(onCreateMoment: widget.onCreateMoment),
     );
+    // "Zacznij tutaj" (firstSteps A). With two columns it heads the secondary
+    // column, above the record card; in one column it sits directly under
+    // the greeting, above the friends row, as on phones and tablets. One
+    // keyed host, so its state survives the move between the two layouts.
+    // An empty box while it has nothing true to show.
+    final openProfile = widget.onOpenProfile ?? widget.onViewAllFriends;
+    final firstSteps = HomeFirstSteps(
+      key: _firstStepsKey,
+      userId: widget.currentUserId,
+      profile: _profile,
+      friendsSnapshot: friendSnapshot,
+      serversSnapshot: serverSnapshot,
+      contentEnabled: _followDestination == null
+          ? false
+          : widget.contentEnabled,
+      profileMediaService: widget.profileMediaService,
+      store: widget.firstStepsStore,
+      padding: twoColumns
+          ? const EdgeInsets.only(bottom: AppRhythm.item)
+          : EdgeInsets.zero,
+      onAddPhoto: widget.onAddProfilePhoto ?? (_) => openProfile(),
+      onAddFriend: widget.onViewAllFriends,
+      onOpenServers: _openServers,
+      onRecordVoice: widget.onCreateMoment,
+      onFollow: _followDestination ?? _openServers,
+    );
     final chatsSection = ClipRect(
       key: _chatsKey,
       child: Column(
@@ -451,6 +504,7 @@ class _DesktopHomeState extends State<DesktopHome> {
               widget.onOpenNotifications ?? widget.onSeeAllChats,
           onOpenProfile: widget.onOpenProfile ?? widget.onViewAllFriends,
         ),
+        if (!twoColumns) firstSteps,
         peopleSection,
         if (twoColumns)
           Row(
@@ -476,6 +530,7 @@ class _DesktopHomeState extends State<DesktopHome> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     const SizedBox(height: AppRhythm.section),
+                    firstSteps,
                     recordCard,
                     chatsSection,
                   ],
