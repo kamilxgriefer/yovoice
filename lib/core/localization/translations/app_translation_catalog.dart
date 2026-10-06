@@ -6,6 +6,7 @@ import 'translations_feed_surface_release.dart';
 import 'translations_voice_time_footer.dart';
 import 'translations_language_names.dart';
 import 'translations_mobile_navigation.dart';
+import 'translations_page_delete.dart';
 import 'translations_pages.dart';
 import 'translations_notification_engagement.dart';
 import 'translations_moments_creation.dart';
@@ -239,6 +240,7 @@ const appTranslationKeys = <String>{
   ...notificationEngagementTranslationKeys,
   ...vipLikersTranslationKeys,
   ...pagesTranslationKeys,
+  ...pageDeleteTranslationKeys,
 };
 
 const _retiredServerSurfaceTranslationKeys = <String>{
@@ -298,6 +300,7 @@ final appTranslations = <String, Map<String, String>>{
         ...notificationEngagementTranslations[entry.key]!,
         ...vipLikersTranslations[entry.key]!,
         ...pagesTranslations[entry.key]!,
+        ...pageDeleteTranslations[entry.key]!,
         ...localizedExtendedLanguageNames[entry.key]!,
       }),
     ),

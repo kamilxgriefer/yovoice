@@ -22,6 +22,14 @@
 //                    last report resolved (moderation sets purgeAt to now) or
 //                    90 days passed. The post, its likes and comments and its
 //                    media (jobs released) go.
+//   4b. pageDeletion (ADR-236, pages/deletion.js) an owner's Page deletion
+//                    and "delete all posts": the 3-day reminder bell row, the
+//                    purge of a deletion whose 30 days passed (or that the
+//                    owner asked to run now): posts, follower edges, storage,
+//                    records, then the Page with its memory row; due clear
+//                    jobs; expired memory rows. BEFORE the job slices, so the
+//                    media and cleanup jobs it queues go in the same run.
+//                    Bounded per record and per run, cursor-resumable.
 //   5. lapse         (package B5) hourly, cursor-resumable, <= 5 x 200 Pages:
 //                    the §2.8 transitions (pages/lapse_service.js), each in
 //                    its own re-deriving transaction.
@@ -44,7 +52,8 @@
 // only removes what is already unreferenced, expired, released or queued,
 // or (followCarry) writes follow hints that grant nothing by themselves, so
 // the worker keeps running with the kill switch on (an owner's delete is a
-// safety action). With nothing to do it costs one empty query per slice.
+// safety action, and so is deleting a whole Page). With nothing to do it
+// costs one empty query per slice (four for pageDeletion).
 
 const { Timestamp } = require("firebase-admin/firestore");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
@@ -65,6 +74,7 @@ const { pageCommentNotificationId } = require("./engagement_contract");
 const { createPagesAccountDeletion } = require("./account_deletion");
 const { createPagesLapseService } = require("./lapse_service");
 const { createPagesFollowCarryService } = require("./follow_carry");
+const { createPagesDeletionService } = require("./deletion");
 
 const REGION = "europe-west1";
 const RESERVATIONS = "pagePostMediaReservations";
@@ -132,6 +142,7 @@ function createPagesMaintenanceService({
   lapse = null,
   deletion = null,
   followCarry = null,
+  pageDeletion = null,
 }) {
   if (!firestore?.doc || !storage?.deleteObject || !storage?.getMetadata ||
       !storage?.listObjects || typeof TimestampImpl?.fromMillis !== "function" ||
@@ -152,6 +163,10 @@ function createPagesMaintenanceService({
   });
   const followCarryService = followCarry ?? createPagesFollowCarryService({
     firestore, TimestampImpl, clock, logger,
+  });
+  // ADR-236: the same stages and the same Storage adapter this worker uses.
+  const pageDeletionService = pageDeletion ?? createPagesDeletionService({
+    firestore, storage, stages: deletionService, TimestampImpl, clock, logger,
   });
 
   // ------------------------------------------------ evidence retention
@@ -463,6 +478,9 @@ function createPagesMaintenanceService({
       ["reservations", () => expireReservations()],
       // Before the job slices, so released media goes in the same run.
       ["evidenceRetention", () => purgeDueEvidence()],
+      // Before the job slices too: a purged Page's media and post cleanup
+      // jobs are worked off in this run (ADR-236).
+      ["pageDeletion", () => pageDeletionService.sweep()],
       ["deletionJobs", () => processDeletionJobs()],
       ["cleanupJobs", () => processCleanupJobs()],
       ["lapse", () => lapseService.sweep()],

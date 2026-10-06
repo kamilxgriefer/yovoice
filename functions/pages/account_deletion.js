@@ -29,12 +29,35 @@
 // Likes the account gave stay (as in ADR-230); reports it filed are re-keyed
 // by the existing records step; reports ABOUT its content keep their
 // snapshots.
+//
+// The same stages serve an OWNER'S Page deletion and "delete all posts"
+// (ADR-236, pages/deletion.js), through three options that default to the
+// account-deletion behaviour above:
+//
+//   reason          the job reason ("accountDeleted" | "pageDeleted" |
+//                   "postsCleared"); a retained tombstone's retention row
+//                   says "accountDeleted" for an account and "ownerDelete"
+//                   for an owner's own deletion;
+//   ownerDelete     the account SURVIVES, so the post follows the rule of a
+//                   single owner delete (posts.js): a held or removed post
+//                   becomes a 90-day tombstone too, an existing tombstone is
+//                   left to its own retention row, and the Page's postCount,
+//                   pin and `listed` move in the same transaction;
+//   before          only posts created at or before this instant (a post
+//                   published after "delete all posts" is not touched).
+//
+// processComments is NOT part of a Page deletion: the comments the owner
+// wrote on other Pages belong to the account, which stays.
 
 const { FieldPath, Timestamp } = require("firebase-admin/firestore");
 const defaultLogger = require("firebase-functions/logger");
 
 const { timestampMillis, transactionGetAll } = require("../integrity/guards");
-const { PAGE_COMMENT_ID_PATTERN } = require("./contract");
+const {
+  PAGE_COMMENT_ID_PATTERN,
+  canonicalPageOrNull,
+  derivePageListed,
+} = require("./contract");
 const { pageCommentNotificationId, pageCommentSourcePath } = require("./engagement_contract");
 const {
   GENERATION_PATTERN,
@@ -107,16 +130,27 @@ function createPagesAccountDeletion({
 
   // ---------------------------------------------------------- content
 
-  async function removePage(uid) {
-    const { now } = timing();
+  /// The three options serve an owner's Page deletion (ADR-236), which
+  /// removes the Page, writes its memory and drops its own record in ONE
+  /// transaction; account deletion passes none of them.
+  ///   `reads`   extra references, read with the Page before any write;
+  ///   `guard(snapshots, {pageSnapshot})`   false = NOTHING is written and
+  ///             the Page stays (the caller's authority to delete is gone:
+  ///             a second runner or a retry after a lost response);
+  ///   `also(transaction, {pageSnapshot, snapshots, nowMs, now})` queues
+  ///             WRITES ONLY; it runs whether or not the Page still exists.
+  async function removePage(uid, { reads = [], guard = null, also = null } = {}) {
+    const { nowMs, now } = timing();
     const pageRef = db.doc(`pages/${uid}`);
     return db.runTransaction(async (transaction) => {
-      const [pageSnapshot, visibilitySnapshot] = await transactionGetAll(
-        transaction, pageRef, pageVisibilityReference(db),
+      const [pageSnapshot, visibilitySnapshot, ...snapshots] = await transactionGetAll(
+        transaction, pageRef, pageVisibilityReference(db), ...reads,
       );
+      if (typeof guard === "function" && guard(snapshots, { pageSnapshot }) !== true) return false;
       applyPageVisibilityInTransaction(transaction, {
         db, snapshot: visibilitySnapshot, pageId: uid, page: null, now, logger, safetyAction: true,
       });
+      if (typeof also === "function") also(transaction, { pageSnapshot, snapshots, nowMs, now });
       if (!pageSnapshot.exists) return false;
       transaction.delete(pageRef);
       return true;
@@ -124,16 +158,21 @@ function createPagesAccountDeletion({
   }
 
   /// One post of the account: hard delete, or a retained tombstone.
-  async function retirePost(uid, postId) {
+  async function retirePost(uid, postId, { reason = "accountDeleted", ownerDelete = false } = {}) {
     const { nowMs, now } = timing();
     const postRef = db.doc(`pagePosts/${postId}`);
+    const pageRef = db.doc(`pages/${uid}`);
+    const retentionReason = reason === "accountDeleted" ? "accountDeleted" : "ownerDelete";
     return db.runTransaction(async (transaction) => {
-      const [postSnapshot, reportsSnapshot, retentionSnapshot] = await transactionGetAll(
-        transaction,
+      const references = [
         postRef,
         db.doc(`pagePostOpenReports/${postId}`),
         db.doc(`pageEvidenceRetention/${postId}`),
-      );
+      ];
+      // The surviving Page's counters move with the post (posts.js delete).
+      if (ownerDelete) references.push(pageRef, pageVisibilityReference(db));
+      const [postSnapshot, reportsSnapshot, retentionSnapshot, pageSnapshot, visibilitySnapshot] =
+        await transactionGetAll(transaction, ...references);
       if (!postSnapshot.exists) return "gone";
       const post = canonicalPagePostData(postSnapshot);
       if (post === null || post.authorId !== uid) {
@@ -143,11 +182,51 @@ function createPagesAccountDeletion({
         transaction.delete(postRef);
         return "malformed";
       }
+      // An owner's earlier delete already left this tombstone with its own
+      // retention row: it is purged by that row, never sooner.
+      if (ownerDelete && post.status === "deleted") {
+        if (canonicalPageEvidenceRetention(retentionSnapshot) === null) {
+          transaction.set(db.doc(`pageEvidenceRetention/${postId}`), pageEvidenceRetentionDocument({
+            postId,
+            pageId: uid,
+            reason: retentionReason,
+            now,
+            purgeAt: TimestampImpl.fromMillis(nowMs + PAGE_EVIDENCE_RETENTION_MS),
+          }));
+        }
+        return "kept";
+      }
       const reports = pagePostOpenReports(reportsSnapshot, postId);
       // Only an OPEN report (or its evidence hold) keeps a post: a held
       // post whose reports all closed has nothing left to release its jobs.
       const underReview = post.evidenceHold === true || reports.count > 0;
-      if (underReview) {
+      // A surviving account's held or removed post is a tombstone as well
+      // (the single-delete rule): "delete everything" must not be a way
+      // around the 90-day evidence window.
+      const tombstone = underReview || (ownerDelete && post.status !== "published");
+      if (ownerDelete) {
+        const page = canonicalPageOrNull(pageSnapshot, uid);
+        if (pageSnapshot.exists && page === null) {
+          logger.error("pages malformed page on a safety action", { reason: "postsDelete" });
+        }
+        if (page !== null) {
+          const counted = post.status === "published";
+          if (counted && page.postCount < 1) logger.error("pages post count underflow", {});
+          const changes = {};
+          if (counted) changes.postCount = Math.max(0, page.postCount - 1);
+          if (page.pinnedPostId === post.postId) changes.pinnedPostId = null;
+          if (Object.keys(changes).length > 0) {
+            const next = { ...page, ...changes, updatedAt: now };
+            next.listed = derivePageListed(next);
+            transaction.update(pageRef, { ...changes, listed: next.listed, updatedAt: now });
+            applyPageVisibilityInTransaction(transaction, {
+              db, snapshot: visibilitySnapshot, pageId: uid, page: next, now, logger,
+              safetyAction: true,
+            });
+          }
+        }
+      }
+      if (tombstone) {
         if (post.status !== "deleted") {
           transaction.update(postRef, {
             status: "deleted",
@@ -158,12 +237,14 @@ function createPagesAccountDeletion({
             },
           });
         }
-        const heldBy = reports.lastReportId ?? PAGE_MODERATION_HOLD;
+        // Bytes are HELD only while a report is open; a held or removed
+        // post with no open report gets unheld jobs (posts.js delete).
+        const heldBy = underReview ? (reports.lastReportId ?? PAGE_MODERATION_HOLD) : null;
         for (const entry of post.media) {
           transaction.set(db.doc(`pagePostMediaDeletionJobs/${entry.mediaId}`), pageMediaDeletionJob({
             storagePath: entry.storagePath,
             generation: entry.generation,
-            reason: "accountDeleted",
+            reason,
             heldBy,
             now,
           }));
@@ -172,6 +253,7 @@ function createPagesAccountDeletion({
           transaction.set(db.doc(`pageEvidenceRetention/${postId}`), pageEvidenceRetentionDocument({
             postId,
             pageId: uid,
+            reason: retentionReason,
             now,
             purgeAt: TimestampImpl.fromMillis(nowMs + PAGE_EVIDENCE_RETENTION_MS),
           }));
@@ -180,13 +262,13 @@ function createPagesAccountDeletion({
       }
       transaction.delete(postRef);
       transaction.set(db.doc(`pagePostCleanupJobs/${postId}`), pagePostCleanupJob({
-        postId, pageId: uid, reason: "accountDeleted", now,
+        postId, pageId: uid, reason, now,
       }));
       for (const entry of post.media) {
         transaction.set(db.doc(`pagePostMediaDeletionJobs/${entry.mediaId}`), pageMediaDeletionJob({
           storagePath: entry.storagePath,
           generation: entry.generation,
-          reason: "accountDeleted",
+          reason,
           heldBy: null,
           now,
         }));
@@ -197,16 +279,24 @@ function createPagesAccountDeletion({
     });
   }
 
-  async function processPosts(uid, after) {
+  /**
+   * One page of the account's posts, newest first, keyset-paged by
+   * (createdAt, id). `options.before` (epoch ms) starts the walk at posts
+   * created at or before that instant; the other options go to retirePost.
+   */
+  async function processPosts(uid, after, options = {}) {
+    const { before = null, ...retire } = options;
     let query = PAGES_DELETION_QUERIES.authorPosts(db, uid).limit(limits.posts);
     if (after && Number.isSafeInteger(after.t) && typeof after.id === "string") {
       query = query.startAfter(TimestampImpl.fromMillis(after.t), after.id);
+    } else if (Number.isSafeInteger(before)) {
+      query = query.startAt(TimestampImpl.fromMillis(before));
     }
     const snapshot = await query.get();
-    const counts = { deleted: 0, retained: 0, malformed: 0 };
+    const counts = { deleted: 0, retained: 0, malformed: 0, kept: 0 };
     let last = null;
     for (const document of snapshot.docs) {
-      const outcome = await retirePost(uid, document.id);
+      const outcome = await retirePost(uid, document.id, retire);
       if (outcome in counts) counts[outcome] += 1;
       const createdAtMs = timestampMillis(document.data()?.createdAt);
       if (createdAtMs !== null) last = { t: createdAtMs, id: document.id };

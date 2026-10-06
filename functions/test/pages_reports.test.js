@@ -31,6 +31,7 @@ const {
   DAY_MS,
   clearActivation,
   commentDoc,
+  createInput,
   freshUid,
   newCommentId,
   newPostId,
@@ -44,6 +45,8 @@ const {
 } = require("./helpers/pages_fixture");
 const { FakeBucket } = require("./helpers/pages_media_fixture");
 const { createPagesMaintenanceService } = require("../pages/maintenance");
+const { createPagesDeletionService } = require("../pages/deletion");
+const { createPagesLifecycleService } = require("../pages/lifecycle");
 
 const db = getFirestore();
 const runModerate = moderateReport.run ?? moderateReport;
@@ -599,6 +602,97 @@ test("hiding is a safety write: a malformed visibility index never keeps reporte
     if (saved.exists) await visibilityRef.set(saved.data());
     else await visibilityRef.delete();
   }
+});
+
+// ------------------------------------------- a Page its owner deleted
+
+test("suspending a Page its owner already deleted is remembered, and a lift clears it (ADR-236)",
+  async () => {
+    // Deleting a reported Page ("delete now") must not be a way around the
+    // decision: with pages/{uid} gone, the suspension lands in pageMemory
+    // and the next Page this account creates starts suspended.
+    const moderator = await seedModerator();
+    const { pageId, reporter } = await scene();
+    const second = freshUid("rrep");
+    await seedAccount(db, second, nowMs);
+    const firstReport = await fileReport(reporter, reportInput({
+      targetType: "page", pageId, reason: "impersonation" }));
+    const secondReport = await fileReport(second, reportInput({
+      targetType: "page", pageId, reason: "scam" }));
+
+    const deletion = createPagesDeletionService({
+      firestore: db,
+      storage: {
+        async getMetadata() { return { generation: "1700000000000009" }; },
+        async deleteObject() {},
+        async listObjects() { return { objects: [], nextPageToken: null }; },
+      },
+      TimestampImpl: Timestamp,
+      clock: () => nowMs,
+      logger: silentLogger(),
+    });
+    await deletion.managePageDeletionV1(request(pageId, { op: "request" }));
+    let state = await deletion.managePageDeletionV1(request(pageId, { op: "purgeNow" }));
+    for (let run = 0; run < 3 && state.pageExists; run += 1) {
+      await deletion.sweep();
+      state = await deletion.readState(pageId);
+    }
+    assert.equal(state.pageExists, false);
+    const before = await dataOf(`pageMemory/${pageId}`);
+    assert.equal(before.suspension, null);
+
+    // Lifting what was never suspended is still "no such Page".
+    await expectError(runModerate(moderatorRequest(moderator, {
+      reportId: firstReport, action: "liftPageSuspension" })), "failed-precondition");
+
+    await runModerate(moderatorRequest(moderator, { reportId: firstReport, action: "suspendPage" }));
+    assert.equal(await dataOf(`pages/${pageId}`), null, "no Page is created by a suspension");
+    let memory = await dataOf(`pageMemory/${pageId}`);
+    assert.deepEqual(Object.keys(memory).sort(), [
+      "deletedAt", "expiresAt", "pageId", "recreateAllowedAt", "schemaVersion", "suspension",
+      "updatedAt",
+    ]);
+    assert.equal(memory.suspension.suspensionReason, "impersonation");
+    assert.equal(memory.expiresAt, null, "a remembered suspension never expires by time");
+    assert.equal(memory.recreateAllowedAt.toMillis(), before.recreateAllowedAt.toMillis(),
+      "the cooldown is not restarted");
+    const told = (await db.collection(`users/${pageId}/notifications`).get()).docs
+      .map((d) => d.data().targetLabel);
+    assert.equal(told.includes("Your Page was suspended: impersonation"), true);
+    // The memory slice keeps it, cooldown or not.
+    nowMs += 40 * DAY_MS;
+    assert.equal((await deletion.expireMemory()).removed, 0);
+
+    // A lift clears the remembered suspension; the row then expires.
+    await runModerate(moderatorRequest(moderator, {
+      reportId: firstReport, action: "liftPageSuspension" }));
+    memory = await dataOf(`pageMemory/${pageId}`);
+    assert.equal(memory.suspension, null);
+    assert.equal(memory.expiresAt.toMillis(), memory.recreateAllowedAt.toMillis());
+
+    // Suspended again (the second report): the next Page starts suspended.
+    await runModerate(moderatorRequest(moderator, { reportId: secondReport, action: "suspendPage" }));
+    assert.equal((await dataOf(`pageMemory/${pageId}`)).suspension.suspensionReason, "scam");
+    await setActivation(db);
+    const lifecycle = createPagesLifecycleService({
+      firestore: db, TimestampImpl: Timestamp, clock: () => nowMs, logger: silentLogger(),
+    });
+    await lifecycle.managePageV1(request(pageId, createInput()));
+    const page = await dataOf(`pages/${pageId}`);
+    assert.equal(page.suspended, true);
+    assert.equal(page.suspensionReason, "scam");
+    assert.equal(page.listed, false);
+    assert.equal((await dataOf("pageVisibility/v1")).notViewable[pageId], "suspended");
+    assert.equal(await dataOf(`pageMemory/${pageId}`), null, "the suspension lives in the Page again");
+  });
+
+test("a suspension that finds neither the Page nor the account writes nothing", async () => {
+  const moderator = await seedModerator();
+  const { pageId, reporter } = await scene();
+  const reportId = await fileReport(reporter, reportInput({ targetType: "page", pageId }));
+  await Promise.all([db.doc(`pages/${pageId}`).delete(), db.doc(`users/${pageId}`).delete()]);
+  await runModerate(moderatorRequest(moderator, { reportId, action: "suspendPage" }));
+  assert.equal(await dataOf(`pageMemory/${pageId}`), null, "a deleted account leaves no residue");
 });
 
 // --------------------------------------------------------------- script

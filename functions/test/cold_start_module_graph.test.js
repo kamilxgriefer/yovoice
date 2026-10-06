@@ -90,7 +90,8 @@ function inspectColdStart() {
   return inspection;
 }
 
-// Every export of functions/index.js, sorted. 296 names (293 + the three
+// Every export of functions/index.js, sorted. 297 names (296 + the one
+// ADR-236 Page deletion export below; 296 = 293 + the three
 // ADR-233 Premium Pages B5 exports below; 293 = 291 + the two
 // ADR-233 Premium Pages B4 engagement exports below; 291 = 286 + the five
 // ADR-233 Premium Pages B2 post exports below; 286 = 282 + the four
@@ -147,6 +148,10 @@ function inspectColdStart() {
 // the capability triggers onPageCapabilityEntitlementChanged and
 // onPageCapabilityGrantChanged (one plain read and an early return for an
 // account without a Page) join it; none is warm or a keep-warm target.
+// 2026-10-03 (ADR-236, Page deletion, + 1): managePageDeletionV1 (status,
+// request, restore, purgeNow, clearPosts; only `restore` reads
+// appConfig/pagesV1, the rest are a read of the caller's own state or safety
+// actions) joins it; it is not warm, and its purge runs in pagesMaintenance.
 // `deliverBugReportV1` is NOT in it: both of its
 // delivery channels are source-gated off in index.js. Extending this list is
 // the deliberate review step the header describes, not a drive-by edit.
@@ -282,6 +287,7 @@ const EXPORT_NAMES = Object.freeze([
   "listReportAuditTrail",
   "listServerChannelMessageReactorsV1",
   "listVoiceMomentLikersV1",
+  "managePageDeletionV1",
   "managePagePostV1",
   "managePageV1",
   "markDirectConversationRead",

@@ -131,6 +131,11 @@ const SERVER_ONLY = Object.freeze([
   ['pageMaintenanceState/lapseSweep', { schemaVersion: 1, phase: 'active', afterId: null }],
   [`pageEvidenceRetention/${POST}`, { schemaVersion: 1, postId: POST, pageId: OWNER, reason: 'accountDeleted' }],
   ['appConfig/pagesV1', { schemaVersion: 1, readAccess: 'all', writeAccess: 'all' }],
+  // ADR-236: an owner's Page deletion, "delete all posts" and the memory of
+  // a deleted Page. Keyed by the OWNER's uid, and still not the owner's.
+  [`pageDeletions/${OWNER}`, { schemaVersion: 1, pageId: OWNER, state: 'pending' }],
+  [`pagePostClearJobs/${OWNER}`, { schemaVersion: 1, pageId: OWNER, cursor: null }],
+  [`pageMemory/${OWNER}`, { schemaVersion: 1, pageId: OWNER, suspension: null }],
 ]);
 
 function client(uid) {

@@ -1379,7 +1379,8 @@ badge VIP bit, reports, the staff moderation arms and account deletion
   `pagePostMediaLeases`, `pagePostBudgets`, `pagePostMediaDeletionJobs`,
   `pagePostCleanupJobs` and `pageMaintenanceState` (B2),
   `pagePostOpenReports`, `pageStaffMediaAudit`, `pageAdultRefusals` and
-  `pageEvidenceRetention` (B5) are
+  `pageEvidenceRetention` (B5), and `pageDeletions`, `pagePostClearJobs` and
+  `pageMemory` (ADR-236) are
   `allow read, write: if false`. `pages/{uid}` allows only the owner's `get`
   while `isActiveAccount()`; every list, create, update and delete is denied,
   alone, batched and in a transaction. No `{path=**}` rule covers `likes`, so
@@ -1738,6 +1739,99 @@ evidence), then at most 90 days as a tombstone; the Day-30 hide has no
 advance P2B notice beyond Day 23 (counsel); auto-hide at 3 reports is
 deferred to v1.1; the `page`-report existence oracle above; a `page` report
 snapshots post TEXT but places no evidence hold on the Page's media.
+
+### Page deletion (2026-10-03, ADR-236, source only, NOT deployed)
+
+An owner can delete a Page, or all of its posts, without deleting the
+account (`functions/pages/deletion.js`, callable `managePageDeletionV1`,
+worker slice `pageDeletion` of `pagesMaintenance`). It amends ADR-233, which
+had no deletion.
+
+- **Ownership is the uid.** Every op acts on `pages/{auth.uid}` only; the
+  input is exactly `{op}` and carries no page id, so there is nothing to
+  point at somebody else's Page.
+- **Safety actions.** `request` (pause + the 30-day record, ONE
+  transaction, reusing `applyPagePauseInTransaction`), `purgeNow` and
+  `clearPosts` read no switch, no capability, no mute and no e-mail
+  verification, and tolerate a malformed Page (logged): the kill switch or a
+  lapse must never trap an owner who wants their content gone. `purgeNow`
+  only ever follows a `request` (the typed-name confirmation), so it cannot
+  be the first step. They are idempotent; the first request's date stands.
+- **Restore is a gated write.** Activation (write), `pages.deletionRestore`
+  (10/h), active account, no mute, verified e-mail, live capability. It
+  removes the record and un-pauses only a Page that was running before the
+  request and still passes the resume rules (public profile, allowed name);
+  a suspended Page is left exactly as the moderator put it. `managePageV1
+  resume` cancels a PENDING deletion in its own transaction (builds 40/41
+  show such a Page as paused), and `update` / `resume` answer
+  `pageNotFound` once the purge started, so a Page can never be resumed
+  into a purge.
+- **Order is the safety argument.** posts → follower edges → storage →
+  records → Page. `pages/{uid}` exists (paused) until the last follower
+  edge is gone, so every "is this account a Page?" check stays closed while
+  an edge remains: the D13 DM exemption (`messaging/direct_integrity.js`),
+  the follower achievement, the Creator-audience refusal (a Page's follower
+  edges never become publicly listable) and the LIVE fan-out. The removal
+  is the account pipeline's own `removeFollowEdges` (extracted to
+  `functions/account/follow_edges.js`): edge, mirror, the follower's
+  counter and Treści hint in one transaction; the surviving owner's "X
+  followed you" bell rows go with each edge and `followerCount` is settled
+  to 0 only when the collection is verified empty in the same transaction.
+- **Evidence outlives the Page, privately.** A post with an open report or
+  an evidence hold becomes a tombstone with HELD bytes; a held or removed
+  post becomes one too (the single owner-delete rule, so "delete
+  everything" is no way around it); an existing tombstone keeps its own
+  date. Each has a `pageEvidenceRetention` row, purged when the last report
+  resolves or after 90 days. Readers never see a tombstone. The owner's
+  comments on other Pages are NOT touched (they belong to the account).
+- **Delete + re-create cannot launder a suspension.** The transaction that
+  removes `pages/{uid}` writes `pageMemory/{uid}`: the 7-day cooldown and,
+  when the Page was suspended (read from the raw document, even a malformed
+  one), the suspension. `managePageV1 create` reads it in its transaction:
+  cooldown → `pageRecreateCooldown`; a remembered suspension → the new Page
+  starts suspended and the memory is consumed; a malformed memory →
+  `data-loss` (fail closed). A memory with a suspension never expires.
+- **A suspension that arrives AFTER the deletion is remembered too.** The
+  staff arm (`pages/moderation.js`) reads `pageMemory/{pageId}` in the
+  moderator's transaction: `suspendPage` (or `removeAndResolve` on a Page
+  report) that finds no `pages/{uid}` but a surviving account writes the
+  suspension into the memory (the cooldown dates are kept, `expiresAt`
+  null, the owner gets the `pageSuspended` statement of reasons), and
+  `liftPageSuspension` clears a remembered one. So "delete now" on a
+  reported Page is not a way around the decision. A deleted account leaves
+  nothing (no row is written when `users/{uid}` is gone).
+- **The last step is authorised inside its own transaction.** Removing
+  `pages/{uid}` re-reads `pageDeletions/{uid}` in the same transaction and
+  writes only while it is still `purging`. A second runner (`purgeNow`'s
+  inline pass beside the worker) or the SDK retrying a commit whose response
+  was lost finds the record gone and writes NOTHING: it can neither rewrite
+  the memory from a Page that is no longer there (which would drop the
+  remembered suspension) nor delete a Page it holds no record for. An
+  existing memory's suspension is carried over; a malformed memory is never
+  replaced.
+- **Bounded work.** Per run: 5 deletions x 6 rounds, 5 clear jobs x 5
+  rounds, 20 reminders, 50 memory rows, and a 120 s budget after which the
+  slice stops picking up further records (they are due again in 10
+  minutes), so large Pages cannot starve the slices behind it.
+- **Server-only stores.** `pageDeletions`, `pagePostClearJobs` and
+  `pageMemory` are `allow read, write: if false` (explicit, with the other
+  Pages stores; `firestore-tests/pages_rules.test.js` covers owner, stranger
+  and staff). The owner learns the state only through the callable's own
+  state shape; `pages/{uid}` keeps its exact 26 keys, so builds 40/41 keep
+  parsing it. Account deletion removes all three (`UID_KEYED_DOCUMENTS`).
+- **A malformed deletion record is never acted on.** The worker parks and
+  alerts; a purge is irreversible. Log lines carry counts and codes only.
+- **Privacy.** The state shape is the caller's own; `status` is rate limited
+  (60/min). The reminder is a `pageLapse` bell row (`lapsePhase:
+  "deletionSoon"`) with an English label for old builds, no push.
+
+**Residual (accepted in ADR-236):** for up to one worker interval (10
+minutes) after "delete all posts" on a large Page, other viewers can still
+read posts the owner no longer sees. During the 30 days the Page's contact
+details and posts still exist (non-public): the screen says so and offers
+"Usuń teraz, nie czekaj". A remembered suspension keeps a `pageMemory` row
+(uid, dates, reason key) for as long as the account exists and the
+suspension stands; account deletion removes it.
 
 ## Private media rollout status (Build 19 tester deployment complete)
 

@@ -311,9 +311,14 @@ test("run: every slice reports, and one failing slice never stops the next", asy
   const h = harness();
   const results = await h.maintenance.run();
   assert.deepEqual(Object.keys(results), [
-    "reservations", "evidenceRetention", "deletionJobs", "cleanupJobs", "lapse", "followCarry",
-    "orphans",
+    "reservations", "evidenceRetention", "pageDeletion", "deletionJobs", "cleanupJobs", "lapse",
+    "followCarry", "orphans",
   ]);
+  // ADR-236: an owner's Page deletion runs BEFORE the job slices (the media
+  // and cleanup jobs it queues go in the same run); its four parts report.
+  assert.deepEqual(Object.keys(results.pageDeletion),
+    ["reminders", "deletions", "clearJobs", "memory"]);
+  assert.equal(typeof results.pageDeletion.deletions.processed, "number");
   // Package B5: the lapse slice runs hourly; with no activation document the
   // brake is on (downgrades frozen) and the slice still reports.
   assert.equal(typeof results.lapse.ran, "boolean");

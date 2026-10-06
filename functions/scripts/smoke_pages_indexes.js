@@ -24,7 +24,9 @@
 // slice, the Page report's recent-posts snapshot (pages/reports.js
 // PAGES_REPORT_QUERIES) and the operator moderation list; and (ADR-234) the
 // follower carry-over worker's due-job and followers queries
-// (pages/follow_carry.js PAGE_FOLLOW_CARRY_QUERIES). Each shape runs a
+// (pages/follow_carry.js PAGE_FOLLOW_CARRY_QUERIES); and (ADR-236) the four
+// Page deletion worker queries (pages/deletion.js
+// PAGES_DELETION_WORK_QUERIES). Each shape runs a
 // first page and a startAfter page. The ids need not exist: Firestore
 // refuses a query with no serving index with FAILED_PRECONDITION whatever
 // the data, so a synthetic id still proves the index. It needs no activation
@@ -45,6 +47,7 @@ const { PAGES_DELETION_QUERIES } = require("../pages/account_deletion");
 const { PAGE_REPORT_TARGET_TYPES } = require("../pages/report_contract");
 const { PAGES_REPORT_QUERIES } = require("../pages/reports");
 const { PAGE_FOLLOW_CARRY_QUERIES } = require("../pages/follow_carry");
+const { PAGES_DELETION_WORK_QUERIES } = require("../pages/deletion");
 
 const EXPECTED_PROJECT = "yovoice-ec54a";
 const SYNTHETIC_PAGE = "pages-index-smoke-synthetic";
@@ -173,6 +176,16 @@ function smokeTargets(args) {
       (db) => pageTwice(PAGE_FOLLOW_CARRY_QUERIES.dueJobs(db, at), [at])],
     ["follow carry-over followers (users/{P}/followers, __name__ asc)",
       (db) => pageTwice(PAGE_FOLLOW_CARRY_QUERIES.followers(db, pageId), [SYNTHETIC_PAGE])],
+    // ADR-236: an owner's Page deletion (pages/deletion.js), four
+    // single-field shapes.
+    ["page deletions due (dueAt <=, dueAt asc)",
+      (db) => pageTwice(PAGES_DELETION_WORK_QUERIES.dueDeletions(db, at), [at])],
+    ["page deletion reminders (reminderAt <=, reminderAt asc)",
+      (db) => pageTwice(PAGES_DELETION_WORK_QUERIES.dueReminders(db, at), [at])],
+    ["page post clear jobs (nextAttemptAt <=, nextAttemptAt asc)",
+      (db) => pageTwice(PAGES_DELETION_WORK_QUERIES.dueClearJobs(db, at), [at])],
+    ["page memory expiry (expiresAt <=, expiresAt asc)",
+      (db) => pageTwice(PAGES_DELETION_WORK_QUERIES.expiredMemory(db, at), [at])],
   ];
 }
 

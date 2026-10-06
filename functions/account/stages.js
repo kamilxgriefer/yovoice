@@ -34,6 +34,7 @@
 //     retained set names explicitly.
 
 const { isValidOpaqueUid } = require("../achievements/identity");
+const { createFollowEdgeRemover } = require("./follow_edges");
 const {
   BUDGETS: SERVER_MESSAGE_MEDIA_BUDGETS,
   GENERATION_PATTERN,
@@ -130,6 +131,12 @@ const UID_KEYED_DOCUMENTS = Object.freeze([
   // braces: the worker also deletes a job whose Page is gone, but a deleted
   // account must leave no uid-keyed residue.
   "pageFollowCarryJobs",
+  // ADR-236: a pending Page deletion, a running "delete all posts" job and
+  // the re-create memory (cooldown, remembered suspension) of a deleted
+  // Page. The account is going, so none of them may outlive it.
+  "pageDeletions",
+  "pagePostClearJobs",
+  "pageMemory",
 ]);
 
 // Every Storage prefix owned by exactly one uid (storage.rules).
@@ -376,54 +383,13 @@ function createAccountDeletionStages({
     return snapshot.size;
   }
 
-  async function removeFollowEdges(uid, { side }) {
-    const own = side === "following" ? "following" : "followers";
-    const mirror = side === "following" ? "followers" : "following";
-    const counter = side === "following" ? "followerCount" : "followingCount";
-    // Premium Pages (ADR-234): each follower's Treści hint
-    // (pageFollowIndex/{peer}) may name this account, because a live Page
-    // follow and the carry-over at Page creation put it there. The hint
-    // goes in the same transaction as the edge, so no follower keeps the
-    // uid of a deleted account. Loaded lazily, like the Pages stages.
-    const pageHints = side === "followers" ? require("../pages/follows") : null;
-    const snapshot = await db
-      .collection("users").doc(uid).collection(own)
-      .limit(limits.edgePage).get();
-    for (const document of snapshot.docs) {
-      const peer = canonicalUid(document.id);
-      if (!peer) {
-        await document.ref.delete();
-        continue;
-      }
-      const peerReference = db.collection("users").doc(peer);
-      const indexReference = pageHints === null
-        ? null
-        : pageHints.pageFollowIndexReference(db, peer);
-      await db.runTransaction(async (transaction) => {
-        const [peerSnapshot, indexSnapshot] = indexReference === null
-          ? [await transaction.get(peerReference), null]
-          : await transaction.getAll(peerReference, indexReference);
-        transaction.delete(document.ref);
-        transaction.delete(peerReference.collection(mirror).doc(uid));
-        if (peerSnapshot.exists) {
-          const current = safeCount(peerSnapshot.data()?.[counter]);
-          transaction.update(peerReference, {
-            [counter]: Math.max(0, current - 1),
-          });
-        }
-        if (indexSnapshot?.exists) {
-          const index = pageHints.canonicalPageFollowIndex(indexSnapshot, peer);
-          if (index.pageIds.includes(uid)) {
-            transaction.set(indexReference, pageHints.pageFollowIndexDocument(
-              pageHints.pageIdsAfterUnfollow(index.pageIds, uid),
-              FieldValue.serverTimestamp(),
-            ));
-          }
-        }
-      });
-    }
-    return snapshot.size;
-  }
+  // One page of follow edges, each edge with its mirror, the peer's counter
+  // and (followers side) the peer's Treści hint in ONE transaction. Shared
+  // with Page deletion (pages/deletion.js, ADR-236), which removes a Page's
+  // followers while the account itself survives.
+  const removeFollowEdges = createFollowEdgeRemover({
+    db, FieldValue, edgePage: limits.edgePage,
+  });
 
   async function removeRequestEdges(uid, { own, mirror }) {
     const snapshot = await db

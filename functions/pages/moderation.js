@@ -8,8 +8,9 @@
 //   removeAndResolve              page                 Page suspended
 //   holdPagePost                  pagePost             published -> "held" (owner sees it with a notice)
 //   restorePagePost               pagePost             held -> published
-//   suspendPage                   any Page report      Page suspended
-//   liftPageSuspension            any Page report      suspension lifted
+//   suspendPage                   any Page report      Page suspended (a Page its owner already
+//                                                      deleted: remembered in pageMemory, ADR-236)
+//   liftPageSuspension            any Page report      suspension lifted (also a remembered one)
 //   resolve / dismiss             any Page report      resolution; a HELD post whose last
 //                                                      open report closes is restored
 //
@@ -120,10 +121,14 @@ async function applyPageReportModeration(transaction, {
       ? db.doc(`users/${target.pageId}/notifications/${pageCommentNotificationId(target.commentId)}`)
       : pageRef,
     removingComment ? db.doc(`users/${target.reportedUserId}`) : pageRef,
+    // ADR-236: the memory of a Page its owner deleted. A suspension (or its
+    // lift) that finds no Page lands there, so deleting a reported Page is
+    // never a way around the decision.
+    suspending || lifting ? db.doc(`pageMemory/${target.pageId}`) : pageRef,
   ];
   const [pageSnapshot, visibilitySnapshot, ownerSnapshot, rawPostSnapshot, rawCommentSnapshot,
-    rawReportsSnapshot, rawRetentionSnapshot, rawBellSnapshot, rawAuthorSnapshot] =
-    await transactionGetAll(transaction, ...references);
+    rawReportsSnapshot, rawRetentionSnapshot, rawBellSnapshot, rawAuthorSnapshot,
+    rawMemorySnapshot] = await transactionGetAll(transaction, ...references);
   const postSnapshot = postRef ? rawPostSnapshot : null;
   const commentSnapshot = commentRef ? rawCommentSnapshot : null;
   const post = postSnapshot ? canonicalPagePostData(postSnapshot) : null;
@@ -242,10 +247,29 @@ async function applyPageReportModeration(transaction, {
 
   if (suspending || lifting) {
     if (!pageSnapshot.exists) {
-      if (lifting) throw PAGE_ERRORS.notFound();
-      // The account (and its Page) is gone: nothing left to suspend.
-      outcome.contentRemoved = true;
-      outcome.contentAlreadyRemoved = true;
+      // ADR-236: the owner deleted the Page but the ACCOUNT is still here.
+      // The decision is kept in pageMemory/{pageId}: the next Page this
+      // account creates starts suspended (managePageV1 create), and a lift
+      // clears a remembered suspension. Loaded lazily, like the Page arm.
+      const memory = ownerSnapshot.exists ? require("./deletion") : null;
+      if (lifting) {
+        const lifted = memory !== null && memory.liftRememberedPageSuspensionInTransaction(
+          transaction,
+          { db, pageId: target.pageId, memorySnapshot: rawMemorySnapshot, now, logger },
+        );
+        if (!lifted) throw PAGE_ERRORS.notFound();
+        ownerNotice("pageSuspensionLifted", null);
+      } else {
+        const remembered = memory !== null && memory.rememberPageSuspensionInTransaction(
+          transaction,
+          { db, pageId: target.pageId, memorySnapshot: rawMemorySnapshot, reason, now, logger },
+        );
+        if (remembered) ownerNotice("pageSuspended", null);
+        // With no account left there is nothing to suspend; either way the
+        // Page itself was already removed by its owner.
+        outcome.contentRemoved = true;
+        outcome.contentAlreadyRemoved = true;
+      }
     } else {
       if (page === null && lifting) fail("data-loss", "The Page record is malformed.");
       const current = page ?? pageSnapshot.data();

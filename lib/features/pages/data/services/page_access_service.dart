@@ -26,6 +26,7 @@ class OwnPage {
     this.displayName,
     this.lapsedAt,
     this.suspensionReason,
+    this.postCount = 0,
   });
 
   final PageKind? kind;
@@ -54,6 +55,10 @@ class OwnPage {
   /// A moderator's reason key while [suspended].
   final String? suspensionReason;
 
+  /// The Page's published posts (§1.7), as "Usuń wszystkie posty" and the
+  /// "Usuń stronę" screen name them (ADR-236).
+  final int postCount;
+
   /// Publishing is possible only while the Page is active and running.
   bool get canPublish => status == 'active' && !ownerPaused && !suspended;
 
@@ -71,7 +76,8 @@ class OwnPage {
       other.linkedServerId == linkedServerId &&
       other.displayName == displayName &&
       other.lapsedAt == lapsedAt &&
-      other.suspensionReason == suspensionReason;
+      other.suspensionReason == suspensionReason &&
+      other.postCount == postCount;
 
   @override
   int get hashCode => Object.hash(
@@ -87,6 +93,7 @@ class OwnPage {
     displayName,
     lapsedAt,
     suspensionReason,
+    postCount,
   );
 }
 
@@ -210,6 +217,9 @@ class PageAccessService {
       displayName: optional(data['displayName']),
       lapsedAt: lapsedAt is Timestamp ? lapsedAt.toDate() : null,
       suspensionReason: optional(data['suspensionReason']),
+      postCount: data['postCount'] is int && (data['postCount'] as int) > 0
+          ? data['postCount'] as int
+          : 0,
     );
   }
 

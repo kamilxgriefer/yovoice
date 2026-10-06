@@ -19,6 +19,16 @@
 // `active` (§2.8 "every write path, live"); pause writes the visibility index
 // in the same transaction as the Page.
 //
+// Page deletion (ADR-236) is its own callable (pages/deletion.js); the ops
+// and the exact 4-key result here are unchanged. Two paths read its records
+// in their own transaction:
+//   * create refuses during the 7-day cooldown after a Page was deleted
+//     (`pageRecreateCooldown`) and takes over a remembered suspension from
+//     pageMemory/{uid}, so delete + re-create never erases one;
+//   * resume cancels a PENDING deletion (a build 40/41 shows such a Page as
+//     paused, and its "Resume" means "I want it back"); update and resume
+//     answer `pageNotFound` once the purge has started.
+//
 // The birth date is used for one calculation and then dropped: never stored,
 // never hashed (the ledger's inputHash covers {adultEligibility:true}), never
 // logged. An under-18 answer writes pageAdultRefusals/{uid} with no date and
@@ -99,6 +109,14 @@ const {
   pageFollowCarryJobReference,
 } = require("./follow_carry");
 const { restoredPageFields } = require("./lapse");
+const {
+  assertPageRecreateAllowed,
+  canonicalPageDeletion,
+  canonicalPageMemory,
+  pageDeletionReference,
+  pageMemoryReference,
+  rememberedPageSuspension,
+} = require("./deletion");
 const {
   applyPageVisibilityInTransaction,
   pageVisibilityReference,
@@ -304,9 +322,10 @@ function createPagesLifecycleService({
     const pageRef = pageReference(firestore, uid);
     const publicRef = firestore.doc(`publicProfiles/${uid}`);
     const ledgerRef = firestore.doc(`integrityOperationLedgers/${identity.id}`);
+    const memoryRef = pageMemoryReference(firestore, uid);
     const outcome = await firestore.runTransaction(async (transaction) => {
       const [user, entitlement, grant, restriction, pageSnapshot, publicSnapshot,
-        ledgerSnapshot, visibilitySnapshot] = await transactionGetAll(
+        ledgerSnapshot, visibilitySnapshot, memorySnapshot] = await transactionGetAll(
         transaction,
         ...pagesCapabilityReferences(firestore, uid),
         firestore.doc(`restrictions/${uid}`),
@@ -314,6 +333,7 @@ function createPagesLifecycleService({
         publicRef,
         ledgerRef,
         pageVisibilityReference(firestore),
+        memoryRef,
       );
       const profile = assertWritePreconditions(user, restriction, timed.nowMs);
       const prior = assertLedgerReplay(ledgerSnapshot, {
@@ -325,6 +345,11 @@ function createPagesLifecycleService({
       gate({ userSnapshot: user, entitlementSnapshot: entitlement, grantSnapshot: grant },
         auth, timed.nowMs);
       if (pageSnapshot.exists) throw PAGE_ERRORS.exists();
+      // ADR-236: a deleted Page leaves a memory. A new one waits out the
+      // 7-day cooldown, and a suspension the old Page carried is not erased
+      // by deleting it (a malformed memory is `data-loss`, fail closed).
+      const memory = canonicalPageMemory(memorySnapshot, uid);
+      assertPageRecreateAllowed(memory, timed.nowMs);
       assertPublicProfile(profile);
       const displayName = publicPageName(publicSnapshot, uid);
       // Followers never refuse a Page (ADR-234): they are carried over.
@@ -343,9 +368,17 @@ function createPagesLifecycleService({
           PUBLIC_PROFILE_FIELDS,
         );
       }
-      const page = newPageDocument({ pageId: uid, fields, displayName, now: timed.now });
+      const page = {
+        ...newPageDocument({ pageId: uid, fields, displayName, now: timed.now }),
+        // The new Page starts suspended when the deleted one was; a
+        // moderator lifts it on the Page, as before (moderation.js).
+        ...(rememberedPageSuspension(memory) ?? {}),
+      };
+      page.listed = derivePageListed(page);
       const result = pageLifecycleResult(page);
       transaction.create(pageRef, page);
+      // The memory is consumed: the suspension now lives in the Page again.
+      if (memorySnapshot.exists) transaction.delete(memoryRef);
       applyPageVisibilityInTransaction(transaction, {
         db: firestore,
         snapshot: visibilitySnapshot,
@@ -399,9 +432,10 @@ function createPagesLifecycleService({
     const identity = operationIdentity(LEDGER_KINDS[op], uid, input.requestId, hashed);
     const pageRef = pageReference(firestore, uid);
     const ledgerRef = firestore.doc(`integrityOperationLedgers/${identity.id}`);
+    const deletionRef = pageDeletionReference(firestore, uid);
     return firestore.runTransaction(async (transaction) => {
       const [user, entitlement, grant, restriction, pageSnapshot, publicSnapshot,
-        ledgerSnapshot, visibilitySnapshot] = await transactionGetAll(
+        ledgerSnapshot, visibilitySnapshot, deletionSnapshot] = await transactionGetAll(
         transaction,
         ...pagesCapabilityReferences(firestore, uid),
         firestore.doc(`restrictions/${uid}`),
@@ -409,6 +443,7 @@ function createPagesLifecycleService({
         firestore.doc(`publicProfiles/${uid}`),
         ledgerRef,
         pageVisibilityReference(firestore),
+        deletionRef,
       );
       const profile = assertWritePreconditions(user, restriction, timed.nowMs);
       const prior = assertLedgerReplay(ledgerSnapshot, {
@@ -421,9 +456,18 @@ function createPagesLifecycleService({
         auth, timed.nowMs);
       const page = canonicalPage(pageSnapshot, uid);
       if (page === null) throw PAGE_ERRORS.notFound();
+      // ADR-236: once the purge has started the Page is as good as gone.
+      const deletion = canonicalPageDeletion(deletionSnapshot, uid);
+      if (deletion !== null && deletion.malformed !== true && deletion.state === "purging") {
+        throw PAGE_ERRORS.notFound();
+      }
       if (page.suspended) throw PAGE_ERRORS.suspended();
 
       const changes = await mutate({ transaction, page, profile, publicSnapshot });
+      // A resume while a deletion is PENDING takes the Page back: the record
+      // goes in this transaction, so no later sweep can delete a Page its
+      // owner resumed (a malformed record goes too: nothing may act on it).
+      if (op === "resume" && deletion !== null) transaction.delete(deletionRef);
       // The capability is live (the gate passed): a lapsed Page is restored.
       const next = {
         ...page,

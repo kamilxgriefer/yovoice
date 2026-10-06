@@ -5,6 +5,7 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/foundation.dart';
 
 import 'package:yovoice/core/security/ephemeral_media_access_registry.dart';
+import 'package:yovoice/features/pages/data/models/page_deletion_state.dart';
 import 'package:yovoice/features/pages/data/models/page_views.dart';
 import 'package:yovoice/features/pages/data/services/pages_availability.dart';
 import 'package:yovoice/shared/identity/public_identity.dart';
@@ -70,11 +71,40 @@ enum PagesFailure {
   /// comment.
   ownContent,
 
+  /// `pageRecreateCooldown`: a Page was deleted less than 7 days ago
+  /// (ADR-236); [PagesException.retryAt] says when a new one may be created.
+  recreateCooldown,
+
+  /// `pageDeletionInProgress`: the purge of this Page has started, so there
+  /// is nothing left to restore.
+  deletionInProgress,
+
   /// Offline, a timeout or a transient server error: retryable.
   network,
 
   /// A response that broke the wire contract, or anything unmapped.
   unknown,
+}
+
+/// The ops of `managePageDeletionV1` (ADR-236).
+enum PageDeletionOp {
+  /// The caller's own state; a read.
+  status('status'),
+
+  /// Hide the Page now and delete it in 30 days; a safety action.
+  request('request'),
+
+  /// Take a pending deletion back; needs live Premium or VIP.
+  restore('restore'),
+
+  /// Skip the rest of the 30 days; cannot be undone.
+  purgeNow('purgeNow'),
+
+  /// Delete every post; the Page and its followers stay.
+  clearPosts('clearPosts');
+
+  const PageDeletionOp(this.wire);
+  final String wire;
 }
 
 /// The owner's post operations this client sends; `setCommentsEnabled`
@@ -89,10 +119,14 @@ enum PagePostOp {
 }
 
 class PagesException implements Exception {
-  const PagesException(this.failure, [this.message]);
+  const PagesException(this.failure, [this.message, this.retryAt]);
 
   final PagesFailure failure;
   final String? message;
+
+  /// [PagesFailure.recreateCooldown] only: when the refused action becomes
+  /// possible.
+  final DateTime? retryAt;
 
   @override
   String toString() =>
@@ -138,6 +172,7 @@ class PagesService {
   static const reserveCallable = 'reservePagePostMediaV1';
   static const publishCallable = 'publishPagePostV1';
   static const reportCallable = 'createPageReportV1';
+  static const deletionCallable = 'managePageDeletionV1';
 
   /// §1.1: post text 0-5000 UTF-16 units, comments 1-1000.
   static const int maxPostText = 5000;
@@ -182,7 +217,7 @@ class PagesService {
       return result.data;
     } on FirebaseFunctionsException catch (error) {
       final failure = failureFor(error);
-      throw PagesException(failure, error.message);
+      throw PagesException(failure, error.message, retryAtFor(error));
     } on PagesException {
       rethrow;
     } on TimeoutException {
@@ -198,6 +233,15 @@ class PagesService {
     } on FormatException catch (error) {
       throw PagesException(PagesFailure.unknown, error.message);
     }
+  }
+
+  /// `details.retryAtMs` of a refusal (`pageRecreateCooldown`), or null.
+  static DateTime? retryAtFor(FirebaseFunctionsException error) {
+    final details = error.details;
+    final value = details is Map ? details['retryAtMs'] : null;
+    return value is int && value > 0
+        ? DateTime.fromMillisecondsSinceEpoch(value, isUtc: true)
+        : null;
   }
 
   /// Maps the refusal envelope `{code, details:{reason}}`.
@@ -246,6 +290,12 @@ class PagesService {
         return PagesFailure.uploadExpired;
       case 'pageMediaInvalid':
         return PagesFailure.mediaInvalid;
+      case 'pageRecreateCooldown':
+        return PagesFailure.recreateCooldown;
+      case 'pageDeletionInProgress':
+        return PagesFailure.deletionInProgress;
+      case 'pageDeletionNotRequested':
+        return PagesFailure.unavailable;
     }
     return switch (error.code) {
       'resource-exhausted' => PagesFailure.rateLimited,
@@ -391,6 +441,15 @@ class PagesService {
       'op': 'resume',
     });
     return _parse(() => PageLifecycleResult.fromWire(raw));
+  }
+
+  /// `managePageDeletionV1 {op}` (ADR-236): the caller's own deletion state
+  /// after [op]. `request`, `purgeNow` and `clearPosts` are safety actions
+  /// (they work with the kill switch on, lapsed, muted and unverified);
+  /// `restore` needs live Premium or VIP.
+  Future<PageDeletionState> managePageDeletion(PageDeletionOp op) async {
+    final raw = await _call(deletionCallable, <String, Object?>{'op': op.wire});
+    return _parse(() => PageDeletionState.fromWire(raw));
   }
 
   /// `managePagePostV1 {requestId, postId, op}` for delete / pin / unpin

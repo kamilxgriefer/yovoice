@@ -461,6 +461,7 @@ exports.getPublicBadges = getPublicBadges;
 // PAGES_ALLOW_PAID_SOURCE); staff preview cannot. No Pages export keeps a
 // warm instance or is a keep-warm target.
 const { managePageV1 } = require("./pages/lifecycle");
+const { managePageDeletionV1 } = require("./pages/deletion");
 const {
   findPagesV1,
   getPagePostV1,
@@ -469,6 +470,10 @@ const {
 } = require("./pages/reads");
 
 exports.managePageV1 = managePageV1;
+// Page deletion (ADR-236): status, request (30 days to restore), restore,
+// purgeNow and clearPosts. Its own callable and result shape; managePageV1
+// keeps its four ops. The purge and the post clearing run in pagesMaintenance.
+exports.managePageDeletionV1 = managePageDeletionV1;
 // Reads (package B3): the Treści feed, a Page's profile + wall, one post with
 // its comments, and Find Pages (suggest / search / the followed-Pages panel).
 exports.getPagesFeedV1 = getPagesFeedV1;

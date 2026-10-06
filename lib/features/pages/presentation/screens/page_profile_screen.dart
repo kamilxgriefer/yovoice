@@ -12,12 +12,15 @@ import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
+import 'package:yovoice/features/pages/data/models/page_deletion_state.dart';
 import 'package:yovoice/features/pages/data/models/page_views.dart';
 import 'package:yovoice/features/pages/data/page_links.dart';
 import 'package:yovoice/features/pages/data/services/page_access_service.dart';
+import 'package:yovoice/features/pages/data/services/page_deletion_center.dart';
 import 'package:yovoice/features/pages/data/services/pages_service.dart';
 import 'package:yovoice/features/pages/presentation/controllers/page_profile_controller.dart';
 import 'package:yovoice/features/pages/presentation/page_account_actions.dart';
+import 'package:yovoice/features/pages/presentation/page_delete_copy.dart';
 import 'package:yovoice/features/pages/presentation/page_navigation.dart';
 import 'package:yovoice/features/pages/presentation/page_profile_copy.dart';
 import 'package:yovoice/features/pages/presentation/pages_copy.dart';
@@ -97,10 +100,15 @@ class PageProfileScreen extends StatefulWidget {
     this.clock,
     this.shareLink,
     this.settingsBuilder,
+    this.deletion,
     super.key,
   });
 
   final String pageId;
+
+  /// The owner's deletion state (ADR-236); a test seam, the app uses the
+  /// shared instance. Only read on the owner's own Page.
+  final PageDeletionCenter? deletion;
 
   /// What the opener already knows, shown while the Page loads.
   final String? displayName;
@@ -146,6 +154,12 @@ class _PageProfileScreenState extends State<PageProfileScreen> {
   final FocusNode _followFocus = FocusNode(debugLabel: 'page-follow');
   final FocusNode _followingFocus = FocusNode(debugLabel: 'page-following');
 
+  late final PageDeletionCenter _deletion =
+      widget.deletion ?? PageDeletionCenter.instance;
+  PageDeletionState? _seenDeletion;
+  Timer? _clearingPoll;
+  bool _restoring = false;
+
   int _tab = 0;
   FriendRelationshipStatus? _relationship;
   OwnPage? _ownPage;
@@ -182,6 +196,12 @@ class _PageProfileScreenState extends State<PageProfileScreen> {
           unawaited(_controller.load());
         }
       }, onError: (Object _, StackTrace _) {});
+      // ADR-236: a pending deletion or a running "delete all posts" lives
+      // outside pages/{uid}; ask once, then follow the shared state.
+      _seenDeletion = _deletion.state;
+      _deletion.addListener(_onDeletionChanged);
+      _syncClearingPoll();
+      unawaited(_deletion.refresh());
     } else {
       unawaited(_resolveRelationship());
     }
@@ -201,6 +221,8 @@ class _PageProfileScreenState extends State<PageProfileScreen> {
     PageVoicePlayer.silenceSharedIf(shown.contains);
     _controller.removeListener(_onControllerChanged);
     _controller.dispose();
+    if (_isSelf) _deletion.removeListener(_onDeletionChanged);
+    _clearingPoll?.cancel();
     unawaited(_accessSub?.cancel());
     _scroll.dispose();
     _followFocus.dispose();
@@ -243,6 +265,141 @@ class _PageProfileScreenState extends State<PageProfileScreen> {
     });
   }
 
+  // ----------------------------------------------- deletion (ADR-236)
+
+  /// The owner's deletion state; null for every other viewer.
+  PageDeletionState? get _deletionState => _isSelf ? _deletion.state : null;
+
+  /// A pending deletion or a running purge of the owner's own Page.
+  PageDeletionInfo? get _deletionInfo => _deletionState?.deletion;
+
+  /// "Delete all posts" is still running for posts up to this instant.
+  DateTime? get _clearingSince => _deletionState?.postsClearingSince;
+
+  /// How often the owner's open profile asks whether the post clearing is
+  /// done (the worker runs every 10 minutes; small Pages finish at once).
+  static const Duration _clearingPollEvery = Duration(seconds: 20);
+
+  void _onDeletionChanged() {
+    if (!mounted) return;
+    final before = _seenDeletion;
+    final now = _deletion.state;
+    _seenDeletion = now;
+    // The Page is gone (the purge finished): this profile has nothing left
+    // to show, so it closes instead of turning into "unavailable".
+    if (before != null && before.pageExists && now != null && !now.pageExists) {
+      setState(() {});
+      _syncClearingPoll();
+      _closeAfterDeletion();
+      return;
+    }
+    final changed =
+        before?.deletion != now?.deletion ||
+        before?.postsClearingSince != now?.postsClearingSince;
+    setState(() {});
+    // Restored, cleared, or a purge under way: the wall is different now.
+    if (changed) unawaited(_controller.load());
+    _syncClearingPoll();
+  }
+
+  /// Closes THIS profile's own route once its Page is gone. Looking at it
+  /// (the purge finished in the background), the owner is told and taken
+  /// back. Under another screen (Page settings, where "Usuń teraz" was
+  /// confirmed and which says so itself) the route is taken out from
+  /// underneath, so that screen's Back does not land on a Page that no
+  /// longer exists. A profile that is not a pushed route stays; its next
+  /// load shows the ordinary "unavailable" state.
+  void _closeAfterDeletion() {
+    final route = ModalRoute.of(context);
+    final navigator = Navigator.maybeOf(context);
+    if (route == null || navigator == null || route.isFirst) {
+      unawaited(_controller.load());
+      return;
+    }
+    if (route.isCurrent) {
+      _snack(_copy.pageDeleted);
+      unawaited(navigator.maybePop());
+    } else if (route.isActive) {
+      navigator.removeRoute(route);
+    }
+  }
+
+  /// Polls only while a clearing job or a purge runs and this profile is
+  /// open: the worker finishes both in the background, and the owner's wall
+  /// (or this whole profile) changes when it does.
+  void _syncClearingPoll() {
+    final state = _deletionState;
+    final running =
+        state != null &&
+        state.pageExists &&
+        (state.postsClearingSince != null || state.purging);
+    if (!running) {
+      _clearingPoll?.cancel();
+      _clearingPoll = null;
+      return;
+    }
+    _clearingPoll ??= Timer.periodic(_clearingPollEvery, (_) {
+      if (mounted) unawaited(_deletion.refresh());
+    });
+  }
+
+  Future<void> _restore() async {
+    if (_restoring) return;
+    final copy = _copy;
+    setState(() => _restoring = true);
+    try {
+      await _deletion.restore();
+      if (mounted) _snack(copy.pageRestored);
+    } on PagesException catch (error) {
+      if (mounted) _snack(copy.manageError(error.failure));
+    } finally {
+      if (mounted) setState(() => _restoring = false);
+    }
+  }
+
+  /// ADR-236 (frame 6_pageDeleteWhat B4): "delete all posts" is running.
+  /// The honest state and the next step, instead of "no posts yet"; null
+  /// when no clearing job runs.
+  Widget? _clearingBlock({required bool empty}) {
+    if (_clearingSince == null) return null;
+    final copy = _copy;
+    final compose = widget.flows.openComposer;
+    final canPublish = _controller.header?.state == PageHeaderState.active;
+    return PagesStateBlock(
+      key: const ValueKey('page-wall-clearing'),
+      icon: Icons.auto_delete_outlined,
+      title: copy.clearingTitle,
+      body: copy.clearingBody(_controller.header?.followerCount ?? 0),
+      liveRegion: true,
+      secondary: empty && compose != null && canPublish
+          ? PagesTonalButton(
+              key: const ValueKey('page-wall-clearing-publish'),
+              label: copy.publishFirstPost,
+              icon: Icons.add_rounded,
+              height: 48,
+              onPressed: () => unawaited(_compose(compose, PagePostKind.text)),
+            )
+          : null,
+    );
+  }
+
+  /// The posts the wall shows: while "delete all posts" runs, the owner no
+  /// longer sees the ones that are about to go.
+  List<PagePostView> get _visibleWallPosts =>
+      _notBeingCleared(_controller.wallPosts);
+
+  /// [posts] without the ones a running "delete all posts" is removing
+  /// (the wall and the Zdjęcia grid agree on what is still there).
+  List<PagePostView> _notBeingCleared(List<PagePostView> posts) {
+    final since = _clearingSince;
+    if (since == null) return posts;
+    final boundary = since.millisecondsSinceEpoch;
+    return [
+      for (final post in posts)
+        if (post.createdAtMs > boundary) post,
+    ];
+  }
+
   // ------------------------------------------------------------- helpers
 
   PagesCopy get _copy => PagesCopy(AppLocalizations.of(context));
@@ -277,7 +434,12 @@ class _PageProfileScreenState extends State<PageProfileScreen> {
           settings: const RouteSettings(name: 'pages/settings'),
           builder:
               builder ??
-              (_) => PageSettingsScreen(service: _service, userId: _userId),
+              (_) => PageSettingsScreen(
+                service: _service,
+                userId: _userId,
+                deletion: _deletion,
+                clock: widget.clock,
+              ),
         ),
       ),
     );
@@ -1005,8 +1167,12 @@ class _PageProfileScreenState extends State<PageProfileScreen> {
     double? cap,
   }) {
     final copy = _copy;
-    final posts = _controller.wallPosts;
-    if (posts.isEmpty) {
+    final posts = _visibleWallPosts;
+    final clearing = _clearingBlock(empty: posts.isEmpty);
+    if (clearing != null) {
+      slivers.add(SliverToBoxAdapter(child: clearing));
+      if (posts.isEmpty) return;
+    } else if (posts.isEmpty) {
       slivers.add(
         SliverToBoxAdapter(
           child: Padding(
@@ -1078,7 +1244,8 @@ class _PageProfileScreenState extends State<PageProfileScreen> {
               ),
       );
     }
-    if (photos.posts.isEmpty) {
+    final photoPosts = _notBeingCleared(photos.posts);
+    if (photoPosts.isEmpty) {
       return Padding(
         padding: const EdgeInsets.only(top: 32),
         child: PagesStateBlock(
@@ -1094,7 +1261,7 @@ class _PageProfileScreenState extends State<PageProfileScreen> {
       children: [
         PagePhotoGridView(
           key: const ValueKey('page-photos-grid'),
-          posts: photos.posts,
+          posts: photoPosts,
           service: _service,
           pageName: _name,
           columns: columns,
@@ -1398,8 +1565,11 @@ class _PageProfileScreenState extends State<PageProfileScreen> {
     if (photosTab) {
       main.add(_photoContent(context, columns: 4));
     } else {
-      final posts = _controller.wallPosts;
-      if (posts.isEmpty) {
+      final posts = _visibleWallPosts;
+      final clearing = _clearingBlock(empty: posts.isEmpty);
+      if (clearing != null) {
+        main.add(clearing);
+      } else if (posts.isEmpty) {
         main.add(
           PagesStateBlock(
             key: const ValueKey('page-wall-empty'),
@@ -1493,6 +1663,7 @@ class _PageProfileScreenState extends State<PageProfileScreen> {
         if (mounted) unawaited(_controller.loadPhotos());
       });
     }
+    final aboutPhotos = _notBeingCleared(photos.posts);
     return Column(
       key: const ValueKey('page-about-column'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1545,7 +1716,7 @@ class _PageProfileScreenState extends State<PageProfileScreen> {
                 unawaited(_openServer(community.linkedServer!.serverId)),
           ),
         ],
-        if (photos.posts.isNotEmpty) ...[
+        if (aboutPhotos.isNotEmpty) ...[
           const SizedBox(height: 12),
           PageSectionCard(
             key: const ValueKey('page-about-photos'),
@@ -1553,7 +1724,7 @@ class _PageProfileScreenState extends State<PageProfileScreen> {
             padding: const EdgeInsets.all(16),
             children: [
               PagePhotoGridView(
-                posts: photos.posts,
+                posts: aboutPhotos,
                 service: _service,
                 pageName: _name,
                 limit: 6,
@@ -1594,6 +1765,36 @@ class _PageProfileScreenState extends State<PageProfileScreen> {
   Widget? _ownerNotice(PageHeader header) {
     if (!_controller.isOwner) return null;
     final copy = _copy;
+    // ADR-236 (frame 6_pageDeleteHow B2): the date and the way back come
+    // before every other state of the Page.
+    final deletion = _deletionInfo;
+    if (deletion != null && deletion.phase == PageDeletionPhase.purging) {
+      return PageNotice(
+        key: const ValueKey('page-notice-purging'),
+        tone: PageTone.warning,
+        icon: Icons.auto_delete_outlined,
+        title: copy.purgingTitle,
+        body: copy.purgingBody,
+      );
+    }
+    if (deletion != null) {
+      return PageNotice(
+        key: const ValueKey('page-notice-pending-deletion'),
+        tone: PageTone.warning,
+        icon: Icons.auto_delete_outlined,
+        title: copy.pendingTitle(deletion.deleteAt),
+        body: copy.pendingProfileBody,
+        actions: [
+          PageTonalButton(
+            key: const ValueKey('page-restore'),
+            label: copy.restorePage,
+            icon: Icons.restore_rounded,
+            height: 40,
+            onPressed: _restoring ? null : () => unawaited(_restore()),
+          ),
+        ],
+      );
+    }
     switch (header.state) {
       case PageHeaderState.active:
         return null;
@@ -1688,6 +1889,12 @@ class _PageProfileScreenState extends State<PageProfileScreen> {
     Widget? secondary;
     String? secondaryLabel;
     var primaryLabel = '';
+    // ADR-236: a Page that is to be deleted offers its settings only (the
+    // way back is the banner above; "Wznów stronę" would be a second,
+    // different answer to the same question).
+    if (viewer.isOwner && _deletionInfo != null) {
+      return _settingsOnlyRow(dots);
+    }
     if (viewer.isOwner) {
       switch (header.state) {
         case PageHeaderState.active:
@@ -1733,21 +1940,7 @@ class _PageProfileScreenState extends State<PageProfileScreen> {
         case PageHeaderState.readOnly:
         case PageHeaderState.hidden:
         case PageHeaderState.suspended:
-          return Row(
-            children: [
-              Expanded(
-                child: PageTonalButton(
-                  key: const ValueKey('page-settings-button'),
-                  label: copy.pageSettings,
-                  icon: Icons.settings_outlined,
-                  expand: true,
-                  onPressed: _openSettings,
-                ),
-              ),
-              const SizedBox(width: 8),
-              dots,
-            ],
-          );
+          return _settingsOnlyRow(dots);
       }
     } else {
       if (viewer.following) {
@@ -1834,6 +2027,33 @@ class _PageProfileScreenState extends State<PageProfileScreen> {
     );
   }
 
+  /// "Ustawienia strony" and ⋯: the whole action row of an owner whose Page
+  /// cannot publish (read-only, hidden, suspended, or to be deleted). It
+  /// fills the row wherever the row has a width (phone, tablet, a narrow
+  /// desktop column). Beside the name on desktop the header lays the
+  /// actions out in an unbounded Row, where an Expanded is a layout error,
+  /// so there the button takes its natural width.
+  Widget _settingsOnlyRow(Widget dots) => LayoutBuilder(
+    builder: (context, constraints) {
+      final fill = constraints.hasBoundedWidth;
+      final button = PageTonalButton(
+        key: const ValueKey('page-settings-button'),
+        label: _copy.pageSettings,
+        icon: Icons.settings_outlined,
+        expand: fill,
+        onPressed: _openSettings,
+      );
+      return Row(
+        mainAxisSize: fill ? MainAxisSize.max : MainAxisSize.min,
+        children: [
+          if (fill) Expanded(child: button) else button,
+          const SizedBox(width: 8),
+          dots,
+        ],
+      );
+    },
+  );
+
   /// A tonal / gradient button's natural width for [label]: the label under
   /// the reader's text scale, the 18-20 px icon and its 8 px gap, and the
   /// horizontal [padding] (tonal 2 × 16, gradient 2 × 20).
@@ -1895,6 +2115,35 @@ class _PageProfileScreenState extends State<PageProfileScreen> {
         if (secondary != null) ...[const SizedBox(width: 8), secondary],
         const SizedBox(width: 8),
         dots,
+      ],
+    );
+  }
+}
+
+/// The header's meta line, with the "DO USUNIĘCIA" pill beside it while
+/// the owner's Page is pending deletion (ADR-236). The pill wraps under the
+/// text when the line is full (narrow widths, large text, long languages).
+class _MetaLine extends StatelessWidget {
+  const _MetaLine({required this.child, required this.pendingDeletion});
+
+  final Widget child;
+  final bool pendingDeletion;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!pendingDeletion) return child;
+    final copy = PagesCopy(AppLocalizations.of(context));
+    return Wrap(
+      spacing: 8,
+      runSpacing: 6,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        child,
+        PageStatusPill(
+          key: const ValueKey('page-pending-deletion-pill'),
+          label: copy.statusPendingDeletion,
+          tone: PageTone.warning,
+        ),
       ],
     );
   }
@@ -2029,15 +2278,18 @@ class _Header extends StatelessWidget {
                   ),
                 ),
               ),
-              Text(
-                PageProfileCopy(
-                  copy,
-                ).headerMeta(header.kind, header.followerCount),
-                key: const ValueKey('page-meta'),
-                maxLines: 2,
-                style: AppTypography.bodySmall.copyWith(
-                  fontSize: 13,
-                  color: palette.textSecondary,
+              _MetaLine(
+                pendingDeletion: state._deletionInfo != null,
+                child: Text(
+                  PageProfileCopy(
+                    copy,
+                  ).headerMeta(header.kind, header.followerCount),
+                  key: const ValueKey('page-meta'),
+                  maxLines: 2,
+                  style: AppTypography.bodySmall.copyWith(
+                    fontSize: 13,
+                    color: palette.textSecondary,
+                  ),
                 ),
               ),
               if (description.isNotEmpty) ...[
@@ -2141,12 +2393,15 @@ class _DesktopHeader extends StatelessWidget {
                             ),
                           ),
                         ),
-                        Text(
-                          meta,
-                          key: const ValueKey('page-meta'),
-                          style: AppTypography.bodySmall.copyWith(
-                            fontSize: 13,
-                            color: palette.textSecondary,
+                        _MetaLine(
+                          pendingDeletion: state._deletionInfo != null,
+                          child: Text(
+                            meta,
+                            key: const ValueKey('page-meta'),
+                            style: AppTypography.bodySmall.copyWith(
+                              fontSize: 13,
+                              color: palette.textSecondary,
+                            ),
                           ),
                         ),
                       ],

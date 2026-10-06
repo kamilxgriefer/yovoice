@@ -1063,6 +1063,55 @@ renders of the real widgets (Dark; composer text/photos/voice at 390, 320 at
 session scratchpad (`c4/shots`). **Not verified on a device, simulator or
 real browser.**
 
+## Premium Pages: deleting a Page (ADR-236; pageDeleteWhat B + pageDeleteHow B, 2026-10-03; source only)
+
+Chosen from the rendered sheets `6_pageDeleteWhat` / `6_pageDeleteHow`
+(yovoice-evidence/2026-10-02/live-servers-concept/renders/sheets). Frames of
+the built screens: `yovoice-evidence/2026-10-03/w42/page-delete/`
+(`test/page_delete_capture.dart`).
+
+- **Page settings, bottom.** The account footnote is gone. A group label
+  `STREFA ZAGROŻENIA` in the error ink and one settings group with a 45 %
+  error edge: two rows with the danger glyph (`PageGlyph(danger: true)`),
+  error-ink titles and chevrons — "Usuń wszystkie posty" (disabled at 45 %
+  when the Page has no published post) and "Usuń stronę". Same 640 column on
+  tablet and desktop; no app bar of its own in the desktop slot.
+- **"Usuń wszystkie posty".** `confirmPageAction` (destructive): "Usunąć
+  14 postów?" with the counted body. Afterwards the owner's wall shows
+  `PagesStateBlock` "Trwa usuwanie postów" (auto-delete glyph) and the tonal
+  "Opublikuj pierwszy post"; posts older than the request are hidden from
+  the owner at once, newer ones stay under the block.
+- **"Usuń stronę" (`PageDeleteScreen`).** The settings title bar with Back,
+  the identity card (face 52, name, "Firma · 128 obserwujących"), `ZNIKNIE`
+  (error ink) and `ZOSTAJE` lists (`DeleteAccountConsequenceList`), a neutral
+  notice "Wyjątek: zgłoszone treści", an info notice "Masz 30 dni na powrót"
+  with the date, the name field (label always floating, helper "Aby
+  potwierdzić, wpisz: …") and the 52 px `errorContainer` button, disabled
+  until the name matches (case and edges forgiven).
+- **Pending (30 days).** Owner's Page: the `DO USUNIĘCIA` warning pill
+  beside the meta line (wraps under it when the line is full), a warning
+  `PageNotice` with the date and a tonal "Przywróć stronę", and the action
+  row reduced to "Ustawienia strony" + ⋯ (full width on phone and tablet,
+  natural width beside the name on desktop). Settings: the same notice on
+  top with a gradient "Przywróć stronę", the pill in the identity card,
+  every edit row disabled, WIDOCZNOŚĆ STRONY = "Przywróć stronę", and the
+  danger zone = "Usuń teraz, nie czekaj" (confirmed by a dialog).
+- **Purging.** "Trwa usuwanie strony" notice, no actions; the open profile
+  asks every 20 s (as it does while posts are being cleared).
+- **Deleted.** "Usuń teraz" on a small Page finishes inside the call: Page
+  settings and the owner's Page profile both leave the stack (the profile
+  takes its own route out from under settings) and one snack says "Strona
+  usunięta". When the worker finishes while the profile is open, the profile
+  says so and closes; settings left open show `PagesStateBlock` "Strona
+  usunięta" with "Nową stronę założysz po <date>" instead of an error.
+- **Zdjęcia while clearing.** The photo grid and the About photo strip hide
+  the photos of posts that are being cleared, like the wall.
+- **Followers / old links.** Unchanged: the existing E7 block "Ta strona
+  jest niedostępna" with "Wróć do Treści".
+- **Text scale and RTL.** Every row wraps at 200 %; the pill, notices and
+  rows mirror in RTL. Copy: `page_delete_copy.dart` (Polish authored there),
+  41 other locales in `translations_page_delete.dart`.
+
 ## The "Coming soon" pattern
 
 When a screen needs a feature with no real backend support yet:

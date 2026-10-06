@@ -471,9 +471,12 @@ extension PageProfileCopy on PagesCopy {
   );
   String get chooseBirthDate =>
       copy.text('Choose your date of birth', 'Wybierz datę urodzenia');
+  // ADR-236: the Page can now be deleted without the account, and its
+  // contact details go with it. The consent itself (public contact details)
+  // is unchanged, so the consent version stays 1.
   String get consentBusiness => copy.text(
-    'I understand that the contact details will be public. They stay saved while the Page is paused. I can clear them any time.',
-    'Rozumiem, że dane kontaktowe będą widoczne publicznie. Zostają zapisane, gdy strona jest wstrzymana. Możesz je usunąć w każdej chwili.',
+    'I understand that the contact details will be public. They stay saved while the Page is paused and are deleted together with the Page. I can clear them any time.',
+    'Rozumiem, że dane kontaktowe będą widoczne publicznie. Zostają zapisane, gdy strona jest wstrzymana, a znikają razem ze stroną, gdy ją usuniesz. Możesz je usunąć w każdej chwili.',
   );
   String get consentCommunity => copy.text(
     "I understand that the Page's name, photo, description and rules will be public.",
@@ -575,8 +578,8 @@ extension PageProfileCopy on PagesCopy {
       );
 
   String get whatProfile => copy.text(
-    'Your profile will show as a Page. You can pause it any time in Page settings.',
-    'Twój profil wyświetli się jako strona. Wstrzymasz ją w każdej chwili w ustawieniach strony.',
+    'Your profile will show as a Page. You can pause or delete it any time in Page settings.',
+    'Twój profil wyświetli się jako strona. Wstrzymasz ją lub usuniesz w każdej chwili w ustawieniach strony.',
   );
   String get whatLapse => copy.text(
     'If VIP ends, the Page is read-only for 30 days and then hidden. Nothing is deleted.',
@@ -637,6 +640,16 @@ extension PageProfileCopy on PagesCopy {
       "Couldn't connect. Check your connection and try again.",
       'Brak połączenia. Sprawdź internet i spróbuj ponownie.',
     ),
+    // ADR-236: a Page was deleted less than 7 days ago. The create entry
+    // names the date when it knows it (`PageDeleteCopy.recreateAfter`).
+    PagesFailure.recreateCooldown => copy.text(
+      'A new Page can be created 7 days after the previous one was deleted.',
+      'Nową stronę założysz 7 dni po usunięciu poprzedniej.',
+    ),
+    PagesFailure.deletionInProgress => copy.text(
+      'Deleting the Page',
+      'Trwa usuwanie strony',
+    ),
     _ => copy.text(
       'Something went wrong. Try again.',
       'Coś poszło nie tak. Spróbuj ponownie.',
@@ -694,10 +707,6 @@ extension PageProfileCopy on PagesCopy {
   );
   String get resumeNeedsVip =>
       copy.text('Needs YO Voice VIP', 'Wymaga YO Voice VIP');
-  String get accountFootnote => copy.text(
-    "The Page is part of your account. It's only deleted together with the account.",
-    'Strona jest częścią Twojego konta. Usuniesz ją tylko razem z kontem.',
-  );
   String get statusActive =>
       copy.contextualText('pages.statusActive', 'Active', 'Aktywna');
   String get statusPaused =>

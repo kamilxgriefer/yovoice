@@ -8,15 +8,20 @@ import 'package:yovoice/core/theme/app_finish.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
+import 'package:yovoice/features/pages/data/models/page_deletion_state.dart';
 import 'package:yovoice/features/pages/data/models/page_views.dart';
 import 'package:yovoice/features/pages/data/page_catalog.dart';
 import 'package:yovoice/features/pages/data/services/page_access_service.dart';
+import 'package:yovoice/features/pages/data/services/page_deletion_center.dart';
 import 'package:yovoice/features/pages/data/services/pages_service.dart';
+import 'package:yovoice/features/pages/presentation/page_delete_copy.dart';
 import 'package:yovoice/features/pages/presentation/page_profile_copy.dart';
 import 'package:yovoice/features/pages/presentation/pages_copy.dart';
+import 'package:yovoice/features/pages/presentation/screens/page_delete_screen.dart';
 import 'package:yovoice/features/pages/presentation/widgets/page_face.dart';
 import 'package:yovoice/features/pages/presentation/widgets/page_menus.dart';
 import 'package:yovoice/features/pages/presentation/widgets/page_profile_parts.dart';
+import 'package:yovoice/features/pages/presentation/widgets/pages_state_views.dart';
 import 'package:yovoice/features/profile/data/models/profile_visibility.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
@@ -56,7 +61,10 @@ enum PageSettingsField {
 /// name and photos through the profile editor); KONTAKT · WIDOCZNE
 /// PUBLICZNIE with one-field sheets that edit or clear each value and the
 /// retention line; OBSERWUJĄCY as a count only (D12: no list); WIDOCZNOŚĆ
-/// STRONY with Wstrzymaj / Wznów; and the account footnote.
+/// STRONY with Wstrzymaj / Wznów; and STREFA ZAGROŻENIA (ADR-236): "Usuń
+/// wszystkie posty" and "Usuń stronę". While a deletion is pending the
+/// screen leads with the date and "Przywróć stronę", every edit row is
+/// disabled, and the zone offers "Usuń teraz, nie czekaj".
 ///
 /// Always a pushed screen (from the Page profile), so it carries its own
 /// Back on every width; tablet and desktop centre one 640 column.
@@ -68,10 +76,12 @@ class PageSettingsScreen extends StatefulWidget {
     this.serverStream,
     this.userId,
     this.clock,
+    this.deletion,
     super.key,
   });
 
   /// Test seams; the app uses the shared instances.
+  final PageDeletionCenter? deletion;
   final PagesService? service;
   final Stream<PageAccessState> Function()? accessStream;
   final Stream<UserProfile> Function()? profileStream;
@@ -93,7 +103,11 @@ class _PageSettingsScreenState extends State<PageSettingsScreen> {
   late final Stream<UserProfile> _profile =
       (widget.profileStream ?? () => ProfileService().watchCurrentProfile())();
 
+  late final PageDeletionCenter _deletion =
+      widget.deletion ?? PageDeletionCenter.instance;
+
   bool _busy = false;
+  bool _askedAfterGone = false;
   StreamSubscription<List<Server>>? _serversSub;
   Map<String, String> _serverNames = const <String, String>{};
 
@@ -110,7 +124,20 @@ class _PageSettingsScreenState extends State<PageSettingsScreen> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    // ADR-236: the deletion state lives outside pages/{uid}; ask for it.
+    _deletion.addListener(_onDeletionChanged);
+    unawaited(_deletion.refresh());
+  }
+
+  void _onDeletionChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
   void dispose() {
+    _deletion.removeListener(_onDeletionChanged);
     unawaited(_serversSub?.cancel());
     super.dispose();
   }
@@ -200,6 +227,119 @@ class _PageSettingsScreenState extends State<PageSettingsScreen> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  // ---------------------------------------------------- deletion (ADR-236)
+
+  /// One deletion op with the busy flag and the refusal in words.
+  Future<PageDeletionState?> _deletionOp(
+    Future<PageDeletionState> Function() op,
+  ) async {
+    final copy = _copy;
+    setState(() => _busy = true);
+    try {
+      return await op();
+    } on PagesException catch (error) {
+      if (mounted) _snack(copy.manageError(error.failure));
+      return null;
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _clearPosts(OwnPage page, int followers) async {
+    final copy = _copy;
+    final confirmed = await confirmPageAction(
+      context,
+      title: copy.clearPostsTitle(page.postCount),
+      body: copy.clearPostsBody(followers),
+      confirm: copy.deletePosts,
+      cancel: copy.cancel,
+    );
+    if (!confirmed || !mounted) return;
+    final state = await _deletionOp(_deletion.clearPosts);
+    if (state == null || !mounted) return;
+    _snack(
+      state.postsClearingSince == null ? copy.postsDeleted : copy.clearingTitle,
+    );
+  }
+
+  Future<void> _openDelete(OwnPage page, String name, int followers) async {
+    final copy = _copy;
+    final kind = page.kind;
+    if (kind == null) return;
+    final state = await Navigator.of(context).push<PageDeletionState>(
+      MaterialPageRoute<PageDeletionState>(
+        settings: const RouteSettings(name: 'pages/delete'),
+        builder: (_) => PageDeleteScreen(
+          pageId: _userId,
+          name: name,
+          kind: kind,
+          postCount: page.postCount,
+          followerCount: followers,
+          deletion: _deletion,
+          clock: widget.clock,
+        ),
+      ),
+    );
+    final deletion = state?.deletion;
+    if (deletion == null || !mounted) return;
+    _snack(copy.pendingTitle(deletion.deleteAt));
+  }
+
+  Future<void> _restore() async {
+    final copy = _copy;
+    final state = await _deletionOp(_deletion.restore);
+    if (state != null && mounted) _snack(copy.pageRestored);
+  }
+
+  Future<void> _deleteNow() async {
+    final copy = _copy;
+    final confirmed = await confirmPageAction(
+      context,
+      title: copy.deleteNowTitle,
+      body: copy.deleteNowBody,
+      confirm: copy.delete,
+      cancel: copy.cancel,
+    );
+    if (!confirmed || !mounted) return;
+    final state = await _deletionOp(_deletion.purgeNow);
+    if (state == null || !mounted || state.pageExists) return;
+    // A small Page is gone before the call answers: say so and leave, there
+    // is nothing left to set. (A larger one shows the purging notice; the
+    // worker finishes it.)
+    _snack(copy.pageDeleted);
+    unawaited(Navigator.of(context).maybePop());
+  }
+
+  /// The Page is gone while this screen is open (the purge finished): the
+  /// plain fact and when a new Page can be created, instead of an error.
+  /// Null when no deletion is known, i.e. the account simply has no Page.
+  Widget? _deletedBlock(PagesCopy copy) {
+    final state = _deletion.state;
+    if (state == null ||
+        (state.deletion == null && state.recreateAllowedAt == null)) {
+      return null;
+    }
+    if (state.pageExists && !_askedAfterGone) {
+      // What this screen knows is older than the Page's removal: ask once
+      // for the date a new Page can be created.
+      _askedAfterGone = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_deletion.refresh());
+      });
+    }
+    final until = state.recreateAllowedAt;
+    return Padding(
+      padding: const EdgeInsets.only(top: 32),
+      child: PagesStateBlock(
+        key: const ValueKey('settings-page-deleted'),
+        icon: Icons.auto_delete_outlined,
+        title: copy.pageDeleted,
+        body: until == null ? null : copy.recreateAfter(until),
+        liveRegion: true,
+      ),
+    );
   }
 
   void _openProfileEditor(UserProfile? profile) {
@@ -417,10 +557,12 @@ class _PageSettingsScreenState extends State<PageSettingsScreen> {
                 );
               } else if (access.ownPage == null ||
                   access.ownPage!.kind == null) {
-                body = Padding(
-                  padding: const EdgeInsets.only(top: 60),
-                  child: YoErrorState(message: copy.noPageYet),
-                );
+                body =
+                    (access.ownPage == null ? _deletedBlock(copy) : null) ??
+                    Padding(
+                      padding: const EdgeInsets.only(top: 60),
+                      child: YoErrorState(message: copy.noPageYet),
+                    );
               } else {
                 body = _content(context, access.ownPage!, profile);
               }
@@ -480,11 +622,20 @@ class _PageSettingsScreenState extends State<PageSettingsScreen> {
     final private =
         profile != null &&
         profile.profileVisibility != ProfileVisibility.public;
-    final editable = !page.suspended && !_busy;
+    // ADR-236: a pending deletion locks every edit; a running purge leaves
+    // nothing to do here at all.
+    final deletion = _deletion.state?.deletion;
+    final pending = deletion?.phase == PageDeletionPhase.pending;
+    final purging = deletion?.phase == PageDeletionPhase.purging;
+    final locked = deletion != null;
+    final editable = !page.suspended && !_busy && !locked;
     final name = page.displayName ?? profile?.displayName ?? copy.yourPage;
     final business = page.business ?? PageBusinessInfo.empty;
     final categoryLabel = copy.categoryLabel(page.category);
-    final pill = pageStatusPill(copy, state);
+    final pill = locked
+        ? (label: copy.statusPendingDeletion, tone: PageTone.warning)
+        : pageStatusPill(copy, state);
+    final followerCount = profile?.accountFollowerCount ?? 0;
     if (kind == PageKind.community && page.linkedServerId != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _watchServerNames();
@@ -492,7 +643,32 @@ class _PageSettingsScreenState extends State<PageSettingsScreen> {
     }
 
     Widget? notice;
-    if (state == PageHeaderState.paused) {
+    if (deletion != null && purging) {
+      notice = PageNotice(
+        key: const ValueKey('settings-notice-purging'),
+        tone: PageTone.warning,
+        icon: Icons.auto_delete_outlined,
+        title: copy.purgingTitle,
+        body: copy.purgingBody,
+      );
+    } else if (deletion != null) {
+      notice = PageNotice(
+        key: const ValueKey('settings-notice-pending'),
+        tone: PageTone.warning,
+        icon: Icons.auto_delete_outlined,
+        title: copy.pendingTitle(deletion.deleteAt),
+        body: copy.pendingSettingsBody,
+        actions: [
+          YoGradientFilledButton(
+            key: const ValueKey('settings-notice-restore'),
+            onPressed: _busy ? null : () => unawaited(_restore()),
+            minimumSize: const Size(64, 40),
+            icon: const Icon(Icons.restore_rounded, size: 20),
+            child: Text(copy.restorePage),
+          ),
+        ],
+      );
+    } else if (state == PageHeaderState.paused) {
       notice = private
           ? PageNotice(
               key: const ValueKey('settings-notice-private'),
@@ -670,7 +846,7 @@ class _PageSettingsScreenState extends State<PageSettingsScreen> {
               title: copy.nameAndPhotos,
               subtitle: copy.nameAndPhotosBody,
               chevron: true,
-              enabled: profile != null,
+              enabled: profile != null && !locked,
               onTap: () => _openProfileEditor(profile),
             ),
           ],
@@ -756,38 +932,117 @@ class _PageSettingsScreenState extends State<PageSettingsScreen> {
           ],
         ),
         const SizedBox(height: 24),
-        _GroupLabel(copy.visibilityGroup),
-        _SettingsGroup(
-          children: [
-            if (!page.ownerPaused)
-              _SettingsTile(
-                key: const ValueKey('settings-pause'),
-                icon: Icons.pause_circle_outline_rounded,
-                title: copy.pausePage,
-                subtitle: copy.pauseSubtitle,
-                chevron: true,
-                enabled: !_busy,
-                onTap: () => unawaited(_pause()),
-              )
-            else
-              _SettingsTile(
-                key: const ValueKey('settings-resume'),
-                icon: Icons.play_circle_outline_rounded,
-                title: copy.resumePage,
-                subtitle: private
-                    ? copy.resumeNeedsPublic
-                    : copy.resumeSubtitle,
-                chevron: true,
-                enabled: !private && !page.suspended && !_busy,
-                onTap: () => unawaited(_resume()),
-              ),
-          ],
-        ),
-        PageFootnote(copy.accountFootnote, icon: Icons.person_outline_rounded),
+        // A running purge has no visibility left to change.
+        if (!purging) ...[
+          _GroupLabel(copy.visibilityGroup),
+          _SettingsGroup(
+            children: [
+              if (pending)
+                _SettingsTile(
+                  key: const ValueKey('settings-restore'),
+                  icon: Icons.restore_rounded,
+                  title: copy.restorePage,
+                  subtitle: copy.restoreSubtitle,
+                  chevron: true,
+                  enabled: !_busy,
+                  onTap: () => unawaited(_restore()),
+                )
+              else if (!page.ownerPaused)
+                _SettingsTile(
+                  key: const ValueKey('settings-pause'),
+                  icon: Icons.pause_circle_outline_rounded,
+                  title: copy.pausePage,
+                  subtitle: copy.pauseSubtitle,
+                  chevron: true,
+                  enabled: !_busy,
+                  onTap: () => unawaited(_pause()),
+                )
+              else
+                _SettingsTile(
+                  key: const ValueKey('settings-resume'),
+                  icon: Icons.play_circle_outline_rounded,
+                  title: copy.resumePage,
+                  subtitle: private
+                      ? copy.resumeNeedsPublic
+                      : copy.resumeSubtitle,
+                  chevron: true,
+                  enabled: !private && !page.suspended && !_busy,
+                  onTap: () => unawaited(_resume()),
+                ),
+            ],
+          ),
+          ..._dangerZone(
+            page,
+            name: name,
+            followers: followerCount,
+            deletion: deletion,
+          ),
+        ],
       ],
     );
   }
+
+  /// STREFA ZAGROŻENIA (ADR-236; chosen frames 6_pageDeleteWhat B1 and
+  /// 6_pageDeleteHow B3): "Usuń wszystkie posty" and "Usuń stronę", or,
+  /// while a deletion is pending, "Usuń teraz, nie czekaj".
+  List<Widget> _dangerZone(
+    OwnPage page, {
+    required String name,
+    required int followers,
+    required PageDeletionInfo? deletion,
+  }) {
+    final copy = _copy;
+    return [
+      const SizedBox(height: 24),
+      _GroupLabel(copy.dangerZone, danger: true),
+      _SettingsGroup(
+        key: const ValueKey('settings-danger-zone'),
+        danger: true,
+        children: [
+          if (deletion != null)
+            _SettingsTile(
+              key: const ValueKey('settings-delete-now'),
+              icon: Icons.delete_forever_rounded,
+              title: copy.deleteNow,
+              subtitle: copy.deleteNowSubtitle(deletion.deleteAt),
+              danger: true,
+              chevron: true,
+              enabled: !_busy,
+              onTap: () => unawaited(_deleteNow()),
+            )
+          else ...[
+            _SettingsTile(
+              key: const ValueKey('settings-delete-posts'),
+              icon: Icons.delete_sweep_outlined,
+              title: copy.deleteAllPosts,
+              subtitle: copy.deleteAllPostsSubtitle,
+              danger: true,
+              chevron: true,
+              // Nothing to delete on a Page with no published post.
+              enabled: !_busy && page.postCount > 0,
+              onTap: () => unawaited(_clearPosts(page, followers)),
+            ),
+            _SettingsTile(
+              key: const ValueKey('settings-delete-page'),
+              icon: Icons.delete_forever_rounded,
+              title: copy.deletePage,
+              subtitle: copy.deletePageSubtitle,
+              danger: true,
+              chevron: true,
+              enabled: !_busy,
+              onTap: () => unawaited(_openDelete(page, name, followers)),
+            ),
+          ],
+        ],
+      ),
+    ];
+  }
 }
+
+/// The settings title bar and group label, for the screens settings pushes
+/// (`PageDeleteScreen`).
+typedef PageSettingsTitleBar = _TitleBar;
+typedef PageSettingsGroupLabel = _GroupLabel;
 
 const Object _keep = Object();
 
@@ -845,9 +1100,12 @@ class _TitleBar extends StatelessWidget {
 }
 
 class _GroupLabel extends StatelessWidget {
-  const _GroupLabel(this.text);
+  const _GroupLabel(this.text, {this.danger = false});
 
   final String text;
+
+  /// The destructive ink ("STREFA ZAGROŻENIA", "ZNIKNIE").
+  final bool danger;
 
   @override
   Widget build(BuildContext context) {
@@ -859,7 +1117,9 @@ class _GroupLabel extends StatelessWidget {
         child: Text(
           text.toUpperCase(),
           style: AppTypography.overline.copyWith(
-            color: palette.textSecondary,
+            color: danger
+                ? Theme.of(context).colorScheme.error
+                : palette.textSecondary,
             fontSize: 11,
             fontWeight: FontWeight.w700,
             letterSpacing: 11 * .08,
@@ -871,9 +1131,16 @@ class _GroupLabel extends StatelessWidget {
 }
 
 class _SettingsGroup extends StatelessWidget {
-  const _SettingsGroup({required this.children});
+  const _SettingsGroup({
+    required this.children,
+    this.danger = false,
+    super.key,
+  });
 
   final List<Widget> children;
+
+  /// The destructive edge of the danger zone.
+  final bool danger;
 
   @override
   Widget build(BuildContext context) {
@@ -888,7 +1155,11 @@ class _SettingsGroup extends StatelessWidget {
         type: MaterialType.transparency,
         shape: RoundedRectangleBorder(
           borderRadius: AppRadius.block,
-          side: BorderSide(color: palette.hairline),
+          side: BorderSide(
+            color: danger
+                ? Theme.of(context).colorScheme.error.withValues(alpha: .45)
+                : palette.hairline,
+          ),
         ),
         clipBehavior: Clip.antiAlias,
         child: Ink(
@@ -923,9 +1194,12 @@ class _SettingsTile extends StatelessWidget {
     this.enabled = true,
     this.subtitleLines = 3,
     this.onTap,
+    this.danger = false,
     super.key,
   });
 
+  /// A destructive row: the danger glyph and title ink.
+  final bool danger;
   final IconData icon;
   final String title;
   final String? subtitle;
@@ -947,14 +1221,16 @@ class _SettingsTile extends StatelessWidget {
       onTap: enabled ? onTap : null,
       leading: SizedBox.square(
         dimension: 40,
-        child: Center(child: PageGlyph(icon)),
+        child: Center(child: PageGlyph(icon, danger: danger)),
       ),
       title: Text(
         title,
         maxLines: 2,
         overflow: TextOverflow.ellipsis,
         style: AppTypography.bodyLarge.copyWith(
-          color: palette.textPrimary,
+          color: danger
+              ? Theme.of(context).colorScheme.error
+              : palette.textPrimary,
           fontWeight: FontWeight.w600,
           fontSize: 15,
         ),

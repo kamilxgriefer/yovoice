@@ -420,6 +420,26 @@ A VIP account can turn itself into a Page of type Business or Community
   name that is not reserved ("YO Voice", VIP, Admin, Support, Pomoc,
   Official, Verified … and check-mark look-alikes), and cannot be created on
   an account that already has followers.
+- **Deleting a Page (ADR-236, `managePageDeletionV1`, source only).** Page
+  settings end with a "Strefa zagrożenia" of two actions. **Delete all
+  posts** removes every post with its comments and likes; the Page and its
+  followers stay (small Pages are cleared before the call returns, larger
+  ones by `pagesMaintenance`, and the owner sees "Trwa usuwanie postów").
+  **Delete Page** (the Page's name typed as confirmation) hides the Page for
+  everyone at once and removes it **30 days later**; until then the owner
+  sees the date and "Przywróć stronę", which brings back posts and followers
+  and needs live Premium or VIP. "Usuń teraz, nie czekaj" skips the wait and
+  cannot be undone. The purge removes posts, then follower edges, storage
+  and records, then the Page; the account, its name, photo and cover,
+  friends, chats, servers, Voice Moments and Yeels stay. Reported, held or
+  removed posts are kept non-publicly for at most 90 days. A new Page can be
+  created **7 days** after the old one is gone, and a suspension survives
+  delete + re-create, also one a moderator applies to a report after the
+  Page was already deleted. The owner gets one bell row 3 days before the
+  purge, and "Strona usunięta" when it is done.
+  Followers see what they see for a paused Page ("Ta strona jest
+  niedostępna"). `request`, `purgeNow` and `clearPosts` are safety actions
+  (they work with Pages switched off, lapsed, muted, unverified).
 - **Existing settings.** Renaming checks the same name rules while you have a
   Page; making your profile friends-only or private pauses your Page; Creator
   audience cannot be turned on while you have a Page.
@@ -475,7 +495,9 @@ A VIP account can turn itself into a Page of type Business or Community
 - **Cleanup (B2, `pagesMaintenance`, every 10 minutes).** Abandoned uploads
   are removed after 15 minutes, deleted posts' files and their likes and
   comments are cleared, and once a day unreferenced files older than an hour
-  are swept.
+  are swept. The `pageDeletion` slice (ADR-236) sends the 3-day reminder,
+  purges Pages whose 30 days passed, finishes "delete all posts" jobs and
+  removes expired re-create memory rows.
 - **Likes (B4, `pagePostEngagementV1`).** Anyone who can see a published
   post may like it, also while the Page is read-only (VIP lapsed); unlike
   always works, even after a block. 60 a minute.
@@ -540,7 +562,10 @@ deep link is reachable. The spec and the owner-approved renders live in
   one.
 - **Page profile.** Cover, Page face, name with the VIP rosette, Follow /
   Message actions, Wall · About · Photos tabs; the owner gets New post, Edit
-  Page, and Page settings (pause/resume, contact fields, follower count).
+  Page, and Page settings (pause/resume, contact fields, follower count, and
+  the danger zone: delete all posts / delete Page, ADR-236). While a
+  deletion is pending the owner's Page shows the "Do usunięcia" pill and a
+  banner with the date and "Przywróć stronę".
 - **Create.** From the Premium screen's "Your Page" block (and the Treści
   entries). An account without VIP gets the honest "Pages" upsell instead of
   the form (`PremiumUpsellContext.pages`): it never offers a purchase while

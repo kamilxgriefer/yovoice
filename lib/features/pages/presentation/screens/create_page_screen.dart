@@ -15,7 +15,9 @@ import 'package:yovoice/core/theme/app_typography.dart';
 import 'package:yovoice/features/creator/data/services/creator_audience_service.dart';
 import 'package:yovoice/features/pages/data/models/page_views.dart';
 import 'package:yovoice/features/pages/data/page_catalog.dart';
+import 'package:yovoice/features/pages/data/services/page_deletion_center.dart';
 import 'package:yovoice/features/pages/data/services/pages_service.dart';
+import 'package:yovoice/features/pages/presentation/page_delete_copy.dart';
 import 'package:yovoice/features/pages/presentation/page_navigation.dart';
 import 'package:yovoice/features/pages/presentation/page_profile_copy.dart';
 import 'package:yovoice/features/pages/presentation/pages_copy.dart';
@@ -45,6 +47,7 @@ Future<void> openCreatePageFlow(
   String? backLabel,
   Stream<PageAccessState> Function()? accessStream,
   @visibleForTesting WidgetBuilder? screenBuilder,
+  @visibleForTesting PageDeletionCenter? deletion,
 }) async {
   // R11: an account that cannot run a Page (neither a canonical VIP grant
   // nor active paid Premium, and no Page) gets the honest upsell instead of
@@ -64,6 +67,21 @@ Future<void> openCreatePageFlow(
       upsellContext: PremiumUpsellContext.pages,
     );
     return;
+  }
+  // ADR-236: a new Page waits 7 days after the old one was removed. An
+  // account that deleted its Page here is told the date before the form;
+  // every other case is the server's refusal at "Opublikuj stronę".
+  if (access?.ownPage == null) {
+    final until = await (deletion ?? PageDeletionCenter.instance)
+        .recreateBlockedUntil();
+    if (!context.mounted) return;
+    if (until != null) {
+      final copy = PagesCopy(AppLocalizations.of(context));
+      ScaffoldMessenger.maybeOf(
+        context,
+      )?.showSnackBar(SnackBar(content: Text(copy.recreateAfter(until))));
+      return;
+    }
   }
   final created = await Navigator.of(context, rootNavigator: true).push<String>(
     MaterialPageRoute<String>(

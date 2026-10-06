@@ -1,9 +1,12 @@
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/features/notifications/data/models/app_notification.dart';
+import 'package:yovoice/features/pages/presentation/page_delete_copy.dart';
+import 'package:yovoice/features/pages/presentation/pages_copy.dart';
 
 /// The Page notices in the notification centre (spec premium-pages §2.8,
 /// §2.10, R12): `pageModeration`, the statement of reasons for a staff
-/// action, and `pageLapse`, the Day 0 / Day 23 notices.
+/// action, and `pageLapse`, the Day 0 / Day 23 notices and (ADR-236) the
+/// "deleted in 3 days" reminder of a pending Page deletion.
 ///
 /// The server writes an English `targetLabel` (builds 36-38 show it as a
 /// system row); this client composes the line in the reader's language
@@ -72,6 +75,8 @@ class PageNoticeCopy {
       'Your Page will be hidden in 7 days. Nothing is deleted; it returns with VIP.',
       'Twoja strona zostanie ukryta za 7 dni. Nic nie zostanie usunięte; wróci razem z VIP.',
     ),
+    // ADR-236: 3 days before a Page its owner asked to delete is removed.
+    'deletionSoon' => PagesCopy(copy).deletionSoonNotice,
     _ =>
       row.targetLabel?.trim().isNotEmpty == true
           ? row.targetLabel!.trim()

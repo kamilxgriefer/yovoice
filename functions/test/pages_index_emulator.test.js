@@ -25,6 +25,7 @@ const {
   pageFollowCarryJobDocument,
 } = require("../pages/follow_carry");
 const { pageMediaDeletionJob, pagePostCleanupJob } = require("../pages/media_contract");
+const { PAGES_DELETION_WORK_QUERIES } = require("../pages/deletion");
 const {
   EXPECTED_PROJECT,
   assertProject,
@@ -222,6 +223,54 @@ test("the follow carry-over queries run on real documents with a startAfter page
   ]);
 });
 
+// ADR-236: the Page deletion worker's four queries, each on an automatic
+// single-field index (a null reminderAt / expiresAt is never "<= now").
+test("the Page deletion worker queries run on real documents with a startAfter page", async () => {
+  const now = Timestamp.fromMillis(NOW);
+  const past = Timestamp.fromMillis(NOW - 1000);
+  const future = Timestamp.fromMillis(NOW + 60_000);
+  const due = freshUid("pgdelq");
+  const later = freshUid("pgdelq");
+  const record = (pageId, dueAt, reminderAt) => ({
+    schemaVersion: 1, pageId, state: "pending", requestedAt: past, deleteAt: dueAt,
+    pausedBefore: false, reminderAt, dueAt, step: 0, cursor: null, attempts: 0, updatedAt: past,
+  });
+  await Promise.all([
+    db.doc(`pageDeletions/${due}`).set(record(due, past, past)),
+    db.doc(`pageDeletions/${later}`).set(record(later, future, null)),
+    db.doc(`pagePostClearJobs/${due}`).set({
+      schemaVersion: 1, pageId: due, requestedAt: past, cursor: null, attempts: 0,
+      nextAttemptAt: past, updatedAt: past }),
+    db.doc(`pagePostClearJobs/${later}`).set({
+      schemaVersion: 1, pageId: later, requestedAt: past, cursor: null, attempts: 0,
+      nextAttemptAt: future, updatedAt: past }),
+    db.doc(`pageMemory/${due}`).set({
+      schemaVersion: 1, pageId: due, deletedAt: past, recreateAllowedAt: past,
+      suspension: null, expiresAt: past, updatedAt: past }),
+    db.doc(`pageMemory/${later}`).set({
+      schemaVersion: 1, pageId: later, deletedAt: past, recreateAllowedAt: past,
+      suspension: { suspendedAt: past, suspensionReason: "spam" }, expiresAt: null,
+      updatedAt: past }),
+  ]);
+  for (const [name, collection] of [
+    ["dueDeletions", "pageDeletions"],
+    ["dueReminders", "pageDeletions"],
+    ["dueClearJobs", "pagePostClearJobs"],
+    ["expiredMemory", "pageMemory"],
+  ]) {
+    const query = PAGES_DELETION_WORK_QUERIES[name](db, now);
+    const ids = (await query.limit(50).get()).docs.map((doc) => doc.id);
+    assert.equal(ids.includes(due), true, name);
+    assert.equal(ids.includes(later), false, `${name}: not due, or null`);
+    const first = await query.limit(1).get();
+    await query.startAfter(first.docs[0]).limit(10).get();
+    assert.equal(indexes.some((index) => index.collectionGroup === collection), false,
+      "no composite index is needed");
+  }
+  await Promise.all(["pageDeletions", "pagePostClearJobs", "pageMemory"].flatMap((collection) =>
+    [due, later].map((id) => db.doc(`${collection}/${id}`).delete())));
+});
+
 // B4: listPagePostLikersV1's candidate query, through the ADR-230 fetcher,
 // on real edges with a startAfter page (no composite index: single-field).
 test("the post likers candidates page newest first with the id tiebreak", async () => {
@@ -267,7 +316,7 @@ test("the smoke runs every production shape and prints no identity", async () =>
     args: parseArgs(["--project", EXPECTED_PROJECT, "--page", pageId, "--post", postId]),
   });
   assert.equal(report.ok, true, JSON.stringify(report));
-  assert.equal(report.results.length, 24);
+  assert.equal(report.results.length, 28);
   assert.equal(report.results.every((row) => row.result === "PASS"), true);
   const printed = JSON.stringify(report);
   assert.equal(printed.includes(pageId), false);

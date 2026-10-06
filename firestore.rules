@@ -5011,6 +5011,20 @@ service cloud.firestore {
     match /pageAdultRefusals/{uid} {
       allow read, write: if false;
     }
+    // ADR-236: an owner's Page deletion. The pending record (30 days to
+    // restore, then the purge), the "delete all posts" job and the memory a
+    // deleted Page leaves (the 7-day re-create cooldown and a remembered
+    // suspension). The owner learns the state from managePageDeletionV1;
+    // nothing here is ever a client's to read or write.
+    match /pageDeletions/{pageId} {
+      allow read, write: if false;
+    }
+    match /pagePostClearJobs/{pageId} {
+      allow read, write: if false;
+    }
+    match /pageMemory/{pageId} {
+      allow read, write: if false;
+    }
 
     // Server-only serialization state for the exact 10-active cap.
     match /momentCapacityLedgers/{userId} {
