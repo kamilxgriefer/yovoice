@@ -1129,11 +1129,13 @@ void main() {
       expect(find.text('Fresh identity'), findsWidgets);
       expect(find.bySemanticsLabel('Fresh identity, offline'), findsOneWidget);
       expect(find.bySemanticsLabel('New message'), findsOneWidget);
+      // The friend rail's avatar: radius 22 in its 2 px band since build 42
+      // ("Równy rytm 48", 48 px marks); it was 27.
       final storyAvatar = tester
           .widgetList<UserAvatar>(find.byType(UserAvatar))
           .singleWhere(
             (avatar) =>
-                avatar.radius == 27 && avatar.displayName == 'Fresh identity',
+                avatar.radius == 22 && avatar.displayName == 'Fresh identity',
           );
       expect(storyAvatar.photoUrl, isNull);
       expect(storyAvatar.backgroundColor, const Color(0xFF64258E));

@@ -28,7 +28,16 @@
 //             conversation actions ("…");
 //   * checks — RTL spot frames (`-rtl`, Polish copy laid out right to
 //             left), keyboard focus on a row and on each disc family
-//             (`focus-*`) and pointer hover on a row at 1440 (`hover-row`).
+//             (`focus-*`) and pointer hover on a row at 1440 (`hover-row`);
+//   * rail  — `rail*` (build 42, owner decision chatsRail A "Równy rytm
+//             48"): the list with fourteen friends, so the friend rail is
+//             full, at 320, 390, 768 and 1440 px, Dark and Pearl, 100 % and
+//             200 %, high contrast and RTL; `rail-top` is the top of the
+//             screen at three times the size (the sheet's close-up column),
+//             `rail-no-friends` the two actions alone, `chats_390_dark_ar`
+//             the whole screen in Arabic, and `rail-languages-*` contact
+//             sheets of the rail's two action labels in all 43 languages at
+//             100 % and 200 %. Run them with `--name rail`.
 //
 // Technique of `test/moderation_screenshot.dart`: real widgets, fixtures
 // through the screens' own constructor seams, an exact viewport and the real
@@ -69,8 +78,10 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:yovoice/core/localization/app_language.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
+import 'package:yovoice/core/theme/app_typography.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/media/data/models/gif_asset.dart';
@@ -179,6 +190,161 @@ Future<void> _capturePng(
   });
 }
 
+/// The host's fonts for the scripts Inter does not draw, registered under
+/// the names of the app's own fallback list (`AppTypography`), exactly as a
+/// device resolves them. Only the `rail` script frames load them, and those
+/// run last: a font registered here stays for the rest of the run, and a CJK
+/// face ahead of the emoji font would redraw the hearts of earlier frames.
+const _hostScriptFonts = <String, String>{
+  'Noto Sans Arabic': '/System/Library/Fonts/SFArabic.ttf',
+  'Noto Sans Hebrew': '/System/Library/Fonts/SFHebrew.ttf',
+  'Noto Sans Devanagari': '/System/Library/Fonts/Kohinoor.ttc',
+  'Noto Sans Bengali': '/System/Library/Fonts/KohinoorBangla.ttc',
+  'Noto Sans Thai': '/System/Library/Fonts/ThonburiUI.ttc',
+  'Noto Sans SC': '/System/Library/Fonts/Hiragino Sans GB.ttc',
+  'Noto Sans TC': '/System/Library/Fonts/Hiragino Sans GB.ttc',
+  'Noto Sans JP': '/System/Library/Fonts/Hiragino Sans GB.ttc',
+  'Noto Sans KR': '/System/Library/Fonts/AppleSDGothicNeo.ttc',
+};
+
+/// Loads [_hostScriptFonts]; returns the families this host does not have
+/// (their scripts then show tofu, and the frame says nothing about them).
+Future<List<String>> _loadHostScriptFonts() async {
+  final missing = <String>[];
+  for (final MapEntry(key: family, value: path) in _hostScriptFonts.entries) {
+    final file = File(path);
+    if (!file.existsSync()) {
+      missing.add(family);
+      continue;
+    }
+    final bytes = ByteData.sublistView(file.readAsBytesSync());
+    await (FontLoader(family)..addFont(Future.value(bytes))).load();
+  }
+  if (missing.isNotEmpty) {
+    // ignore: avoid_print
+    print('script fonts NOT available on this host: ${missing.join(', ')}');
+  }
+  return missing;
+}
+
+/// [region] of the frame (logical pixels) as an image at [pixelRatio]. Call
+/// inside `tester.runAsync`; the caller disposes the image.
+Future<ui.Image> _regionImage(Rect region, {required double pixelRatio}) async {
+  final boundary =
+      _captureKey.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+  final warmup = await boundary.toImage(pixelRatio: pixelRatio);
+  warmup.dispose();
+  await Future<void>.delayed(const Duration(milliseconds: 16));
+  final full = await boundary.toImage(pixelRatio: pixelRatio);
+  try {
+    final source = Rect.fromLTRB(
+      region.left * pixelRatio,
+      region.top * pixelRatio,
+      region.right * pixelRatio,
+      region.bottom * pixelRatio,
+    );
+    final recorder = ui.PictureRecorder();
+    Canvas(
+      recorder,
+    ).drawImageRect(full, source, Offset.zero & source.size, Paint());
+    final picture = recorder.endRecording();
+    try {
+      return await picture.toImage(source.width.round(), source.height.round());
+    } finally {
+      picture.dispose();
+    }
+  } finally {
+    full.dispose();
+  }
+}
+
+Future<void> _writePng(ui.Image image, String filename) async {
+  final data = await image.toByteData(format: ui.ImageByteFormat.png);
+  final file = File('${_outDir()}/$filename.png');
+  file.parent.createSync(recursive: true);
+  file.writeAsBytesSync(data!.buffer.asUint8List());
+  // ignore: avoid_print
+  print('wrote ${file.path}');
+}
+
+/// A close-up: [region] of the frame, enlarged to [pixelRatio].
+Future<void> _captureRegionPng(
+  WidgetTester tester,
+  String filename, {
+  required Rect region,
+  required double pixelRatio,
+}) async {
+  await tester.runAsync(() async {
+    final image = await _regionImage(region, pixelRatio: pixelRatio);
+    try {
+      await _writePng(image, filename);
+    } finally {
+      image.dispose();
+    }
+  });
+}
+
+/// One cell of a contact sheet: a captioned crop.
+typedef _SheetCell = ({String caption, ui.Image image});
+
+/// Lays [cells] (all one size, already at [pixelRatio]) out in [columns]
+/// under their captions and writes the sheet. Call inside `tester.runAsync`.
+Future<void> _writeContactSheet(
+  String filename,
+  List<_SheetCell> cells, {
+  required int columns,
+  required double pixelRatio,
+  required Color background,
+  required Color ink,
+}) async {
+  const captionHeight = 18.0;
+  const gap = 10.0;
+  final cellWidth = cells.first.image.width.toDouble();
+  final cellHeight = cells.first.image.height + captionHeight * pixelRatio;
+  final rows = (cells.length / columns).ceil();
+  final width = columns * cellWidth + (columns + 1) * gap * pixelRatio;
+  final height = rows * cellHeight + (rows + 1) * gap * pixelRatio;
+  final recorder = ui.PictureRecorder();
+  final canvas = Canvas(recorder)
+    ..drawRect(Offset.zero & Size(width, height), Paint()..color = background);
+  for (final (index, cell) in cells.indexed) {
+    final origin = Offset(
+      gap * pixelRatio + (index % columns) * (cellWidth + gap * pixelRatio),
+      gap * pixelRatio + (index ~/ columns) * (cellHeight + gap * pixelRatio),
+    );
+    final caption = TextPainter(
+      text: TextSpan(
+        text: cell.caption,
+        style: TextStyle(
+          fontFamily: AppTypography.fontFamily,
+          fontFamilyFallback: AppTypography.fontFamilyFallback,
+          fontSize: 10 * pixelRatio,
+          fontWeight: FontWeight.w600,
+          color: ink,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+      maxLines: 1,
+      ellipsis: '…',
+    )..layout(maxWidth: cellWidth);
+    caption.paint(canvas, origin);
+    caption.dispose();
+    canvas.drawImage(
+      cell.image,
+      origin + Offset(0, captionHeight * pixelRatio),
+      Paint(),
+    );
+  }
+  final picture = recorder.endRecording();
+  final sheet = await picture.toImage(width.round(), height.round());
+  picture.dispose();
+  try {
+    await _writePng(sheet, filename);
+  } finally {
+    sheet.dispose();
+  }
+}
+
 /// Bounded settle: enough frames for the streams and the identity badges to
 /// land, without hanging on an indefinite animation (the typing dots, a GIF).
 Future<void> _settle(WidgetTester tester) async {
@@ -206,6 +372,19 @@ const _people = <_Person>[
   _Person('ania', 'Ania Lewandowska', online: true),
   _Person('piotr', 'Piotr Wójcik'),
   _Person('zosia', 'Zosia Kamińska'),
+];
+
+/// Seven more friends for the `rail` frames (fourteen in all, more than the
+/// rail's cap of twelve), so a tablet and a desktop rail are full. They have
+/// no conversation, so the list under the rail is the same seven rows.
+const _railExtras = <_Person>[
+  _Person('iga', 'Iga Malinowska', online: true, availability: 'available'),
+  _Person('pawel', 'Paweł Dąbrowski'),
+  _Person('bartek', 'Bartek Lis', online: true, availability: 'busy'),
+  _Person('magda', 'Magda Sikora'),
+  _Person('filip', 'Filip Mazur', online: true),
+  _Person('natalia', 'Natalia Krawczyk'),
+  _Person('wojtek', 'Wojtek Pawlak'),
 ];
 
 _Person _person(String id) => _people.firstWhere((p) => p.id == id);
@@ -285,8 +464,8 @@ List<Conversation> _conversations() => [
   ),
 ];
 
-List<FriendUser> _friends() => [
-  for (final person in _people)
+List<FriendUser> _friends({bool rail = false}) => [
+  for (final person in [..._people, if (rail) ..._railExtras])
     FriendUser(
       id: person.id,
       displayName: person.name,
@@ -713,7 +892,7 @@ class _ScriptedAudioHost {
 }
 
 class _FixtureFriendService extends FriendService {
-  _FixtureFriendService({this.friends = true})
+  _FixtureFriendService({this.friends = true, this.rail = false})
     : super(
         firestore: FakeFirebaseFirestore(),
         auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: _me)),
@@ -721,9 +900,12 @@ class _FixtureFriendService extends FriendService {
 
   final bool friends;
 
+  /// Fourteen friends instead of seven (the `rail` frames).
+  final bool rail;
+
   @override
   Stream<List<FriendUser>> watchFriends() =>
-      _replay<List<FriendUser>>(friends ? _friends() : const []);
+      _replay<List<FriendUser>>(friends ? _friends(rail: rail) : const []);
 }
 
 class _FixtureMessageService extends MessageService {
@@ -801,9 +983,10 @@ Widget _host({
   required bool highContrast,
   required Widget child,
   TextDirection? textDirection,
+  Locale locale = const Locale('pl'),
 }) => MaterialApp(
   debugShowCheckedModeBanner: false,
-  locale: const Locale('pl'),
+  locale: locale,
   theme: theme,
   supportedLocales: AppLocalizations.supportedLocales,
   localizationsDelegates: const [
@@ -858,6 +1041,7 @@ class _Frame {
     this.textScale, {
     this.hc = false,
     this.rtl = false,
+    this.height,
   });
 
   final double width;
@@ -865,6 +1049,9 @@ class _Frame {
   final double textScale;
   final bool hc;
   final bool rtl;
+
+  /// The viewport's height where it is not the width's usual one.
+  final double? height;
 
   String name(String screen, String state) =>
       '${screen}_${width.toInt()}_${theme.name}_pl_'
@@ -893,12 +1080,15 @@ List<_Frame> _spots({bool hc = false}) => [
 Future<void> _pumpScreen(
   WidgetTester tester,
   _Frame frame,
-  Widget screen,
-) async {
+  Widget screen, {
+  Locale locale = const Locale('pl'),
+  bool warmImages = true,
+}) async {
   // The real device pixel ratio of the capture, so images (avatars, the
   // logo, a GIF) decode at the density they are drawn at.
   final ratio = _pixelRatio(frame);
-  tester.view.physicalSize = Size(frame.width, _height(frame.width)) * ratio;
+  tester.view.physicalSize =
+      Size(frame.width, frame.height ?? _height(frame.width)) * ratio;
   tester.view.devicePixelRatio = ratio;
   addTearDown(tester.view.reset);
   await tester.pumpWidget(
@@ -907,24 +1097,30 @@ Future<void> _pumpScreen(
       textScale: frame.textScale,
       highContrast: frame.hc,
       textDirection: frame.rtl ? TextDirection.rtl : null,
+      locale: locale,
       child: screen,
     ),
   );
   await _settle(tester);
-  await _warmImages(tester);
+  if (warmImages) await _warmImages(tester);
 }
 
 double _pixelRatio(_Frame frame) => frame.width < 600 ? 2.0 : 1.0;
 
-MessagesScreen _list(_FixtureMessageService service, {bool friends = true}) =>
-    MessagesScreen(
-      messageService: service,
-      friendService: _FixtureFriendService(friends: friends),
-      auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: _me)),
-      // The shell always wires "Dodaj znajomego"; without a callback the tile
-      // is disabled and cannot take focus.
-      onFindFriends: () {},
-    );
+MessagesScreen _list(
+  _FixtureMessageService service, {
+  bool friends = true,
+  bool railFriends = false,
+  Key? key,
+}) => MessagesScreen(
+  key: key,
+  messageService: service,
+  friendService: _FixtureFriendService(friends: friends, rail: railFriends),
+  auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: _me)),
+  // The shell always wires "Dodaj znajomego"; without a callback the tile
+  // is disabled and cannot take focus.
+  onFindFriends: () {},
+);
 
 ChatScreen _chat(
   _FixtureMessageService service, {
@@ -1281,6 +1477,87 @@ void main() {
         ),
       );
       await _settle(tester);
+      await _capturePng(tester, name, pixelRatio: _pixelRatio(frame));
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  // ------------------------------------------------------------- the rail
+  //
+  // Build 42, owner decision chatsRail A "Równy rytm 48": every mark 48 px
+  // on one 64 px pitch, the first on the page's 16 px gutter, the rail 76 px
+  // tall, the two actions under one short word. Fourteen friends, so the
+  // rail is full at every width (it shows twelve): five whole marks at 320,
+  // six at 390, twelve at 768 and thirteen in the 880 px list column at
+  // 1440. test/chats_rail_rhythm_test.dart pins the numbers; these frames
+  // are the look. Each case prints the rects it shows.
+  final Finder railList = find.ancestor(
+    of: find.byKey(const ValueKey('messages-add-friend')),
+    matching: find.byType(ListView),
+  );
+  for (final frame in [
+    _Frame(320, _dark, 1, height: 690),
+    _Frame(390, _dark, 1),
+    _Frame(768, _dark, 1),
+    _Frame(1440, _dark, 1),
+    _Frame(390, _pearl, 1),
+    _Frame(768, _pearl, 1),
+    _Frame(1440, _pearl, 1),
+    _Frame(320, _dark, 2, height: 690),
+    _Frame(390, _dark, 2),
+    _Frame(390, _pearl, 2),
+    _Frame(768, _dark, 2),
+    _Frame(1440, _dark, 2),
+    _Frame(390, _dark, 1, hc: true),
+    _Frame(390, _pearl, 1, hc: true),
+    _Frame(390, _dark, 1, rtl: true),
+    _Frame(390, _dark, 2, rtl: true),
+  ]) {
+    if (!_textScales().contains(frame.textScale)) continue;
+    final name = frame.name('chats', 'rail');
+    _capture('rail ${frame.width.toInt()} $name', (tester) async {
+      await _pumpScreen(
+        tester,
+        frame,
+        _list(_FixtureMessageService(), railFriends: true),
+      );
+      await _capturePng(tester, name, pixelRatio: _pixelRatio(frame));
+      // The sheet's close-up column: the top of the screen, enlarged.
+      if (!frame.hc && frame.width <= 768) {
+        await _captureRegionPng(
+          tester,
+          frame.name('chats', 'rail-top'),
+          region: Rect.fromLTWH(
+            0,
+            0,
+            frame.width,
+            frame.textScale > 1 ? 420 : 300,
+          ),
+          pixelRatio: frame.width < 600 ? 3 : 2,
+        );
+      }
+      final rail = tester.getRect(railList);
+      final add = tester.getRect(
+        find.byKey(const ValueKey('messages-add-friend')),
+      );
+      final write = tester.getRect(
+        find.byKey(const ValueKey('messages-new-message')),
+      );
+      // ignore: avoid_print
+      print('$name rail: $rail add: $add write: $write');
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  // The rail with no friends yet: the two actions stand alone.
+  for (final frame in [_Frame(390, _dark, 1), _Frame(390, _pearl, 1)]) {
+    final name = frame.name('chats', 'rail-no-friends');
+    _capture('rail ${frame.width.toInt()} $name', (tester) async {
+      await _pumpScreen(
+        tester,
+        frame,
+        _list(_FixtureMessageService(), friends: false),
+      );
       await _capturePng(tester, name, pixelRatio: _pixelRatio(frame));
       expect(tester.takeException(), isNull);
     });
@@ -1850,6 +2127,117 @@ void main() {
         expect(tester.takeException(), isNull);
         await _teardown(tester);
       });
+    });
+  }
+
+  // ------------------------------------------- the rail in other scripts
+  //
+  // LAST on purpose: these cases register the host's script fonts
+  // ([_hostScriptFonts]) for the rest of the run.
+  //
+  // The whole screen in Arabic, laid out right to left by its own locale.
+  for (final frame in [_Frame(390, _dark, 1), _Frame(390, _pearl, 1)]) {
+    final name = 'chats_390_${frame.theme.name}_ar_100_rail';
+    _capture('rail 390 $name', (tester) async {
+      await tester.runAsync(_loadHostScriptFonts);
+      await _pumpScreen(
+        tester,
+        frame,
+        _list(_FixtureMessageService(), railFriends: true),
+        locale: const Locale('ar'),
+      );
+      await _capturePng(tester, name, pixelRatio: _pixelRatio(frame));
+      await _captureRegionPng(
+        tester,
+        'chats_390_${frame.theme.name}_ar_100_rail-top',
+        region: const Rect.fromLTWH(0, 0, 390, 300),
+        pixelRatio: 3,
+      );
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  // The two action labels in every selectable language, cut from the real
+  // screen: at 100 % the first four tiles (the pair and two friends, so the
+  // 64 px rhythm shows), at 200 % the whole 390 px rail. One contact sheet
+  // per fifteen languages, each crop under its locale and the spoken name.
+  for (final scale in _textScales()) {
+    final percent = (scale * 100).round();
+    _capture('rail languages $percent', (tester) async {
+      final missing = await tester.runAsync(_loadHostScriptFonts);
+      final frame = _Frame(390, _dark, scale);
+      final cells = <_SheetCell>[];
+      for (final language in selectableAppLanguages) {
+        await _pumpScreen(
+          tester,
+          frame,
+          _list(
+            _FixtureMessageService(),
+            railFriends: true,
+            // A fresh screen per language, not a rebuild of the last one.
+            key: ValueKey('rail-${language.localeKey}-$percent'),
+          ),
+          locale: language.locale!,
+          warmImages: false,
+        );
+        final rail = tester.getRect(railList);
+        final add = find.byKey(const ValueKey('messages-add-friend'));
+        final write = find.byKey(const ValueKey('messages-new-message'));
+        final rtl = Directionality.of(tester.element(add)) == TextDirection.rtl;
+        final cropWidth = scale > 1 ? 390.0 : 264.0;
+        final region = Rect.fromLTRB(
+          rtl ? 390 - cropWidth : 0,
+          rail.top - 6,
+          rtl ? 390 : cropWidth,
+          rail.bottom,
+        );
+        String shown(Finder tile) => tester
+            .widget<Text>(
+              find.descendant(of: tile, matching: find.byType(Text)),
+            )
+            .data!;
+        // ignore: avoid_print
+        print(
+          'rail-languages-$percent ${language.localeKey}: '
+          '"${shown(add)}" ${tester.getSize(add).width} / '
+          '"${shown(write)}" ${tester.getSize(write).width}',
+        );
+        final copy = AppLocalizations.of(tester.element(add));
+        final caption =
+            '${language.localeKey} · '
+            '${copy.contextualText('chatsRail.addFriend', 'Add friend', 'Dodaj znajomego')}'
+            ' / '
+            '${copy.contextualText('chatsRail.newMessage', 'New message', 'Nowa wiadomość')}';
+        final image = await tester.runAsync(
+          () => _regionImage(region, pixelRatio: scale > 1 ? 2 : 3),
+        );
+        cells.add((caption: caption, image: image!));
+        expect(tester.takeException(), isNull, reason: language.localeKey);
+      }
+      await tester.runAsync(() async {
+        const perSheet = 15;
+        for (var start = 0; start < cells.length; start += perSheet) {
+          final end = start + perSheet < cells.length
+              ? start + perSheet
+              : cells.length;
+          await _writeContactSheet(
+            'chats_390_dark_all_${percent}_rail-languages-'
+            '${start ~/ perSheet + 1}',
+            cells.sublist(start, end),
+            columns: 3,
+            pixelRatio: scale > 1 ? 2 : 3,
+            background: const Color(0xFF05040A),
+            ink: const Color(0xFFE8E4F5),
+          );
+        }
+        for (final cell in cells) {
+          cell.image.dispose();
+        }
+      });
+      if (missing != null && missing.isNotEmpty) {
+        // ignore: avoid_print
+        print('rail-languages-$percent: tofu expected for $missing');
+      }
     });
   }
 }

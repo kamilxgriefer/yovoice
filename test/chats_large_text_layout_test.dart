@@ -5,7 +5,9 @@
 // reader's largest text, the friend rail's labels read in full instead of
 // as clipped stubs and the composer's placeholder is never cut, while the
 // composer's discs share one centre line with the field's text. At 1.0 the
-// rail and the composer are exactly as before.
+// rail is the build 42 "Równy rytm 48" rail (one line, 76 px; its geometry
+// is pinned in test/chats_rail_rhythm_test.dart) and the composer is
+// exactly as before.
 
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
@@ -26,6 +28,7 @@ import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
 import 'package:yovoice/features/messages/presentation/screens/messages_screen.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
+import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 
 const _me = 'me-uid';
 const _them = 'them-uid';
@@ -205,24 +208,42 @@ void main() {
         );
         await tester.pumpAndSettle();
 
-        for (final label in ['Dodaj znajomego', 'Nowa wiadomość']) {
+        // Build 42: the actions carry one short word; the full phrase is
+        // their spoken name (test/chats_rail_rhythm_test.dart).
+        for (final label in ['Dodaj', 'Napisz']) {
           final paragraph = _paragraph(tester, label, within: _rail());
           expect(paragraph.maxLines, 2, reason: label);
           expect(paragraph.didExceedMaxLines, isFalse, reason: label);
         }
         for (final name in _friendNames) {
           final paragraph = _paragraph(tester, name, within: _rail());
+          expect(paragraph.maxLines, 2, reason: name);
           expect(paragraph.didExceedMaxLines, isFalse, reason: name);
         }
+        // The tiles widen with the reader's text: an action from 64 px to
+        // 1.3× (83.2 px), a friend to 2× (128 px), which is what lets a
+        // first name and a long surname take one line each. (A surname
+        // wider than that widens the friends' shared tile, up to 144 px:
+        // test/chats_rail_rhythm_test.dart.)
         final addFriend = find.byKey(const ValueKey('messages-add-friend'));
-        expect(tester.getSize(addFriend).width, greaterThan(108));
+        expect(tester.getSize(addFriend).width, greaterThan(64));
+        expect(tester.getSize(addFriend).width, moreOrLessEquals(83.2));
+        for (final name in _friendNames) {
+          final tile = find.ancestor(
+            of: find.descendant(of: _rail(), matching: find.text(name)),
+            matching: find.byType(AccessibleTapRegion),
+          );
+          expect(
+            tester.getSize(tile.first).width,
+            moreOrLessEquals(128),
+            reason: name,
+          );
+        }
         expect(tester.takeException(), isNull);
       });
     }
 
-    testWidgets('at 1.0 the rail is unchanged: one line, 92 px', (
-      tester,
-    ) async {
+    testWidgets('at 1.0 the rail takes one line and 76 px', (tester) async {
       _surface(tester, const Size(390, 844));
       await tester.pumpWidget(
         _host(
@@ -238,8 +259,20 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(_paragraph(tester, 'Dodaj znajomego').maxLines, 1);
-      expect(tester.getSize(_rail()).height, 92);
+      for (final label in ['Dodaj', 'Napisz', ..._friendNames]) {
+        expect(
+          _paragraph(tester, label, within: _rail()).maxLines,
+          1,
+          reason: label,
+        );
+      }
+      // Build 42 ("Równy rytm 48"): 48 px mark + 6 + one 13.2 px line + 8.8;
+      // it was 92 px with the 58 px marks.
+      expect(tester.getSize(_rail()).height, 76);
+      expect(
+        tester.getSize(find.byKey(const ValueKey('messages-add-friend'))).width,
+        64,
+      );
     });
   });
 

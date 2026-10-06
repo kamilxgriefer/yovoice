@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -900,29 +901,124 @@ class _FriendsRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
-    final labelScale = MediaQuery.textScalerOf(context).scale(11) / 11;
+    final textScaler = MediaQuery.textScalerOf(context);
+    final labelScale =
+        textScaler.scale(_FriendStory.labelSize) / _FriendStory.labelSize;
+    // "Równy rytm 48" (build 42): the two actions carry one short word
+    // ("Dodaj" / "Napisz"); the full phrase stays their spoken name and
+    // tooltip. Every language has its own short word, chosen to fit the
+    // 64 px tile on one line (test/chats_rail_rhythm_test.dart).
+    final addLabel = copy.contextualText('chatsRail.add', 'Add', 'Dodaj');
+    final addName = copy.contextualText(
+      'chatsRail.addFriend',
+      'Add friend',
+      'Dodaj znajomego',
+    );
+    final writeLabel = copy.contextualText(
+      'chatsRail.write',
+      'Write',
+      'Napisz',
+    );
+    final writeName = copy.contextualText(
+      'chatsRail.newMessage',
+      'New message',
+      'Nowa wiadomość',
+    );
     // Large text: a label wraps to a second line and its tile widens with
-    // the reader's text (up to a cap), so "Dodaj znajomego" or a first name
-    // and surname read in full instead of as a clipped stub. At 1.0 the
-    // rail is unchanged: one line, 108 px action tiles, 76 px friends.
+    // the reader's text, so a first name and surname read in full instead
+    // of as a clipped stub. A friend widens with the text (128 px at 200 %),
+    // an action to 1.3× (83 px). At 1.0 every tile is 64 px and the label
+    // takes one line.
     final labelLines = labelScale > _FriendStory.wrapScale ? 2 : 1;
-    final actionWidth =
-        _FriendStory.actionWidth *
-        labelScale.clamp(1.0, _FriendStory.actionGrowthCap);
-    final friendWidth =
-        _FriendStory.friendWidth *
+    final baseStyle = DefaultTextStyle.of(context).style;
+    final textDirection = Directionality.of(context);
+    // `Text` draws every label bold under the platform's Bold Text setting;
+    // the measurement has to as well, or a name measured at its medium
+    // weight would be broken inside a word once it is drawn.
+    final boldText = MediaQuery.boldTextOf(context);
+    // The width a label is drawn at while it stays whole: all of it on one
+    // line, or its longest word once it may wrap.
+    double labelWidth(String label, {required bool action}) {
+      var style = baseStyle.merge(_FriendStory.labelStyle(action: action));
+      if (boldText) {
+        style = style.merge(const TextStyle(fontWeight: FontWeight.bold));
+      }
+      final painter = TextPainter(
+        text: TextSpan(text: label, style: style),
+        textDirection: textDirection,
+        textScaler: textScaler,
+      )..layout();
+      final width = labelLines == 1
+          ? painter.maxIntrinsicWidth
+          : painter.minIntrinsicWidth;
+      painter.dispose();
+      return width;
+    }
+
+    // The tile width that label needs: the label and its air on each side.
+    double widthNeeded(String label, {required bool action}) =>
+        (labelWidth(label, action: action) + 2 * _FriendStory.labelInset)
+            .ceilToDouble();
+
+    // An action label is never cut: its tile is at least as wide as the
+    // whole label on one line, or as its longest word once it may wrap. The
+    // catalog's words all fit 64 px in the product font, so this only
+    // widens the pair where a device draws a script with a wider fallback
+    // font, or a word outgrows 1.3× at the reader's text size.
+    //
+    // Nor do the two labels run together: they are centred in tiles of one
+    // width, so the space between them is that width less their mean width.
+    // At rest it is at least the 6 px of air two tiles give; it grows with
+    // the reader's text (12 px at 200 %), because 6 px between two 22 px
+    // words is a word space and "Добавить Написать" would read as one
+    // phrase. At 1.0 this asks for no more than the label's own width does.
+    final addWidth = labelWidth(addLabel, action: true);
+    final writeWidth = labelWidth(writeLabel, action: true);
+    final actionWidth = <double>[
+      _FriendStory.tileWidth *
+          labelScale.clamp(1.0, _FriendStory.actionGrowthCap),
+      (math.max(addWidth, writeWidth) + 2 * _FriendStory.labelInset)
+          .ceilToDouble(),
+      ((addWidth + writeWidth) / 2 + 2 * _FriendStory.labelInset * labelScale)
+          .ceilToDouble(),
+    ].reduce(math.max);
+    // A friend's name is ellipsized on its one line at rest. Once names
+    // wrap, none is broken inside a word while the tile can still grow: the
+    // friends share one width (one pitch), the text-scaled tile or what the
+    // longest word among their names needs ("Malinowska" at 200 % is 127 px
+    // and needs a 134 px tile), up to 2.25× (144 px, a friend's width at
+    // 200 % before the marks became 48 px).
+    final shownFriends = friends.take(12).toList(growable: false);
+    final scaledFriendWidth =
+        _FriendStory.tileWidth *
         labelScale.clamp(1.0, _FriendStory.friendGrowthCap);
+    final friendWidth = labelLines == 1
+        ? scaledFriendWidth
+        : math.min(
+            _FriendStory.tileWidth * _FriendStory.friendWordCap,
+            shownFriends.fold(
+              scaledFriendWidth,
+              (width, friend) => math.max(
+                width,
+                widthNeeded(friend.displayName, action: false),
+              ),
+            ),
+          );
 
     return SizedBox(
       height: _FriendStory.railHeight(labelScale, labelLines),
       child: ListView(
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 10),
+        // The first 48 px mark sits on the page's 16 px gutter: 8 px of
+        // list padding plus the 8 px between a 64 px tile and its mark.
+        padding: const EdgeInsets.symmetric(
+          horizontal: _FriendStory.railPadding,
+        ),
         children: [
           _FriendStory(
             key: const ValueKey('messages-add-friend'),
-            label: copy.text('Add friend', 'Dodaj znajomego'),
-            semanticLabel: copy.text('Add friend', 'Dodaj znajomego'),
+            label: addLabel,
+            semanticLabel: addName,
             icon: AppIcons.addFriend,
             onTap: onFindFriends,
             width: actionWidth,
@@ -930,26 +1026,24 @@ class _FriendsRow extends StatelessWidget {
           ),
           _FriendStory(
             key: const ValueKey('messages-new-message'),
-            label: copy.text('New message', 'Nowa wiadomość'),
-            semanticLabel: copy.text('New message', 'Nowa wiadomość'),
+            label: writeLabel,
+            semanticLabel: writeName,
             icon: AppIcons.compose,
             onTap: onNewMessage,
             width: actionWidth,
             labelLines: labelLines,
           ),
-          ...friends
-              .take(12)
-              .map(
-                (friend) => _FriendStory(
-                  label: friend.displayName,
-                  semanticLabel:
-                      '${friend.displayName}, ${friend.isOnline ? copy.text('online', 'aktywny') : copy.text('offline', 'nieaktywny')}',
-                  friend: friend,
-                  onTap: () => onFriendSelected(friend),
-                  width: friendWidth,
-                  labelLines: labelLines,
-                ),
-              ),
+          ...shownFriends.map(
+            (friend) => _FriendStory(
+              label: friend.displayName,
+              semanticLabel:
+                  '${friend.displayName}, ${friend.isOnline ? copy.text('online', 'aktywny') : copy.text('offline', 'nieaktywny')}',
+              friend: friend,
+              onTap: () => onFriendSelected(friend),
+              width: friendWidth,
+              labelLines: labelLines,
+            ),
+          ),
         ],
       ),
     );
@@ -963,7 +1057,7 @@ class _FriendStory extends StatelessWidget {
     required this.onTap,
     this.friend,
     this.icon,
-    this.width = friendWidth,
+    this.width = tileWidth,
     this.labelLines = 1,
     super.key,
   });
@@ -978,32 +1072,59 @@ class _FriendStory extends StatelessWidget {
   /// 1 at rest; 2 once the reader's text is larger than [wrapScale].
   final int labelLines;
 
-  /// The tile widths at 1.0 text.
-  static const double actionWidth = 108;
-  static const double friendWidth = 76;
+  /// "Równy rytm 48" (build 42): every tile — the two actions and each
+  /// friend — is 64 px wide at 1.0 text, so the 48 px marks stand on one
+  /// 64 px pitch with an even 16 px between them (six whole marks at
+  /// 390 px). No separators: the tile owns the gap.
+  static const double tileWidth = 64;
+
+  /// The list's own side padding; with the 8 px between a tile and its
+  /// mark the first mark starts on the page's 16 px gutter.
+  static const double railPadding = 8;
 
   /// How far a tile widens with the text scale: an action tile to 1.3×
-  /// (140 px at 200 %), a friend to 1.9× (144 px), which holds two lines of
-  /// a Polish first name and surname at 200 %.
+  /// (83 px at 200 %, or what its label and the space between the two
+  /// labels need where that is more, see [_FriendsRow]), a friend with the
+  /// text up to 2× (128 px at 200 %),
+  /// which holds two lines of most Polish first names and surnames at
+  /// 200 %.
   static const double actionGrowthCap = 1.3;
-  static const double friendGrowthCap = 1.9;
+  static const double friendGrowthCap = 2;
+
+  /// How far the friends' shared tile may widen beyond that, so a long
+  /// surname is not broken inside the word: 2.25× (144 px, which holds a
+  /// 138 px word).
+  static const double friendWordCap = 2.25;
 
   /// Above this text scale the label may take a second line.
   static const double wrapScale = 1.15;
 
-  static const double _labelSize = 11;
+  static const double labelSize = 11;
   static const double _labelHeight = 1.2;
   static const double _labelGap = 6;
 
-  /// The breathing room under the label (focus ring and press scale).
-  static const double _railSlack = 14.8;
+  /// Air on each side of a label inside its tile, so two neighbouring
+  /// ellipsized names never touch.
+  static const double labelInset = 3;
 
-  /// The rail's height for a text scale and label line count: 92 px at 1.0.
+  /// The breathing room under the label (focus ring and press scale).
+  static const double _railSlack = 8.8;
+
+  /// The rail's height for a text scale and label line count: 76 px at 1.0.
   static double railHeight(double labelScale, int labelLines) =>
       _markSize +
       _labelGap +
-      labelLines * _labelSize * _labelHeight * labelScale +
+      labelLines * labelSize * _labelHeight * labelScale +
       _railSlack;
+
+  /// The label's type; an action label is bold, a friend's name medium.
+  static TextStyle labelStyle({required bool action, Color? color}) =>
+      TextStyle(
+        color: color,
+        fontSize: labelSize,
+        height: _labelHeight,
+        fontWeight: action ? FontWeight.w700 : FontWeight.w500,
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -1024,8 +1145,9 @@ class _FriendStory extends StatelessWidget {
     final action = icon;
     // Refine-look §8.3: the two action tiles are R7-accent ghost discs (the
     // one voice-of-the-app accent, never a filled violet coin); a friend is
-    // the brand-finished avatar inside a hairline band. The geometry is
-    // unchanged: a 58 px mark (2 px band around a radius-27 avatar).
+    // the brand-finished avatar inside a hairline band. Build 42 ("Równy
+    // rytm 48"): one 48 px mark for both — a 1.5 px ring around a 20 px
+    // glyph, or a 2 px band around a radius-22 avatar.
     final Widget mark = action != null
         ? Container(
             width: _markSize,
@@ -1043,10 +1165,14 @@ class _FriendStory extends StatelessWidget {
                 width: 1.5,
               ),
             ),
-            child: Icon(action, color: palette.interactiveForeground, size: 24),
+            child: Icon(
+              action,
+              color: palette.interactiveForeground,
+              size: _glyphSize,
+            ),
           )
         : Container(
-            padding: const EdgeInsets.all(2),
+            padding: const EdgeInsets.all(_bandWidth),
             // A quiet hairline band, never a story gradient and never a
             // status ring: this rail carries no Moments state, and presence
             // is already the dot below. One presence mark per avatar
@@ -1056,7 +1182,7 @@ class _FriendStory extends StatelessWidget {
               color: highContrast ? palette.borderStrong : palette.hairline,
             ),
             child: UserAvatar(
-              radius: 27,
+              radius: _avatarRadius,
               userId: user?.id,
               photoUrl: hasPhoto ? user!.photoUrl : null,
               mediaRevision: user?.profileUpdatedAt,
@@ -1085,32 +1211,31 @@ class _FriendStory extends StatelessWidget {
                     mark,
                     if (status != null && status != PeopleStatus.away)
                       PositionedDirectional(
-                        end: 2,
-                        bottom: 2,
+                        end: 1,
+                        bottom: 1,
                         child: AvailabilityDot(
                           status: status,
-                          size: 15,
+                          size: 13,
                           borderColor: palette.background,
-                          borderWidth: 2.5,
+                          borderWidth: 2,
                         ),
                       ),
                   ],
                 ),
                 const SizedBox(height: _labelGap),
-                Text(
-                  label,
-                  maxLines: labelLines,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: action != null
-                        ? palette.interactiveForeground
-                        : palette.textSecondary,
-                    fontSize: _labelSize,
-                    height: _labelHeight,
-                    fontWeight: action != null
-                        ? FontWeight.w700
-                        : FontWeight.w500,
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: labelInset),
+                  child: Text(
+                    label,
+                    maxLines: labelLines,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: labelStyle(
+                      action: action != null,
+                      color: action != null
+                          ? palette.interactiveForeground
+                          : palette.textSecondary,
+                    ),
                   ),
                 ),
               ],
@@ -1121,8 +1246,12 @@ class _FriendStory extends StatelessWidget {
     );
   }
 
-  /// The rail's mark: a radius-27 avatar in its 2 px band.
-  static const double _markSize = 58;
+  /// The rail's mark: a radius-22 avatar in its 2 px band, or the action's
+  /// 48 px ghost disc — the same 48 px for both.
+  static const double _markSize = 48;
+  static const double _avatarRadius = 22;
+  static const double _bandWidth = 2;
+  static const double _glyphSize = 20;
 }
 
 class _ConversationTile extends StatelessWidget {

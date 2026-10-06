@@ -75,8 +75,20 @@ void main() {
 
   group('Chats to retained Friends destination', () {
     for (final localeCase in const [
-      (locale: Locale('en'), add: 'Add friend', message: 'New message'),
-      (locale: Locale('pl'), add: 'Dodaj znajomego', message: 'Nowa wiadomość'),
+      (
+        locale: Locale('en'),
+        add: 'Add friend',
+        message: 'New message',
+        addLabel: 'Add',
+        messageLabel: 'Write',
+      ),
+      (
+        locale: Locale('pl'),
+        add: 'Dodaj znajomego',
+        message: 'Nowa wiadomość',
+        addLabel: 'Dodaj',
+        messageLabel: 'Napisz',
+      ),
     ]) {
       testWidgets('Chats keeps add-friend and new-message separate in '
           '${localeCase.locale.languageCode}', (tester) async {
@@ -117,6 +129,22 @@ void main() {
         );
         expect(
           find.byKey(const ValueKey('messages-new-message')),
+          findsOneWidget,
+        );
+        // Build 42 ("Równy rytm 48"): each action shows one short word under
+        // its disc; the full phrase above stays its spoken name.
+        expect(
+          find.descendant(
+            of: find.byKey(const ValueKey('messages-add-friend')),
+            matching: find.text(localeCase.addLabel),
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(
+            of: find.byKey(const ValueKey('messages-new-message')),
+            matching: find.text(localeCase.messageLabel),
+          ),
           findsOneWidget,
         );
         expect(tester.getSize(addFriend).width, greaterThanOrEqualTo(48));

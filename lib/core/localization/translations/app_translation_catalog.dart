@@ -23,6 +23,7 @@ import 'translations_gif_messages.dart';
 import 'translations_gif_composer.dart';
 import 'translations_giphy.dart';
 import 'translations_auth_call_release.dart';
+import 'translations_chats_rail.dart';
 import 'translations_chinese_traditional.dart';
 import 'translations_current_release.dart';
 import 'translations_direct_call_refusals.dart';
@@ -238,6 +239,7 @@ const appTranslationKeys = <String>{
   ...profileMediaViewerTranslationKeys,
   ...notificationEngagementTranslationKeys,
   ...vipLikersTranslationKeys,
+  ...chatsRailTranslationKeys,
   ...pagesTranslationKeys,
 };
 
@@ -297,6 +299,7 @@ final appTranslations = <String, Map<String, String>>{
         ...profileMediaViewerTranslations[entry.key]!,
         ...notificationEngagementTranslations[entry.key]!,
         ...vipLikersTranslations[entry.key]!,
+        ...chatsRailTranslations[entry.key]!,
         ...pagesTranslations[entry.key]!,
         ...localizedExtendedLanguageNames[entry.key]!,
       }),

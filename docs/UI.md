@@ -1063,6 +1063,58 @@ renders of the real widgets (Dark; composer text/photos/voice at 390, 320 at
 session scratchpad (`c4/shots`). **Not verified on a device, simulator or
 real browser.**
 
+## Chats friend rail (build 42, "Równy rytm 48"; source only)
+
+The owner chose option A of the `chatsRail` sheet on 2026-10-03: the circles
+at the top of Chats were too big and unevenly spaced (58 px marks in 108 px
+and 76 px tiles gave gaps of 50, 34 and 18 px, the first mark 35 px from the
+edge, four whole marks on a phone). Only the rail's size and spacing changed;
+its two actions, its friends (the first twelve), its presence dots and the
+conversation rows under it are as they were. It carries no unread marks.
+
+- **One rhythm (`_FriendsRow` / `_FriendStory` in `messages_screen.dart`).**
+  Every mark is 48 px: a friend is a radius-22 `UserAvatar` in a 2 px
+  hairline band, an action a 48 px ghost disc with a 1.5 px border and a
+  20 px glyph. Every tile is 64 px wide with no separator, and the list has
+  8 px of side padding, so the marks stand 16 px apart and the first one
+  starts on the page's 16 px gutter, under the search field (left edges 16 /
+  80 / 144 / 208 / 272 / 336). The label is 11 px, one line, 6 px under the
+  mark, with 3 px of air on each side; the rail is 76 px tall (it was 92).
+  The presence dot is 13 px with a 2 px border.
+- **Whole marks per width.** 5 at 320 px, 6 at 390 px (2 actions + 4
+  friends; it was 4), 12 at 768 px, and 13 in the 880 px list column on
+  desktop. The rail scrolls horizontally for the rest; in RTL it starts from
+  the right gutter.
+- **Short labels, full names.** The actions show one word — "Dodaj" /
+  "Napisz", "Add" / "Write" — and keep the whole phrase ("Dodaj znajomego" /
+  "Nowa wiadomość") as their semantics label and tooltip. The copy lives
+  under `chatsRail.*` context keys (`translations_chats_rail.dart`): every
+  one of the 43 languages has its own short word that fits the 58 px label
+  box in the product font; where a language's verb does not (German, Dutch,
+  Hungarian, Greek) the label is the noun of the spoken phrase ("Freund" /
+  "Nachricht"). A label that a device's fallback font draws wider widens
+  both action tiles together rather than being cut.
+- **Large text.** Above 115 % a label may take two lines and the rail grows
+  with it (115.6 px at 200 %). The marks stay 48 px. The actions widen to
+  1.3× (83 px), or to their longest word where that is more, and far enough
+  that the two labels stand apart by the 6 px they have at rest times the
+  text scale (12 px at 200 %; 6 px between two 22 px words is a word space,
+  and "Добавить Написать" read as one phrase). The friends share one width —
+  64 px × the text scale up to 128 px, or what the longest word among their
+  names needs, up to 144 px — so a first name and a surname take a line each
+  and no name is broken inside a word that 138 px can hold. Names are
+  measured at the weight they are drawn with, so this also holds under the
+  platform's Bold Text setting.
+
+Evidence: `test/chats_rail_rhythm_test.dart` (geometry at 320, 390, 768 and
+1440 px, RTL, 130 % and 200 %, and all 43 languages), plus real-font harness
+renders of the real screen from `test/slim_chats_capture.dart --name rail`
+(Dark and Pearl, 100 % and 200 %, high contrast, RTL, the screen in Arabic,
+and contact sheets of the two labels in every language) in
+`yovoice-evidence/2026-10-03/w42/chats`. Scripts other than Latin, Cyrillic
+and Greek were rendered with the capture host's macOS fonts, not the fonts a
+phone uses. **Not verified on a device, simulator or real browser.**
+
 ## The "Coming soon" pattern
 
 When a screen needs a feature with no real backend support yet:
