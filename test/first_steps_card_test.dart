@@ -615,25 +615,28 @@ void main() {
     expect(store.writes, [FirstStepsOutcome.completed]);
   });
 
-  testWidgets('friends still joining their profiles: the card waits, and an '
-      'account that did everything long ago gets no Gotowe', (tester) async {
-    // The friends stream answers with an empty list before it has joined the
-    // public profiles of the friends it found. The account's own friendCount
-    // says that emptiness is not real yet.
+  testWidgets('friends not answered yet: the card waits, and an account that '
+      'did everything long ago gets no Gotowe', (tester) async {
+    // `FriendService.watchFriends()` stays silent while relationship rows are
+    // listed but no profile has joined, so what the card sees meanwhile is a
+    // waiting snapshot, not an empty list. That silence is pinned in
+    // test/friend_service_first_answer_test.dart.
     final store = _MemoryStore();
     final media = _Media().service;
     final profiles = StreamController<UserProfile>();
     addTearDown(profiles.close);
     final stream = profiles.stream;
-    Widget host(List<FriendUser> friends) => _host(
+    Widget host(AsyncSnapshot<List<FriendUser>> friends) => _host(
       profile: stream,
       store: store,
       media: media,
-      friends: _data(friends),
+      friends: friends,
       servers: _data([_server()]),
     );
 
-    await tester.pumpWidget(host(const <FriendUser>[]));
+    await tester.pumpWidget(
+      host(const AsyncSnapshot<List<FriendUser>>.waiting()),
+    );
     profiles.add(_profile(moments: 3, following: 1, friends: 2));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('home-first-steps')), findsNothing);
@@ -642,15 +645,15 @@ void main() {
 
     // The profiles arrive: every step is done, and was before this device
     // ever showed a checklist. No card, no "Gotowe".
-    await tester.pumpWidget(host([_friend('ola'), _friend('jan')]));
+    await tester.pumpWidget(host(_data([_friend('ola'), _friend('jan')])));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('home-first-steps')), findsNothing);
     expect(find.byKey(const ValueKey('home-first-steps-done')), findsNothing);
     expect(store.writes, [FirstStepsOutcome.completed]);
   });
 
-  testWidgets('friends still joining their profiles: the friend step is never '
-      'shown open to somebody who has friends', (tester) async {
+  testWidgets('the friends list is the truth: a friendCount that drifted above '
+      'an empty list does not hide the card', (tester) async {
     final store = _MemoryStore();
     final media = _Media().service;
     final profiles = StreamController<UserProfile>();
@@ -663,12 +666,20 @@ void main() {
       friends: _data(friends),
     );
 
+    // The counter says two friends; the relationship rows say nobody. The
+    // rows are canonical, so the step is open and the card is shown.
     await tester.pumpWidget(host(const <FriendUser>[]));
-    profiles.add(_profile(friends: 1));
+    profiles.add(_profile(friends: 2));
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('home-first-steps')), findsNothing);
-    expect(store.writes, isEmpty);
+    expect(find.text('1 z 5'), findsOneWidget);
+    expect(
+      find.text('Wyszukaj po nazwie albo wyślij swój link'),
+      findsOneWidget,
+    );
+    expect(store.writes, [FirstStepsOutcome.started]);
 
+    // A friend in the list ticks the step whatever the counter says.
+    profiles.add(_profile());
     await tester.pumpWidget(host([_friend('ola')]));
     await tester.pumpAndSettle();
     expect(find.text('2 z 5'), findsOneWidget);
@@ -680,11 +691,11 @@ void main() {
       findsNothing,
       reason: 'the friend step is ticked, not a control',
     );
-    expect(store.writes, [FirstStepsOutcome.started]);
 
-    // The last friend is removed: the list empties and the counter follows.
+    // The last friend is removed: the list empties and the step reopens at
+    // once, before the counter has followed.
+    profiles.add(_profile(friends: 1));
     await tester.pumpWidget(host(const <FriendUser>[]));
-    profiles.add(_profile());
     await tester.pumpAndSettle();
     expect(find.text('1 z 5'), findsOneWidget);
     expect(

@@ -40,10 +40,10 @@ enum FirstStepsCardMode {
 ///
 /// 1. a profile photo — the avatar grant `ProfileMediaService` resolves for
 ///    the account (the same single-flight the greeting's avatar uses);
-/// 2. a first friend — the friends stream Start already listens to (its
-///    empty list is believed only when the account's own `friendCount`
-///    agrees, because that stream answers empty before it has joined the
-///    friends' profiles);
+/// 2. a first friend — the friends stream Start already listens to. Its
+///    relationship rows are the truth (the stream stays silent until the
+///    first listed friend's profile has joined, so an empty list really
+///    means nobody); the denormalised `friendCount` is not consulted;
 /// 3. a server — `watchMyServers()`, joined or created;
 /// 4. a first Voice — the Moments achievement counter (`momentCount` ≥ 1);
 /// 5. a followed Page or creator — the account's own `followingCount`. Listed
@@ -302,25 +302,19 @@ class _HomeFirstStepsState extends State<HomeFirstSteps> {
   // ---------------------------------------------------------------- mode
 
   /// How many friends the account is known to have, or null while that is
-  /// not known.
+  /// not known (the stream has not answered, or failed).
   ///
-  /// The friends stream answers with an EMPTY list first whenever the account
-  /// has friends: it emits as soon as it has the relationship rows and joins
-  /// each friend's public profile afterwards. Taken at its word, that first
-  /// answer would show "Dodaj pierwszego znajomego" to somebody with friends
-  /// and, a moment later, congratulate an account that had done everything
-  /// long ago. So an empty list counts as "no friends" only when the
-  /// account's own `friendCount` (kept by the social-graph callables on
-  /// `users/{uid}`, already in the profile this card reads) agrees; while the
-  /// two disagree the step is unknown and the card waits. A friend in the
-  /// list is always enough to tick the step.
-  int? _knownFriendCount(UserProfile? profile) {
+  /// The list is the truth on its own: `FriendService.watchFriends()` reads
+  /// the canonical relationship rows and stays silent while rows are listed
+  /// but no profile has joined yet, so an empty list means the account has
+  /// nobody. The account's `friendCount` is a denormalised copy of the same
+  /// fact and is deliberately not asked to agree: a counter that drifted
+  /// above an empty list would hide the card from exactly the person the
+  /// friend step is for.
+  int? get _knownFriendCount {
     final friends = widget.friendsSnapshot;
     if (!friends.hasData || friends.hasError) return null;
-    final listed = friends.data!.length;
-    if (listed > 0) return listed;
-    if (profile == null) return null;
-    return profile.friendCount > 0 ? null : 0;
+    return friends.data!.length;
   }
 
   FirstStepsProgress? get _progress {
@@ -330,7 +324,7 @@ class _HomeFirstStepsState extends State<HomeFirstSteps> {
     if (contentEnabled == null) return null;
     return FirstStepsProgress.evaluate(
       hasPhoto: _hasPhoto,
-      friendCount: _knownFriendCount(profile),
+      friendCount: _knownFriendCount,
       serverCount: servers.hasData && !servers.hasError
           ? servers.data!.length
           : null,

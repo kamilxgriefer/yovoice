@@ -100,7 +100,7 @@ state the client already holds:
 | step | ticked when | tapping an open step opens |
 | --- | --- | --- |
 | Dodaj zdjęcie profilowe | the avatar grant (`getProfileMediaAccess`) answers `available` | the profile editor |
-| Dodaj pierwszego znajomego | the friends stream holds ≥ 1 friend (an empty list counts as "none" only when the account's own `friendCount` is 0 too) | Friends |
+| Dodaj pierwszego znajomego | the friends stream (`watchFriends()`, the relationship rows) holds ≥ 1 friend; the denormalised `friendCount` is not consulted | Friends |
 | Dołącz do serwera albo stwórz własny | `watchMyServers()` holds ≥ 1 server | the Servers tab |
 | Nagraj pierwszy Głos | the Moments achievement counter `momentCount` ≥ 1 | the Voice recorder |
 | Zaobserwuj stronę lub twórcę | the account's own `followingCount` ≥ 1 | the Treści tab |
@@ -109,14 +109,16 @@ The fifth step is listed only while Treści (Premium Pages) exists for the
 account; without it the card counts four. The card draws nothing until every
 source has answered (profile, friends, servers, avatar grant, the Pages
 availability check and the local store) and stays hidden when one fails, so
-it never shows a step as open on a guess. One source needs a second witness:
-`FriendService.watchFriends()` answers with an empty list before it has
-joined the public profiles of the friends it found, so the card believes
-"no friends" only when `users/{uid}.friendCount` (kept by the social-graph
-callables, already in the profile the card reads) is 0 as well, and waits
-while the two disagree. Without that, an account with friends would see
-"Dodaj pierwszego znajomego" for a moment at every cold start and an account
-that had done everything would be congratulated. It closes for good with its X or
+it never shows a step as open on a guess. The friends stream is the truth
+on its own: `FriendService.watchFriends()` used to answer with an empty list
+before it had joined the public profiles of the friends it found, which read
+as "no friends" to its first listener. It now stays silent while relationship
+rows are listed and none has joined (a missing or unreadable profile degrades
+in place, so the silence always ends), so an empty list means nobody — on the
+card, on the Friends screen and in the server invite sheet, whose empty states
+no longer flash for an account that has friends. The card does not ask
+`users/{uid}.friendCount` to agree: a counter that drifted above an empty list
+would hide the card from exactly the person the friend step is for. It closes for good with its X or
 once every step is done; that is remembered on the device per account
 (`home.first_steps.v1.<uid>.outcome` in SharedPreferences, like the guided
 tour's progress) and nothing is written to the account. Finishing the last
@@ -147,6 +149,14 @@ The same decision gives three former dead ends one action each:
 - **Empty friends list** — "Dodaj znajomego" under the message (the header's
   action repeated as a tonal button). A search or the Online filter that
   matched nobody keeps the message alone.
+
+The message above each of those actions (title and body of the empty
+Notifications screen, of the empty friends list and of the invite sheet with
+nobody to invite) is translated in all 43 locales with them, so no locale
+reads an English sentence over a translated button. The strings keep their
+call sites; `translations_first_steps.dart` carries their translations and
+`test/first_steps_localization_test.dart` fails if a call site's wording
+moves away from its catalog key.
 
 ## Friends & Social
 

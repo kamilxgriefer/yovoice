@@ -1117,16 +1117,30 @@ show, so Start's rhythm without the card is unchanged
   `bodySmall` as a live region; a snackbar would be drawn on the page under
   the sheet. The share call passes the button's rect as
   `sharePositionOrigin` (iPadOS refuses a share popover without an anchor).
+- **A dead end is one block in one language.** The message above each action
+  (title and body) is translated with the action in all 43 locales
+  (`translations_first_steps.dart`); a translated button under an English
+  sentence is a defect. The message stays authored where the screen asks for
+  it, and `test/first_steps_localization_test.dart` pins that wording to its
+  catalog key.
+- **An empty state only when it is true.** The three dead ends read
+  `FriendService.watchFriends()`, which stays silent while relationship rows
+  are listed and no profile has joined yet; an account that has friends never
+  sees "Nie masz jeszcze znajomych" (or its button) flash on the way in
+  (`test/friend_service_first_answer_test.dart`).
 
 Evidence: `test/first_steps_card_test.dart`, `test/first_steps_home_test.dart`,
 `test/first_steps_dead_ends_test.dart`, `test/first_steps_localization_test.dart`,
-and real-font harness renders of the real widgets from
-`test/first_steps_capture.dart` (Start at 390 / 768 / 1180 / 1440 in Dark,
-Pearl, 200 % text, Arabic and German; the three dead ends at 390 / 768 / 1440
-with Pearl, 200 % text and Arabic spot frames, and the invite sheet's failed
-share). **Not verified on a device,
-simulator or real browser**; `MainShell` is not pumpable in tests, so its
-wiring of the card's destinations is covered by analysis and reading only.
+`test/friend_service_first_answer_test.dart`, and real-font harness renders of
+the real widgets from `test/first_steps_capture.dart` (Start at 390 / 768 /
+1180 / 1440 in Dark, Pearl, 200 % text, Arabic and German; the three dead ends
+at 390 / 768 / 1440 with Pearl, 200 % text and Arabic spot frames, and the
+invite sheet's failed share). **Not verified on a device, simulator or real
+browser.** `MainShell` is not pumpable in tests; what the card and the dead
+ends do inside it (both Home call sites, the five destinations, the hold
+until the Pages check and the guided tour are settled, the hosted Find Pages)
+is pinned on the shell's source by `test/first_steps_shell_wiring_test.dart`,
+and still wants one pass on a device.
 
 ## The "Coming soon" pattern
 

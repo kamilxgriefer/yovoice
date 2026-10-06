@@ -10,6 +10,15 @@
 /// every other selectable locale an explicit translation, so none of these
 /// strings falls back to English.
 ///
+/// It also carries the MESSAGE each of those three dead ends shows above its
+/// new action (title and body: "You are all caught up", "No friends yet",
+/// "No friends to invite yet"). Those six strings are older than the actions
+/// and were never catalogued, so 41 locales read an English sentence over a
+/// translated button. They keep their call sites (`notifications_screen.dart`,
+/// `friends_screen.dart`, `server_localized_copy.dart`): the catalog key is
+/// the English phrase itself, and `test/first_steps_localization_test.dart`
+/// fails if a call site's wording moves away from its key.
+///
 /// Two kinds of key live here:
 ///
 /// * The final English phrase or template (`{done} of {total}`), resolved by
@@ -45,6 +54,13 @@ const firstStepsTranslationKeys = <String>[
   "Couldn't share the link. Try again.",
   'Find Pages to follow',
   'firstSteps.addFriend',
+  // The messages above the three dead ends' actions (see the header).
+  'You are all caught up',
+  'New friend requests, messages and activity will appear here.',
+  'No friends yet',
+  'Find someone and start building your circle.',
+  'No friends to invite yet',
+  'Add friends first — a server invitation can only go to a friend.',
 ];
 
 const firstStepsTranslations = <String, Map<String, String>>{
@@ -74,6 +90,15 @@ const firstStepsTranslations = <String, Map<String, String>>{
         'Der Link konnte nicht geteilt werden. Versuche es erneut.',
     'Find Pages to follow': 'Seiten zum Folgen finden',
     'firstSteps.addFriend': 'Freund hinzufügen',
+    'You are all caught up': 'Du bist auf dem neuesten Stand',
+    'New friend requests, messages and activity will appear here.':
+        'Neue Freundschaftsanfragen, Nachrichten und Aktivitäten erscheinen hier.',
+    'No friends yet': 'Noch keine Freunde',
+    'Find someone and start building your circle.':
+        'Finde jemanden und bau dir deinen Kreis auf.',
+    'No friends to invite yet': 'Noch keine Freunde zum Einladen',
+    'Add friends first — a server invitation can only go to a friend.':
+        'Füge zuerst Freunde hinzu – eine Servereinladung kann nur an Freunde gehen.',
   },
   'es': <String, String>{
     'Start here': 'Empieza aquí',
@@ -98,6 +123,15 @@ const firstStepsTranslations = <String, Map<String, String>>{
         'No se pudo compartir el enlace. Vuelve a intentarlo.',
     'Find Pages to follow': 'Buscar páginas para seguir',
     'firstSteps.addFriend': 'Añadir amigo',
+    'You are all caught up': 'Estás al día',
+    'New friend requests, messages and activity will appear here.':
+        'Las nuevas solicitudes de amistad, mensajes y actividad aparecerán aquí.',
+    'No friends yet': 'Aún no tienes amigos',
+    'Find someone and start building your circle.':
+        'Busca a alguien y empieza a crear tu círculo.',
+    'No friends to invite yet': 'Aún no tienes amigos a quienes invitar',
+    'Add friends first — a server invitation can only go to a friend.':
+        'Primero añade amigos: una invitación al servidor solo puede enviarse a un amigo.',
   },
   'pt': <String, String>{
     'Start here': 'Começa aqui',
@@ -124,6 +158,15 @@ const firstStepsTranslations = <String, Map<String, String>>{
         'Não foi possível partilhar a ligação. Tenta novamente.',
     'Find Pages to follow': 'Encontrar páginas para seguir',
     'firstSteps.addFriend': 'Adicionar amigo',
+    'You are all caught up': 'Está tudo em dia',
+    'New friend requests, messages and activity will appear here.':
+        'Os novos pedidos de amizade, mensagens e atividade aparecem aqui.',
+    'No friends yet': 'Ainda não tens amigos',
+    'Find someone and start building your circle.':
+        'Encontra alguém e começa a criar o teu círculo.',
+    'No friends to invite yet': 'Ainda não tens amigos para convidar',
+    'Add friends first — a server invitation can only go to a friend.':
+        'Adiciona amigos primeiro — um convite para o servidor só pode ser enviado a um amigo.',
   },
   'pt_BR': <String, String>{
     'Start here': 'Comece aqui',
@@ -150,6 +193,15 @@ const firstStepsTranslations = <String, Map<String, String>>{
         'Não foi possível compartilhar o link. Tente novamente.',
     'Find Pages to follow': 'Encontrar páginas para seguir',
     'firstSteps.addFriend': 'Adicionar amigo',
+    'You are all caught up': 'Está tudo em dia',
+    'New friend requests, messages and activity will appear here.':
+        'Novas solicitações de amizade, mensagens e atividades aparecerão aqui.',
+    'No friends yet': 'Você ainda não tem amigos',
+    'Find someone and start building your circle.':
+        'Encontre alguém e comece a formar seu círculo.',
+    'No friends to invite yet': 'Você ainda não tem amigos para convidar',
+    'Add friends first — a server invitation can only go to a friend.':
+        'Adicione amigos primeiro — um convite para o servidor só pode ser enviado a um amigo.',
   },
   'fr': <String, String>{
     'Start here': 'Commencez ici',
@@ -179,6 +231,15 @@ const firstStepsTranslations = <String, Map<String, String>>{
         'Impossible de partager le lien. Réessayez.',
     'Find Pages to follow': 'Trouver des pages à suivre',
     'firstSteps.addFriend': 'Ajouter un ami',
+    'You are all caught up': 'Vous êtes à jour',
+    'New friend requests, messages and activity will appear here.':
+        "Les nouvelles demandes d'ami, les messages et l'activité apparaîtront ici.",
+    'No friends yet': "Pas encore d'amis",
+    'Find someone and start building your circle.':
+        "Trouvez quelqu'un et commencez à créer votre cercle.",
+    'No friends to invite yet': "Pas encore d'amis à inviter",
+    'Add friends first — a server invitation can only go to a friend.':
+        "Ajoutez d'abord des amis : une invitation à un serveur ne peut être envoyée qu'à un ami.",
   },
   'it': <String, String>{
     'Start here': 'Inizia qui',
@@ -204,6 +265,15 @@ const firstStepsTranslations = <String, Map<String, String>>{
         'Impossibile condividere il link. Riprova.',
     'Find Pages to follow': 'Trova pagine da seguire',
     'firstSteps.addFriend': 'Aggiungi amico',
+    'You are all caught up': 'Hai già visto tutto',
+    'New friend requests, messages and activity will appear here.':
+        'Le nuove richieste di amicizia, i messaggi e le attività appariranno qui.',
+    'No friends yet': 'Non hai ancora amici',
+    'Find someone and start building your circle.':
+        'Trova qualcuno e inizia a costruire la tua cerchia.',
+    'No friends to invite yet': 'Non hai ancora amici da invitare',
+    'Add friends first — a server invitation can only go to a friend.':
+        'Aggiungi prima degli amici: un invito al server può essere inviato solo a un amico.',
   },
   'nl': <String, String>{
     'Start here': 'Begin hier',
@@ -229,6 +299,15 @@ const firstStepsTranslations = <String, Map<String, String>>{
         'Kan de link niet delen. Probeer het opnieuw.',
     'Find Pages to follow': "Pagina's zoeken om te volgen",
     'firstSteps.addFriend': 'Vriend toevoegen',
+    'You are all caught up': 'Je bent helemaal bij',
+    'New friend requests, messages and activity will appear here.':
+        'Nieuwe vriendschapsverzoeken, berichten en activiteit verschijnen hier.',
+    'No friends yet': 'Nog geen vrienden',
+    'Find someone and start building your circle.':
+        'Zoek iemand en begin je kring op te bouwen.',
+    'No friends to invite yet': 'Nog geen vrienden om uit te nodigen',
+    'Add friends first — a server invitation can only go to a friend.':
+        'Voeg eerst vrienden toe: een serveruitnodiging kun je alleen naar een vriend sturen.',
   },
   'ro': <String, String>{
     'Start here': 'Începe aici',
@@ -256,6 +335,15 @@ const firstStepsTranslations = <String, Map<String, String>>{
         'Linkul nu a putut fi distribuit. Încearcă din nou.',
     'Find Pages to follow': 'Găsește pagini de urmărit',
     'firstSteps.addFriend': 'Adaugă prieten',
+    'You are all caught up': 'Ești la zi',
+    'New friend requests, messages and activity will appear here.':
+        'Noile cereri de prietenie, mesaje și activități vor apărea aici.',
+    'No friends yet': 'Încă nu ai prieteni',
+    'Find someone and start building your circle.':
+        'Găsește pe cineva și începe să-ți formezi cercul.',
+    'No friends to invite yet': 'Încă nu ai prieteni de invitat',
+    'Add friends first — a server invitation can only go to a friend.':
+        'Adaugă mai întâi prieteni — o invitație pe server poate fi trimisă doar unui prieten.',
   },
   'tr': <String, String>{
     'Start here': 'Buradan başla',
@@ -282,6 +370,15 @@ const firstStepsTranslations = <String, Map<String, String>>{
         'Bağlantı paylaşılamadı. Tekrar dene.',
     'Find Pages to follow': 'Takip edilecek sayfalar bul',
     'firstSteps.addFriend': 'Arkadaş ekle',
+    'You are all caught up': 'Her şey güncel',
+    'New friend requests, messages and activity will appear here.':
+        'Yeni arkadaşlık istekleri, mesajlar ve etkinlikler burada görünecek.',
+    'No friends yet': 'Henüz arkadaşın yok',
+    'Find someone and start building your circle.':
+        'Birini bul ve çevreni oluşturmaya başla.',
+    'No friends to invite yet': 'Henüz davet edebileceğin arkadaşın yok',
+    'Add friends first — a server invitation can only go to a friend.':
+        'Önce arkadaş ekle: sunucu daveti yalnızca bir arkadaşa gönderilebilir.',
   },
   'el': <String, String>{
     'Start here': 'Ξεκίνα εδώ',
@@ -310,6 +407,15 @@ const firstStepsTranslations = <String, Map<String, String>>{
         'Δεν ήταν δυνατή η κοινοποίηση του συνδέσμου. Δοκίμασε ξανά.',
     'Find Pages to follow': 'Βρες σελίδες για να ακολουθήσεις',
     'firstSteps.addFriend': 'Πρόσθεσε φίλο',
+    'You are all caught up': 'Τα έχεις δει όλα',
+    'New friend requests, messages and activity will appear here.':
+        'Τα νέα αιτήματα φιλίας, τα μηνύματα και η δραστηριότητα θα εμφανίζονται εδώ.',
+    'No friends yet': 'Δεν έχεις φίλους ακόμα',
+    'Find someone and start building your circle.':
+        'Βρες κάποιον και ξεκίνα να φτιάχνεις τον κύκλο σου.',
+    'No friends to invite yet': 'Δεν έχεις ακόμα φίλους να προσκαλέσεις',
+    'Add friends first — a server invitation can only go to a friend.':
+        'Πρόσθεσε πρώτα φίλους — η πρόσκληση σε διακομιστή στέλνεται μόνο σε φίλο.',
   },
   'hu': <String, String>{
     'Start here': 'Kezdd itt',
@@ -337,6 +443,15 @@ const firstStepsTranslations = <String, Map<String, String>>{
         'Nem sikerült megosztani a linket. Próbáld újra.',
     'Find Pages to follow': 'Keress követhető oldalakat',
     'firstSteps.addFriend': 'Ismerős hozzáadása',
+    'You are all caught up': 'Mindent megnéztél',
+    'New friend requests, messages and activity will appear here.':
+        'Az új barátkérések, üzenetek és tevékenységek itt jelennek meg.',
+    'No friends yet': 'Még nincsenek ismerőseid',
+    'Find someone and start building your circle.':
+        'Keress valakit, és kezdd el építeni a saját körödet.',
+    'No friends to invite yet': 'Még nincs kit meghívnod',
+    'Add friends first — a server invitation can only go to a friend.':
+        'Előbb adj hozzá ismerősöket – szervermeghívót csak ismerősnek lehet küldeni.',
   },
   'uk': <String, String>{
     'Start here': 'Почни тут',
@@ -364,6 +479,15 @@ const firstStepsTranslations = <String, Map<String, String>>{
         'Не вдалося поділитися посиланням. Спробуй ще раз.',
     'Find Pages to follow': 'Знайти сторінки, за якими стежити',
     'firstSteps.addFriend': 'Додати друга',
+    'You are all caught up': 'Усе переглянуто',
+    'New friend requests, messages and activity will appear here.':
+        'Нові запити на дружбу, повідомлення й активність з’являтимуться тут.',
+    'No friends yet': 'У тебе ще немає друзів',
+    'Find someone and start building your circle.':
+        'Знайди когось і почни збирати своє коло.',
+    'No friends to invite yet': 'Поки що немає кого запросити',
+    'Add friends first — a server invitation can only go to a friend.':
+        'Спершу додай друзів — запрошення на сервер можна надіслати лише другові.',
   },
   'ru': <String, String>{
     'Start here': 'Начните здесь',
@@ -390,6 +514,15 @@ const firstStepsTranslations = <String, Map<String, String>>{
         'Не удалось поделиться ссылкой. Повторите попытку.',
     'Find Pages to follow': 'Найти страницы для подписки',
     'firstSteps.addFriend': 'Добавить друга',
+    'You are all caught up': 'Всё просмотрено',
+    'New friend requests, messages and activity will appear here.':
+        'Новые запросы на дружбу, сообщения и активность появятся здесь.',
+    'No friends yet': 'У вас пока нет друзей',
+    'Find someone and start building your circle.':
+        'Найдите кого-нибудь и начните собирать свой круг.',
+    'No friends to invite yet': 'Пока некого пригласить',
+    'Add friends first — a server invitation can only go to a friend.':
+        'Сначала добавьте друзей — приглашение на сервер можно отправить только другу.',
   },
   'cs': <String, String>{
     'Start here': 'Začněte tady',
@@ -416,6 +549,15 @@ const firstStepsTranslations = <String, Map<String, String>>{
         'Odkaz se nepodařilo sdílet. Zkuste to znovu.',
     'Find Pages to follow': 'Najít stránky ke sledování',
     'firstSteps.addFriend': 'Přidat přítele',
+    'You are all caught up': 'Vše je zkontrolováno',
+    'New friend requests, messages and activity will appear here.':
+        'Nové žádosti o přátelství, zprávy a aktivita se zobrazí zde.',
+    'No friends yet': 'Zatím nemáte žádné přátele',
+    'Find someone and start building your circle.':
+        'Najděte někoho a začněte si budovat svůj okruh.',
+    'No friends to invite yet': 'Zatím nemáte koho pozvat',
+    'Add friends first — a server invitation can only go to a friend.':
+        'Nejdřív přidejte přátele – pozvánku na server lze poslat jen příteli.',
   },
   'sk': <String, String>{
     'Start here': 'Začnite tu',
@@ -442,6 +584,15 @@ const firstStepsTranslations = <String, Map<String, String>>{
         'Odkaz sa nepodarilo zdieľať. Skúste to znova.',
     'Find Pages to follow': 'Nájsť stránky na sledovanie',
     'firstSteps.addFriend': 'Pridať priateľa',
+    'You are all caught up': 'Všetko je skontrolované',
+    'New friend requests, messages and activity will appear here.':
+        'Nové žiadosti o priateľstvo, správy a aktivita sa zobrazia tu.',
+    'No friends yet': 'Zatiaľ nemáte žiadnych priateľov',
+    'Find someone and start building your circle.':
+        'Nájdite niekoho a začnite si budovať svoj okruh.',
+    'No friends to invite yet': 'Zatiaľ nemáte koho pozvať',
+    'Add friends first — a server invitation can only go to a friend.':
+        'Najprv pridajte priateľov – pozvánku na server možno poslať len priateľovi.',
   },
   'bg': <String, String>{
     'Start here': 'Започни оттук',
@@ -468,6 +619,15 @@ const firstStepsTranslations = <String, Map<String, String>>{
         'Линкът не можа да бъде споделен. Опитай отново.',
     'Find Pages to follow': 'Намери страници за следване',
     'firstSteps.addFriend': 'Добави приятел',
+    'You are all caught up': 'Всичко е прегледано',
+    'New friend requests, messages and activity will appear here.':
+        'Новите покани за приятелство, съобщения и активност ще се показват тук.',
+    'No friends yet': 'Все още нямаш приятели',
+    'Find someone and start building your circle.':
+        'Намери някого и започни да изграждаш своя кръг.',
+    'No friends to invite yet': 'Все още няма кого да поканиш',
+    'Add friends first — a server invitation can only go to a friend.':
+        'Първо добави приятели — покана за сървър може да се изпрати само на приятел.',
   },
   'hr': <String, String>{
     'Start here': 'Počni ovdje',
@@ -495,6 +655,15 @@ const firstStepsTranslations = <String, Map<String, String>>{
         'Poveznicu nije moguće podijeliti. Pokušaj ponovno.',
     'Find Pages to follow': 'Pronađi stranice za praćenje',
     'firstSteps.addFriend': 'Dodaj prijatelja',
+    'You are all caught up': 'Sve je pregledano',
+    'New friend requests, messages and activity will appear here.':
+        'Novi zahtjevi za prijateljstvo, poruke i aktivnosti prikazat će se ovdje.',
+    'No friends yet': 'Još nemaš prijatelja',
+    'Find someone and start building your circle.':
+        'Pronađi nekoga i počni graditi svoj krug.',
+    'No friends to invite yet': 'Još nemaš koga pozvati',
+    'Add friends first — a server invitation can only go to a friend.':
+        'Najprije dodaj prijatelje — pozivnica za poslužitelj može se poslati samo prijatelju.',
   },
   'sr': <String, String>{
     'Start here': 'Почни овде',
@@ -519,6 +688,15 @@ const firstStepsTranslations = <String, Map<String, String>>{
         'Линк није могуће поделити. Покушај поново.',
     'Find Pages to follow': 'Пронађи странице за праћење',
     'firstSteps.addFriend': 'Додај пријатеља',
+    'You are all caught up': 'Све је прегледано',
+    'New friend requests, messages and activity will appear here.':
+        'Нови захтеви за пријатељство, поруке и активности појавиће се овде.',
+    'No friends yet': 'Још немаш пријатеља',
+    'Find someone and start building your circle.':
+        'Пронађи некога и почни да градиш свој круг.',
+    'No friends to invite yet': 'Још немаш кога да позовеш',
+    'Add friends first — a server invitation can only go to a friend.':
+        'Прво додај пријатеље — позивница за сервер може да се пошаље само пријатељу.',
   },
   'sv': <String, String>{
     'Start here': 'Börja här',
@@ -544,6 +722,15 @@ const firstStepsTranslations = <String, Map<String, String>>{
         'Det gick inte att dela länken. Försök igen.',
     'Find Pages to follow': 'Hitta sidor att följa',
     'firstSteps.addFriend': 'Lägg till vän',
+    'You are all caught up': 'Du är ikapp med allt',
+    'New friend requests, messages and activity will appear here.':
+        'Nya vänförfrågningar, meddelanden och aktivitet visas här.',
+    'No friends yet': 'Inga vänner än',
+    'Find someone and start building your circle.':
+        'Hitta någon och börja bygga din krets.',
+    'No friends to invite yet': 'Inga vänner att bjuda in än',
+    'Add friends first — a server invitation can only go to a friend.':
+        'Lägg till vänner först – en serverinbjudan kan bara skickas till en vän.',
   },
   'da': <String, String>{
     'Start here': 'Start her',
@@ -569,6 +756,15 @@ const firstStepsTranslations = <String, Map<String, String>>{
         'Linket kunne ikke deles. Prøv igen.',
     'Find Pages to follow': 'Find sider at følge',
     'firstSteps.addFriend': 'Tilføj ven',
+    'You are all caught up': 'Du er helt ajour',
+    'New friend requests, messages and activity will appear here.':
+        'Nye venneanmodninger, beskeder og aktivitet vises her.',
+    'No friends yet': 'Ingen venner endnu',
+    'Find someone and start building your circle.':
+        'Find nogen, og begynd at opbygge din kreds.',
+    'No friends to invite yet': 'Ingen venner at invitere endnu',
+    'Add friends first — a server invitation can only go to a friend.':
+        'Tilføj venner først – en serverinvitation kan kun sendes til en ven.',
   },
   'nb': <String, String>{
     'Start here': 'Start her',
@@ -595,6 +791,15 @@ const firstStepsTranslations = <String, Map<String, String>>{
         'Kunne ikke dele lenken. Prøv igjen.',
     'Find Pages to follow': 'Finn sider å følge',
     'firstSteps.addFriend': 'Legg til venn',
+    'You are all caught up': 'Du er oppdatert på alt',
+    'New friend requests, messages and activity will appear here.':
+        'Nye venneforespørsler, meldinger og aktivitet vises her.',
+    'No friends yet': 'Ingen venner ennå',
+    'Find someone and start building your circle.':
+        'Finn noen og begynn å bygge kretsen din.',
+    'No friends to invite yet': 'Ingen venner å invitere ennå',
+    'Add friends first — a server invitation can only go to a friend.':
+        'Legg til venner først – en serverinvitasjon kan bare sendes til en venn.',
   },
   'fi': <String, String>{
     'Start here': 'Aloita tästä',
@@ -620,6 +825,15 @@ const firstStepsTranslations = <String, Map<String, String>>{
         'Linkin jakaminen epäonnistui. Yritä uudelleen.',
     'Find Pages to follow': 'Etsi seurattavia sivuja',
     'firstSteps.addFriend': 'Lisää ystävä',
+    'You are all caught up': 'Olet ajan tasalla',
+    'New friend requests, messages and activity will appear here.':
+        'Uudet ystäväpyynnöt, viestit ja tapahtumat näkyvät täällä.',
+    'No friends yet': 'Ei vielä ystäviä',
+    'Find someone and start building your circle.':
+        'Etsi joku ja ala rakentaa omaa piiriäsi.',
+    'No friends to invite yet': 'Ei vielä ystäviä kutsuttavaksi',
+    'Add friends first — a server invitation can only go to a friend.':
+        'Lisää ensin ystäviä – palvelinkutsun voi lähettää vain ystävälle.',
   },
   'lt': <String, String>{
     'Start here': 'Pradėk čia',
@@ -647,6 +861,15 @@ const firstStepsTranslations = <String, Map<String, String>>{
         'Nepavyko bendrinti nuorodos. Bandyk dar kartą.',
     'Find Pages to follow': 'Rasti puslapių, kuriuos verta sekti',
     'firstSteps.addFriend': 'Pridėti draugą',
+    'You are all caught up': 'Viskas peržiūrėta',
+    'New friend requests, messages and activity will appear here.':
+        'Naujos draugų užklausos, žinutės ir veikla bus rodomos čia.',
+    'No friends yet': 'Dar neturi draugų',
+    'Find someone and start building your circle.':
+        'Surask ką nors ir pradėk kurti savo ratą.',
+    'No friends to invite yet': 'Dar neturi ko pakviesti',
+    'Add friends first — a server invitation can only go to a friend.':
+        'Pirmiausia pridėk draugų – kvietimą į serverį galima siųsti tik draugui.',
   },
   'lv': <String, String>{
     'Start here': 'Sāc šeit',
@@ -673,6 +896,15 @@ const firstStepsTranslations = <String, Map<String, String>>{
         'Neizdevās kopīgot saiti. Mēģini vēlreiz.',
     'Find Pages to follow': 'Atrast lapas, kurām sekot',
     'firstSteps.addFriend': 'Pievienot draugu',
+    'You are all caught up': 'Viss ir apskatīts',
+    'New friend requests, messages and activity will appear here.':
+        'Jauni draugu pieprasījumi, ziņas un aktivitātes parādīsies šeit.',
+    'No friends yet': 'Tev vēl nav draugu',
+    'Find someone and start building your circle.':
+        'Atrodi kādu un sāc veidot savu loku.',
+    'No friends to invite yet': 'Vēl nav neviena, ko uzaicināt',
+    'Add friends first — a server invitation can only go to a friend.':
+        'Vispirms pievieno draugus — servera ielūgumu var nosūtīt tikai draugam.',
   },
   'et': <String, String>{
     'Start here': 'Alusta siit',
@@ -697,6 +929,15 @@ const firstStepsTranslations = <String, Map<String, String>>{
         'Linki ei saanud jagada. Proovi uuesti.',
     'Find Pages to follow': 'Leia lehti, mida jälgida',
     'firstSteps.addFriend': 'Lisa sõber',
+    'You are all caught up': 'Kõik on üle vaadatud',
+    'New friend requests, messages and activity will appear here.':
+        'Uued sõbrakutsed, sõnumid ja tegevused ilmuvad siia.',
+    'No friends yet': 'Sõpru veel pole',
+    'Find someone and start building your circle.':
+        'Leia keegi ja hakka oma ringi looma.',
+    'No friends to invite yet': 'Pole veel sõpru, keda kutsuda',
+    'Add friends first — a server invitation can only go to a friend.':
+        'Lisa esmalt sõpru – serverikutse saab saata ainult sõbrale.',
   },
   'id': <String, String>{
     'Start here': 'Mulai di sini',
@@ -725,6 +966,15 @@ const firstStepsTranslations = <String, Map<String, String>>{
         'Tidak dapat membagikan tautan. Coba lagi.',
     'Find Pages to follow': 'Temukan halaman untuk diikuti',
     'firstSteps.addFriend': 'Tambah teman',
+    'You are all caught up': 'Semua sudah kamu lihat',
+    'New friend requests, messages and activity will appear here.':
+        'Permintaan pertemanan, pesan, dan aktivitas baru akan muncul di sini.',
+    'No friends yet': 'Belum ada teman',
+    'Find someone and start building your circle.':
+        'Cari seseorang dan mulai bangun lingkaranmu.',
+    'No friends to invite yet': 'Belum ada teman untuk diundang',
+    'Add friends first — a server invitation can only go to a friend.':
+        'Tambahkan teman dulu — undangan server hanya bisa dikirim ke teman.',
   },
   'vi': <String, String>{
     'Start here': 'Bắt đầu tại đây',
@@ -752,6 +1002,15 @@ const firstStepsTranslations = <String, Map<String, String>>{
         'Không thể chia sẻ liên kết. Hãy thử lại.',
     'Find Pages to follow': 'Tìm trang để theo dõi',
     'firstSteps.addFriend': 'Thêm bạn',
+    'You are all caught up': 'Bạn đã xem hết mọi thứ',
+    'New friend requests, messages and activity will appear here.':
+        'Lời mời kết bạn, tin nhắn và hoạt động mới sẽ xuất hiện ở đây.',
+    'No friends yet': 'Chưa có bạn bè',
+    'Find someone and start building your circle.':
+        'Hãy tìm ai đó và bắt đầu xây dựng vòng kết nối của bạn.',
+    'No friends to invite yet': 'Chưa có bạn bè để mời',
+    'Add friends first — a server invitation can only go to a friend.':
+        'Hãy thêm bạn bè trước — lời mời vào máy chủ chỉ có thể gửi cho bạn bè.',
   },
   'zh_CN': <String, String>{
     'Start here': '从这里开始',
@@ -773,6 +1032,14 @@ const firstStepsTranslations = <String, Map<String, String>>{
     "Couldn't share the link. Try again.": '无法分享链接。请重试。',
     'Find Pages to follow': '查找可关注的主页',
     'firstSteps.addFriend': '添加好友',
+    'You are all caught up': '你已全部看完',
+    'New friend requests, messages and activity will appear here.':
+        '新的好友请求、消息和动态会显示在这里。',
+    'No friends yet': '还没有好友',
+    'Find someone and start building your circle.': '找到朋友，开始建立你的圈子。',
+    'No friends to invite yet': '还没有可以邀请的好友',
+    'Add friends first — a server invitation can only go to a friend.':
+        '请先添加好友——服务器邀请只能发送给好友。',
   },
   'zh_TW': <String, String>{
     'Start here': '從這裡開始',
@@ -794,6 +1061,14 @@ const firstStepsTranslations = <String, Map<String, String>>{
     "Couldn't share the link. Try again.": '無法分享連結。請再試一次。',
     'Find Pages to follow': '尋找可追蹤的專頁',
     'firstSteps.addFriend': '新增好友',
+    'You are all caught up': '你已全部看完',
+    'New friend requests, messages and activity will appear here.':
+        '新的好友邀請、訊息和動態會顯示在這裡。',
+    'No friends yet': '還沒有好友',
+    'Find someone and start building your circle.': '找到朋友，開始建立你的圈子。',
+    'No friends to invite yet': '還沒有可以邀請的好友',
+    'Add friends first — a server invitation can only go to a friend.':
+        '請先新增好友——伺服器邀請只能傳送給好友。',
   },
   'ja': <String, String>{
     'Start here': 'ここから始めよう',
@@ -815,6 +1090,14 @@ const firstStepsTranslations = <String, Map<String, String>>{
     "Couldn't share the link. Try again.": 'リンクを共有できませんでした。もう一度お試しください。',
     'Find Pages to follow': 'フォローするページを探す',
     'firstSteps.addFriend': '友達を追加',
+    'You are all caught up': 'すべて確認済みです',
+    'New friend requests, messages and activity will appear here.':
+        '新しい友達リクエスト、メッセージ、アクティビティがここに表示されます。',
+    'No friends yet': 'まだ友達がいません',
+    'Find someone and start building your circle.': '誰かを見つけて、つながりの輪を広げましょう。',
+    'No friends to invite yet': '招待できる友達がまだいません',
+    'Add friends first — a server invitation can only go to a friend.':
+        'まず友達を追加してください。サーバーへの招待は友達にのみ送れます。',
   },
   'ko': <String, String>{
     'Start here': '여기서 시작하세요',
@@ -836,6 +1119,14 @@ const firstStepsTranslations = <String, Map<String, String>>{
     "Couldn't share the link. Try again.": '링크를 공유할 수 없습니다. 다시 시도하세요.',
     'Find Pages to follow': '팔로우할 페이지 찾기',
     'firstSteps.addFriend': '친구 추가',
+    'You are all caught up': '모두 확인했어요',
+    'New friend requests, messages and activity will appear here.':
+        '새 친구 요청, 메시지, 활동이 여기에 표시돼요.',
+    'No friends yet': '아직 친구가 없어요',
+    'Find someone and start building your circle.': '누군가를 찾아 나만의 모임을 만들어 보세요.',
+    'No friends to invite yet': '아직 초대할 친구가 없어요',
+    'Add friends first — a server invitation can only go to a friend.':
+        '먼저 친구를 추가하세요. 서버 초대는 친구에게만 보낼 수 있어요.',
   },
   'ar': <String, String>{
     'Start here': 'ابدأ من هنا',
@@ -860,6 +1151,15 @@ const firstStepsTranslations = <String, Map<String, String>>{
         'تعذّرت مشاركة الرابط. حاول مرة أخرى.',
     'Find Pages to follow': 'البحث عن صفحات لمتابعتها',
     'firstSteps.addFriend': 'إضافة صديق',
+    'You are all caught up': 'لقد اطّلعت على كل شيء',
+    'New friend requests, messages and activity will appear here.':
+        'ستظهر هنا طلبات الصداقة والرسائل والنشاطات الجديدة.',
+    'No friends yet': 'ليس لديك أصدقاء بعد',
+    'Find someone and start building your circle.':
+        'ابحث عن شخص وابدأ ببناء دائرتك.',
+    'No friends to invite yet': 'ليس لديك أصدقاء لدعوتهم بعد',
+    'Add friends first — a server invitation can only go to a friend.':
+        'أضف أصدقاء أولًا — دعوة الخادم لا تُرسل إلا إلى صديق.',
   },
   'th': <String, String>{
     'Start here': 'เริ่มที่นี่',
@@ -884,6 +1184,15 @@ const firstStepsTranslations = <String, Map<String, String>>{
     "Couldn't share the link. Try again.": 'แชร์ลิงก์ไม่ได้ โปรดลองอีกครั้ง',
     'Find Pages to follow': 'ค้นหาเพจเพื่อติดตาม',
     'firstSteps.addFriend': 'เพิ่มเพื่อน',
+    'You are all caught up': 'คุณดูครบทุกอย่างแล้ว',
+    'New friend requests, messages and activity will appear here.':
+        'คำขอเป็นเพื่อน ข้อความ และความเคลื่อนไหวใหม่จะแสดงที่นี่',
+    'No friends yet': 'ยังไม่มีเพื่อน',
+    'Find someone and start building your circle.':
+        'ค้นหาใครสักคนแล้วเริ่มสร้างกลุ่มของคุณ',
+    'No friends to invite yet': 'ยังไม่มีเพื่อนให้เชิญ',
+    'Add friends first — a server invitation can only go to a friend.':
+        'เพิ่มเพื่อนก่อน — คำเชิญเข้าเซิร์ฟเวอร์ส่งได้เฉพาะถึงเพื่อนเท่านั้น',
   },
   'ms': <String, String>{
     'Start here': 'Mula di sini',
@@ -913,6 +1222,15 @@ const firstStepsTranslations = <String, Map<String, String>>{
         'Tidak dapat berkongsi pautan. Cuba lagi.',
     'Find Pages to follow': 'Cari halaman untuk diikuti',
     'firstSteps.addFriend': 'Tambah kawan',
+    'You are all caught up': 'Anda sudah melihat semuanya',
+    'New friend requests, messages and activity will appear here.':
+        'Permintaan rakan, mesej dan aktiviti baharu akan dipaparkan di sini.',
+    'No friends yet': 'Belum ada kawan',
+    'Find someone and start building your circle.':
+        'Cari seseorang dan mula bina kalangan anda.',
+    'No friends to invite yet': 'Belum ada kawan untuk dijemput',
+    'Add friends first — a server invitation can only go to a friend.':
+        'Tambah kawan dahulu — jemputan pelayan hanya boleh dihantar kepada kawan.',
   },
   'fil': <String, String>{
     'Start here': 'Magsimula rito',
@@ -941,6 +1259,15 @@ const firstStepsTranslations = <String, Map<String, String>>{
         'Hindi maibahagi ang link. Subukan ulit.',
     'Find Pages to follow': 'Maghanap ng mga Page na ifa-follow',
     'firstSteps.addFriend': 'Magdagdag ng kaibigan',
+    'You are all caught up': 'Nakita mo na ang lahat',
+    'New friend requests, messages and activity will appear here.':
+        'Dito lalabas ang mga bagong kahilingan sa pagkakaibigan, mensahe, at aktibidad.',
+    'No friends yet': 'Wala ka pang kaibigan',
+    'Find someone and start building your circle.':
+        'Humanap ng tao at simulang buuin ang iyong circle.',
+    'No friends to invite yet': 'Wala ka pang kaibigang maiimbitahan',
+    'Add friends first — a server invitation can only go to a friend.':
+        'Magdagdag muna ng mga kaibigan — sa kaibigan lang maipapadala ang imbitasyon sa server.',
   },
   'he': <String, String>{
     'Start here': 'מתחילים כאן',
@@ -966,6 +1293,15 @@ const firstStepsTranslations = <String, Map<String, String>>{
         'לא ניתן לשתף את הקישור. אפשר לנסות שוב.',
     'Find Pages to follow': 'חיפוש דפים למעקב',
     'firstSteps.addFriend': 'הוספת חבר',
+    'You are all caught up': 'ראית הכול',
+    'New friend requests, messages and activity will appear here.':
+        'בקשות חברות, הודעות ופעילות חדשות יופיעו כאן.',
+    'No friends yet': 'אין עדיין חברים',
+    'Find someone and start building your circle.':
+        'כדאי למצוא מישהו ולהתחיל לבנות את המעגל שלך.',
+    'No friends to invite yet': 'אין עדיין חברים להזמין',
+    'Add friends first — a server invitation can only go to a friend.':
+        'קודם יש להוסיף חברים — הזמנה לשרת אפשר לשלוח רק לחבר.',
   },
   'fa': <String, String>{
     'Start here': 'از اینجا شروع کنید',
@@ -991,6 +1327,15 @@ const firstStepsTranslations = <String, Map<String, String>>{
         'هم‌رسانی پیوند ممکن نشد. دوباره امتحان کنید.',
     'Find Pages to follow': 'یافتن صفحه برای دنبال کردن',
     'firstSteps.addFriend': 'افزودن دوست',
+    'You are all caught up': 'همه چیز را دیده‌اید',
+    'New friend requests, messages and activity will appear here.':
+        'درخواست‌های دوستی، پیام‌ها و فعالیت‌های جدید اینجا نمایش داده می‌شوند.',
+    'No friends yet': 'هنوز دوستی ندارید',
+    'Find someone and start building your circle.':
+        'کسی را پیدا کنید و ساختن حلقهٔ خود را شروع کنید.',
+    'No friends to invite yet': 'هنوز دوستی برای دعوت ندارید',
+    'Add friends first — a server invitation can only go to a friend.':
+        'ابتدا دوستانی اضافه کنید — دعوت به سرور فقط برای دوستان ارسال می‌شود.',
   },
   'sw': <String, String>{
     'Start here': 'Anzia hapa',
@@ -1015,6 +1360,15 @@ const firstStepsTranslations = <String, Map<String, String>>{
         'Imeshindwa kushiriki kiungo. Jaribu tena.',
     'Find Pages to follow': 'Tafuta kurasa za kufuata',
     'firstSteps.addFriend': 'Ongeza rafiki',
+    'You are all caught up': 'Umeona kila kitu',
+    'New friend requests, messages and activity will appear here.':
+        'Maombi mapya ya urafiki, ujumbe na shughuli vitaonekana hapa.',
+    'No friends yet': 'Bado huna marafiki',
+    'Find someone and start building your circle.':
+        'Tafuta mtu na uanze kujenga mduara wako.',
+    'No friends to invite yet': 'Bado huna marafiki wa kualika',
+    'Add friends first — a server invitation can only go to a friend.':
+        'Ongeza marafiki kwanza — mwaliko wa seva unaweza kutumwa kwa rafiki pekee.',
   },
   'hi': <String, String>{
     'Start here': 'यहाँ से शुरू करें',
@@ -1041,6 +1395,15 @@ const firstStepsTranslations = <String, Map<String, String>>{
         'लिंक शेयर नहीं हो सका। फिर से कोशिश करें।',
     'Find Pages to follow': 'फ़ॉलो करने के लिए पेज खोजें',
     'firstSteps.addFriend': 'दोस्त जोड़ें',
+    'You are all caught up': 'आपने सब कुछ देख लिया है',
+    'New friend requests, messages and activity will appear here.':
+        'नए दोस्ती के अनुरोध, संदेश और गतिविधि यहाँ दिखेंगे।',
+    'No friends yet': 'अभी कोई दोस्त नहीं है',
+    'Find someone and start building your circle.':
+        'किसी को खोजें और अपना दायरा बनाना शुरू करें।',
+    'No friends to invite yet': 'आमंत्रित करने के लिए अभी कोई दोस्त नहीं है',
+    'Add friends first — a server invitation can only go to a friend.':
+        'पहले दोस्त जोड़ें — सर्वर का आमंत्रण केवल किसी दोस्त को भेजा जा सकता है।',
   },
   'bn': <String, String>{
     'Start here': 'এখান থেকে শুরু করুন',
@@ -1067,6 +1430,15 @@ const firstStepsTranslations = <String, Map<String, String>>{
         'লিংক শেয়ার করা যায়নি। আবার চেষ্টা করুন।',
     'Find Pages to follow': 'ফলো করার জন্য পেজ খুঁজুন',
     'firstSteps.addFriend': 'বন্ধু যোগ করুন',
+    'You are all caught up': 'আপনি সবকিছু দেখে ফেলেছেন',
+    'New friend requests, messages and activity will appear here.':
+        'নতুন বন্ধুত্বের অনুরোধ, বার্তা ও কার্যকলাপ এখানে দেখা যাবে।',
+    'No friends yet': 'এখনও কোনো বন্ধু নেই',
+    'Find someone and start building your circle.':
+        'কাউকে খুঁজে নিন এবং নিজের বৃত্ত গড়া শুরু করুন।',
+    'No friends to invite yet': 'আমন্ত্রণ জানানোর মতো কোনো বন্ধু এখনও নেই',
+    'Add friends first — a server invitation can only go to a friend.':
+        'আগে বন্ধু যোগ করুন — সার্ভারের আমন্ত্রণ শুধু বন্ধুকেই পাঠানো যায়।',
   },
   'ur': <String, String>{
     'Start here': 'یہاں سے شروع کریں',
@@ -1093,5 +1465,14 @@ const firstStepsTranslations = <String, Map<String, String>>{
         'لنک شیئر نہیں ہو سکا۔ دوبارہ کوشش کریں۔',
     'Find Pages to follow': 'فالو کرنے کے لیے پیجز تلاش کریں',
     'firstSteps.addFriend': 'دوست شامل کریں',
+    'You are all caught up': 'آپ نے سب کچھ دیکھ لیا ہے',
+    'New friend requests, messages and activity will appear here.':
+        'نئی فرینڈ ریکویسٹس، پیغامات اور سرگرمی یہاں نظر آئیں گی۔',
+    'No friends yet': 'ابھی کوئی دوست نہیں ہے',
+    'Find someone and start building your circle.':
+        'کسی کو تلاش کریں اور اپنا حلقہ بنانا شروع کریں۔',
+    'No friends to invite yet': 'مدعو کرنے کے لیے ابھی کوئی دوست نہیں ہے',
+    'Add friends first — a server invitation can only go to a friend.':
+        'پہلے دوست شامل کریں — سرور کی دعوت صرف کسی دوست کو بھیجی جا سکتی ہے۔',
   },
 };

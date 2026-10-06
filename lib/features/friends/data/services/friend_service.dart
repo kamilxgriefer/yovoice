@@ -303,6 +303,15 @@ class FriendService {
 
     void emit() {
       if (retired || controller.isClosed) return;
+      // Relationship rows are listed but none of their public profiles has
+      // answered yet (the root snapshot, or a presence answer that beat the
+      // profile). The list would be empty, and an empty list means "this
+      // account has no friends" to every listener: Friends and the invite
+      // sheet would flash their empty state, and Start's "Zacznij tutaj"
+      // would count a friend step as open. Stay silent until the first
+      // profile joins; every profile listener answers (a missing or
+      // unreadable projection degrades in place), and each answer emits.
+      if (profiles.isEmpty && activeFriendIds.isNotEmpty) return;
       final result =
           profiles.entries
               .map((entry) {

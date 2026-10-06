@@ -249,8 +249,9 @@ class FirstStepsWorld {
       'availability': 'available',
       'momentCount': moments,
       'followingCount': following,
-      // Kept by the social-graph callables beside the friend rows; the card
-      // believes an empty friends list only when this agrees.
+      // Kept by the social-graph callables beside the friend rows. The card
+      // does not read it (the rows are the truth); seeded so the profile
+      // document looks like production.
       'friendCount': friends.length,
     });
     for (final friend in friends) {
