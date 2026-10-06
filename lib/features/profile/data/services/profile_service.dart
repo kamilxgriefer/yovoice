@@ -61,6 +61,11 @@ enum DisplayNameChangeFailure {
   inactiveAccount,
   missingProfile,
   tooManyAttempts,
+
+  /// `pageNameReserved`: the account runs a Page and the new name is one a
+  /// Page may not carry (a reserved or look-alike name, ADR-233 §2.2).
+  /// Nothing was changed.
+  nameNotAllowed,
   unavailable,
 }
 
@@ -579,6 +584,13 @@ class ProfileService {
         nextDisplayNameChangeAt: nextChange,
         canonicalDisplayName: canonicalDisplayName,
         displayNameChangedAt: changedAt,
+      );
+    }
+
+    if (error.code == 'failed-precondition' && reason == 'pageNameReserved') {
+      return const DisplayNameChangeException(
+        DisplayNameChangeFailure.nameNotAllowed,
+        "This name can't be used for a Page.",
       );
     }
 

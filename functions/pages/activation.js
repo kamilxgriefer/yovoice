@@ -21,8 +21,8 @@
 //
 // SAFETY ACTIONS NEVER READ THIS DOCUMENT (PAGES_SAFETY_ACTIONS below). The
 // kill switch hides Pages; it must never stop an owner from pausing a Page,
-// deleting a post or a comment, a viewer from reporting or unfollowing, or
-// anybody from making their profile private.
+// removing its public contact details, deleting a post or a comment, a viewer
+// from reporting or unfollowing, or anybody from making their profile private.
 
 const { HttpsError } = require("firebase-functions/v2/https");
 const defaultLogger = require("firebase-functions/logger");
@@ -48,6 +48,7 @@ const PAGES_NOT_ENABLED_REASON = "pagesNotEnabled";
 // module (pages_activation.test.js proves it per package).
 const PAGES_SAFETY_ACTIONS = Object.freeze([
   "managePageV1.pause",
+  "managePageV1.clearContact",
   "managePagePostV1.delete",
   "pagePostEngagementV1.deleteComment",
   "createPageReportV1",

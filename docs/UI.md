@@ -1020,6 +1020,70 @@ states, the comment rows at 320 px) in the session scratchpad
 (`likers-c1` … `likers-c4`). **Not verified on a device, simulator or real
 browser.**
 
+## Premium Pages: "Edytuj stronę" (pageEdit A, build 42)
+
+The owner chose option A on 2026-10-03 from the sheet
+`yovoice-evidence/2026-10-02/live-servers-concept/renders/sheets/6_pageEdit.jpg`.
+`PageEditScreen` (`lib/features/pages/presentation/screens/page_edit_screen.dart`)
+is the one place a Page is edited; `PageSettingsScreen` is short (identity
+card, the "Edytuj stronę" entry, followers, visibility).
+
+- **One form, one save.** Cover and photo on top, each with a camera control
+  (the whole cover takes the tap; the photo is one labelled button), then
+  WYGLĄD (name), INFORMACJE (locked type, category, description) and KONTAKT
+  (Business) or SPOŁECZNOŚĆ (Community). The name's helper carries both
+  server rules ("raz na 30 dni", "7 dni poza wyszukiwarką"); during the
+  cooldown the field is read-only with the date. A picked picture is a
+  pending change shown at once in the form and the previews, uploaded only
+  on save.
+- **Unsaved state.** "Zapisz" in the app bar is always there and switches
+  on with the first change, which also brings the pinned bar ("● Masz
+  niezapisane zmiany" + the gradient "Zapisz zmiany"); Back, system Back
+  and "Anuluj" ask "Odrzucić zmiany?" first. A failed step shows a danger
+  banner above the form that says whether something was already saved.
+- **Widths (by the space given, not by device).** < 600: one column, cover
+  132 edge to edge, photo 84 overlapping by 28. 600-999: one 640 column
+  under a collapsible "Podgląd" card. ≥ 1000: the create screen's 1040
+  frame, form 560 beside a 360 preview column that stands still while the
+  form scrolls (`PageStickySliver`). Right to left the two columns swap by
+  hand (a `SliverCrossAxisGroup` always lays out left to right), so the form
+  still starts the row under the title.
+- **Chrome.** Pushed over the shell on phones and tablets (root navigator,
+  real app bar with Back, like create A). On desktop it opens on Treści's
+  own navigator and draws no app bar: a pinned header row carries Back, the
+  title, the unsaved note, "Anuluj" and "Zapisz zmiany" (they drop to a
+  second line in a narrow slot or at ≥ 1.3× text). While its route
+  (`pageEditRouteName`) is on top, Treści's 240 px panel steps aside
+  (`Visibility`, state kept) so the form and preview get the whole slot.
+  Treści never pops that route programmatically: re-selecting Treści in the
+  rail leaves the form the way Back does (it asks "Odrzucić zmiany?" when
+  there are unsaved edits), and a Page link that arrives meanwhile opens
+  over the form, which is still there, edits intact, on the way back
+  (`ContentScreen._popToFeed` stops at the edit route). The app bar's text
+  action "Zapisz" keeps the toolbar's own 1.34× text cap, so a long
+  translation at a large text size cannot squeeze the title out; the pinned
+  "Zapisz zmiany" scales fully and takes a second line rather than being cut
+  ("Änderungen speichern" at 200 % on a phone). While a save is in flight the
+  form is inert (`AbsorbPointer`): a successful save closes the screen, so a
+  change made meanwhile would be lost.
+- **Read-only.** When the owner cannot `update` (suspended, or neither
+  Premium nor VIP) the fields are disabled under a notice and the camera
+  controls are gone; a Business Page keeps "Wyczyść dane kontaktowe"
+  (ADR-241), which is also offered, quietly under the retention line, on an
+  editable Page with stored contact details.
+- **Shared parts.** `widgets/page_form_parts.dart` holds the fields, the
+  "Widoczne publicznie" helper, the overline (its trailing note wraps under
+  the title when the line is too narrow), the wall-row and profile-header
+  previews, the pinned bottom bar and the sticky sliver; create A uses the
+  same widgets. `widgets/page_pickers.dart` holds the category and server
+  sheets.
+- **Proof.** `test/page_edit_capture.dart` writes the matrix (390 / 768 /
+  1440 in the shell, Dark and Pearl, 200 % text, an Arabic RTL spot check,
+  German as the long-language check, the read-only, failure and dialog
+  states) to
+  `yovoice-evidence/2026-10-03/w42/page-edit/`. Rendered in the test
+  harness only; **not verified on a device, simulator or real browser.**
+
 ## Premium Pages: composer A and post detail A (spec premium-pages §4.5, §12; source only)
 
 The owner approved composer A ("arkusz") and post detail A ("karta + wątek")

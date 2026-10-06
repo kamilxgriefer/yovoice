@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
@@ -10,10 +9,9 @@ import 'package:yovoice/features/premium/data/models/subscription_entitlements.d
 import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
 import 'package:yovoice/features/premium/presentation/widgets/premium_upsell_sheet.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
-import 'package:yovoice/features/profile/data/services/image_crop.dart';
 import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
-import 'package:yovoice/features/profile/presentation/screens/image_crop_screen.dart';
+import 'package:yovoice/features/profile/presentation/profile_image_pick_flow.dart';
 import 'package:yovoice/features/profile/presentation/widgets/profile_header.dart';
 import 'package:yovoice/features/profile/presentation/widgets/profile_layout.dart';
 import 'package:yovoice/shared/widgets/cards/yo_card.dart';
@@ -323,39 +321,15 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     });
 
     try {
-      final picked = await _service.pickProfileImage(kind);
-      // Null means the user dismissed the picker — not an error.
-      if (!mounted || picked == null) return;
-
-      // Crop/adjust step: the editor returns the final processed JPEG —
-      // what gets stored IS the crop the user composed, not the original
-      // plus display-time alignment tricks.
-      final decoded = await ImageCrop.decode(picked.bytes);
-      if (!mounted) {
-        decoded.dispose();
-        return;
-      }
-      final route = MaterialPageRoute<Uint8List>(
-        builder: (_) => ImageCropScreen(image: decoded, kind: kind),
-      );
-      Uint8List? cropped;
-      try {
-        cropped = await Navigator.of(context).push<Uint8List>(route);
-        // Navigator.push completes when pop begins. Web still paints the
-        // reverse transition, so retain the native image until its overlay is
-        // fully removed. The caller remains the owner even if push/reset fails.
-        await route.completed;
-      } finally {
-        decoded.dispose();
-      }
-      // Null means the user backed out of the editor — not an error.
-      if (!mounted || cropped == null) return;
-
-      final processed = PickedProfileImage(
+      // Pick, then crop/adjust: the editor returns the final processed JPEG
+      // (shared with "Edytuj stronę"). Null means the user dismissed the
+      // picker or backed out of the editor — not an error.
+      final processed = await pickAndCropProfileImage(
+        context,
+        service: _service,
         kind: kind,
-        bytes: cropped,
-        format: ProfileImageFormat.jpeg,
       );
+      if (!mounted || processed == null) return;
       setState(() {
         if (avatar) {
           _pendingAvatar = processed;
@@ -458,6 +432,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         DisplayNameChangeFailure.tooManyAttempts => _copy.text(
           error.message,
           'Zbyt wiele prób. Odczekaj chwilę i spróbuj ponownie.',
+        ),
+        DisplayNameChangeFailure.nameNotAllowed => _copy.text(
+          error.message,
+          'Tej nazwy nie można użyć dla strony.',
         ),
         DisplayNameChangeFailure.unavailable => _copy.text(
           error.message,

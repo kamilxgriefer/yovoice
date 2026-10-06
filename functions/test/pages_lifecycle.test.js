@@ -13,11 +13,20 @@ if (getApps().length === 0) initializeApp();
 
 const {
   MANAGE_PAGE_FIELDS,
+  MANAGE_PAGE_OPS,
+  MANAGE_PAGE_SAFETY_OPS,
   PAGE_ADULT_REFUSAL_COOLDOWN_MS,
   PAGES_LIFECYCLE_RATE_LIMITS,
   createPagesLifecycleService,
 } = require("../pages/lifecycle");
-const { PAGE_ERRORS, PAGE_KEYS, pageNameSearch } = require("../pages/contract");
+const {
+  PAGE_ERRORS,
+  PAGE_KEYS,
+  clearedPageContact,
+  emptyPageBusiness,
+  pageMalformedReason,
+  pageNameSearch,
+} = require("../pages/contract");
 const { PAGE_FOLLOW_CARRY_HANDOFF_MS } = require("../pages/follow_carry");
 const { PAGE_FOLLOW_INDEX_KEYS } = require("../pages/follows");
 const { createDisplayNameService } = require("../profile/display_name");
@@ -25,7 +34,7 @@ const {
   derivePublicProfile,
   setCreatorAudienceEnabledHandler,
 } = require("../profile/public_profiles");
-const { operationIdentity } = require("../integrity/guards");
+const { operationIdentity, rateLimitReference } = require("../integrity/guards");
 const {
   DAY_MS,
   businessFields,
@@ -811,6 +820,195 @@ test("Creator audience cannot be enabled while a Page exists; disabling still wo
     { database: db, now },
   );
   assert.equal(on.creatorAudienceEnabled, true);
+});
+
+// ------------------------------------------------- clearContact (ADR-241)
+
+const FULL_CONTACT = Object.freeze({
+  website: "https://example.com/",
+  email: "kontakt@example.com",
+  phone: "+48585550142",
+  address: "ul. Garncarska 8, 80-894 Gdańsk",
+  hours: "Wt–Pt 11:00–18:00",
+  legalNotice: "Pracownia Glina sp. z o.o., NIP 5830000000",
+});
+
+test("clearContact is an op with the pause input and the unchanged owner result", async () => {
+  assert.deepEqual([...MANAGE_PAGE_OPS], ["create", "update", "pause", "resume", "clearContact"]);
+  assert.deepEqual([...MANAGE_PAGE_SAFETY_OPS], ["pause", "clearContact"]);
+  assert.deepEqual(MANAGE_PAGE_FIELDS.clearContact, ["requestId", "op"]);
+  // The fields older clients send are untouched.
+  assert.deepEqual(MANAGE_PAGE_FIELDS.update,
+    ["requestId", "op", "category", "description", "business", "community"]);
+  assert.deepEqual(MANAGE_PAGE_FIELDS.pause, ["requestId", "op"]);
+  assert.deepEqual(MANAGE_PAGE_FIELDS.resume, ["requestId", "op"]);
+
+  const uid = await ownerWithPage({ business: { ...FULL_CONTACT }, ownerPaused: true });
+  const api = service();
+  for (const data of [
+    { op: "clearContact" },
+    { ...op("clearContact"), extra: 1 },
+    { ...op("clearContact"), business: null },
+    { ...op("clearContact"), requestId: "x" },
+  ]) {
+    await assert.rejects(api.managePageV1(request(uid, data)),
+      (error) => error.code === "invalid-argument", JSON.stringify(data));
+  }
+  await assert.rejects(api.managePageV1(request(null, op("clearContact"))),
+    (error) => error.code === "unauthenticated");
+  assert.deepEqual((await pageOf(uid)).business, { ...FULL_CONTACT });
+
+  nowMs += 1_000;
+  const result = await api.managePageV1(request(uid, op("clearContact")));
+  assert.deepEqual(result, { pageId: uid, kind: "business", status: "active", ownerPaused: true });
+  const page = await pageOf(uid);
+  assert.deepEqual(page.business, emptyPageBusiness());
+  assert.equal(page.updatedAt.toMillis(), nowMs);
+  // Still the exact canonical Page: every other field is as it was.
+  assert.equal(pageMalformedReason(page, uid), null);
+  assert.deepEqual(Object.keys(page).sort(), [...PAGE_KEYS]);
+  assert.equal(page.category, "cafe_restaurant");
+  assert.equal(page.description, "Coffee and cake.");
+  assert.equal(page.ownerPaused, true);
+  assert.equal(page.status, "active");
+
+  // Idempotent: a second call writes nothing and answers the same.
+  nowMs += 1_000;
+  assert.deepEqual(await api.managePageV1(request(uid, op("clearContact"))), result);
+  assert.equal((await pageOf(uid)).updatedAt.toMillis(), nowMs - 1_000);
+});
+
+test("clearContact works while lapsed, suspended, muted, unverified and with the kill switch on", async () => {
+  const lapsedAt = Timestamp.fromMillis(nowMs - 3 * DAY_MS);
+  // Lapsed: no grant and no entitlement, the Page read-only, then hidden.
+  const readOnly = await ownerWithPage(
+    { business: { ...FULL_CONTACT }, status: "readOnly", lapsedAt, postCount: 3 },
+    { grant: null },
+  );
+  const hidden = await ownerWithPage(
+    { business: { ...FULL_CONTACT }, status: "hidden", lapsedAt },
+    { grant: null },
+  );
+  const suspended = await ownerWithPage({
+    business: { ...FULL_CONTACT },
+    suspended: true,
+    suspendedAt: Timestamp.fromMillis(nowMs - 1),
+    suspensionReason: "impersonation",
+  });
+  const muted = await ownerWithPage({ business: { ...FULL_CONTACT } }, { mute: true });
+  const unverified = await ownerWithPage({ business: { ...FULL_CONTACT } });
+  const visibilityBefore = (await db.doc("pageVisibility/v1").get()).data() ?? null;
+
+  // What the ordinary editor answers for the same owners.
+  await assert.rejects(service().managePageV1(request(readOnly, updateInput())),
+    reason("pageAccessRequired"));
+  await assert.rejects(service().managePageV1(request(suspended, updateInput())),
+    reason("pageSuspended"));
+  await assert.rejects(service().managePageV1(request(muted, updateInput())),
+    (error) => error.code === "permission-denied");
+
+  // The kill switch (and a missing activation document) stop nothing here.
+  await setActivation(db, { readAccess: "disabled", writeAccess: "disabled" });
+  const owners = [readOnly, hidden, suspended, muted, unverified];
+  const rateRows = () => Promise.all(owners.map(async (uid) => {
+    const snapshot = await rateLimitReference(db, "pages.update", uid).get();
+    return snapshot.exists ? snapshot.data() : null;
+  }));
+  const ratesBefore = await rateRows();
+  // Only the owners who tried the ordinary editor above were charged.
+  assert.deepEqual(ratesBefore.map((row) => row !== null), [true, false, true, true, false]);
+
+  const lapsedResult = await service().managePageV1(request(readOnly, op("clearContact")));
+  assert.deepEqual(lapsedResult,
+    { pageId: readOnly, kind: "business", status: "readOnly", ownerPaused: false });
+  const lapsedPage = await pageOf(readOnly);
+  assert.deepEqual(lapsedPage.business, emptyPageBusiness());
+  // No capability, so nothing is restored: the lapse and its clock stay.
+  assert.equal(lapsedPage.status, "readOnly");
+  assert.equal(lapsedPage.lapsedAt.toMillis(), lapsedAt.toMillis());
+  assert.equal(lapsedPage.postCount, 3);
+  assert.equal(pageMalformedReason(lapsedPage, readOnly), null);
+
+  const hiddenResult = await service().managePageV1(request(hidden, op("clearContact")));
+  assert.equal(hiddenResult.status, "hidden");
+  assert.deepEqual((await pageOf(hidden)).business, emptyPageBusiness());
+
+  await service().managePageV1(request(suspended, op("clearContact")));
+  const suspendedPage = await pageOf(suspended);
+  assert.deepEqual(suspendedPage.business, emptyPageBusiness());
+  assert.equal(suspendedPage.suspended, true);
+  assert.equal(suspendedPage.suspensionReason, "impersonation");
+  assert.equal(pageMalformedReason(suspendedPage, suspended), null);
+
+  await service().managePageV1(request(muted, op("clearContact")));
+  assert.deepEqual((await pageOf(muted)).business, emptyPageBusiness());
+
+  await service().managePageV1(request(unverified, op("clearContact"), { verified: false }));
+  assert.deepEqual((await pageOf(unverified)).business, emptyPageBusiness());
+
+  // A safety action: no rate budget is charged and the visibility index and
+  // the ledger are never written.
+  assert.deepEqual(await rateRows(), ratesBefore);
+  assert.deepEqual((await db.doc("pageVisibility/v1").get()).data() ?? null, visibilityBefore);
+  for (const uid of owners) {
+    const ledgers = await db.collection("integrityOperationLedgers")
+      .where("ownerId", "==", uid).get();
+    assert.equal(ledgers.size, 0, uid);
+  }
+});
+
+test("clearContact acts on the caller's own Page only, and needs a Page", async () => {
+  const none = await owner();
+  await assert.rejects(service().managePageV1(request(none, op("clearContact"))),
+    reason("pageNotFound"));
+
+  const other = await ownerWithPage({ business: { ...FULL_CONTACT } });
+  const caller = await ownerWithPage({ business: { ...FULL_CONTACT } });
+  // The Page is the caller's uid; no input can name another Page.
+  await assert.rejects(
+    service().managePageV1(request(caller, { ...op("clearContact"), pageId: other })),
+    (error) => error.code === "invalid-argument",
+  );
+  await service().managePageV1(request(caller, op("clearContact")));
+  assert.deepEqual((await pageOf(caller)).business, emptyPageBusiness());
+  assert.deepEqual((await pageOf(other)).business, { ...FULL_CONTACT });
+});
+
+test("clearContact leaves a community Page as it is", async () => {
+  const uid = await ownerWithPage({
+    kind: "community",
+    category: "hobby_crafts",
+    business: null,
+    community: { rules: "Be kind.", linkedServerId: null },
+  }, { grant: null });
+  const before = await pageOf(uid);
+  nowMs += 1_000;
+  const result = await service().managePageV1(request(uid, op("clearContact")));
+  assert.deepEqual(result, { pageId: uid, kind: "community", status: "active", ownerPaused: false });
+  assert.deepEqual(await pageOf(uid), before);
+});
+
+test("clearContact survives a malformed Page and still empties its contact details", async () => {
+  const uid = await owner();
+  await db.doc(`pages/${uid}`).set({
+    ...pageDoc(uid, nowMs, { business: { ...FULL_CONTACT } }),
+    unexpected: true,
+  });
+  const logger = silentLogger();
+  await service({ logger }).managePageV1(request(uid, op("clearContact")));
+  assert.deepEqual((await pageOf(uid)).business, emptyPageBusiness());
+  assert.ok(logger.entries.some((entry) => entry.args[0] === "pages malformed page on a safety action"));
+
+  // The pure rule: what is stored, per kind, and when nothing is written.
+  assert.equal(clearedPageContact({ kind: "business", business: emptyPageBusiness() }), undefined);
+  assert.deepEqual(
+    clearedPageContact({ kind: "business", business: { ...emptyPageBusiness(), phone: "+48600100200" } }),
+    emptyPageBusiness(),
+  );
+  assert.deepEqual(clearedPageContact({ kind: "business", business: "broken" }), emptyPageBusiness());
+  assert.deepEqual(clearedPageContact({ kind: "business", business: null }), emptyPageBusiness());
+  assert.equal(clearedPageContact({ kind: "community", business: null }), undefined);
+  assert.equal(clearedPageContact({ kind: "community", business: { website: "https://x.pl" } }), null);
 });
 
 // ------------------------------------------------------- safety tolerance

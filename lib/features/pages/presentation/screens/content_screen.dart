@@ -263,14 +263,33 @@ class _ContentScreenState extends State<ContentScreen> {
         : null;
   }
 
-  void _popToFeed() {
-    _navigator?.popUntil((route) => route.isFirst);
+  /// Pops Treści's routes down to the feed, but never through "Edytuj
+  /// stronę": that form may hold unsaved edits, and a programmatic pop skips
+  /// its "Odrzucić zmiany?" question. Returns whether the feed was reached;
+  /// when it was not, the edit form is the top route.
+  bool _popToFeed() {
+    final navigator = _navigator;
+    if (navigator == null) return false;
+    var reachedFeed = false;
+    navigator.popUntil((route) {
+      reachedFeed = route.isFirst;
+      return reachedFeed || route.settings.name == pageEditRouteName;
+    });
+    return reachedFeed;
+  }
+
+  /// Re-selecting Treści (or "Wszystkie posty") while "Edytuj stronę" is
+  /// open leaves the form the way Back does: it asks first when there are
+  /// unsaved edits, and only a form that really closed lets the rest go.
+  Future<void> _leaveEditThenFeed(NavigatorState navigator) async {
+    await navigator.maybePop();
+    if (mounted) _popToFeed();
   }
 
   void _onReselect() {
     final navigator = _navigator;
     if (navigator != null && navigator.canPop()) {
-      _popToFeed();
+      if (!_popToFeed()) unawaited(_leaveEditThenFeed(navigator));
       return;
     }
     if (_feedScroll.hasClients && _feedScroll.offset > 0) {
@@ -546,6 +565,11 @@ class _ContentScreenState extends State<ContentScreen> {
           );
           if (!desktop) return navigator;
           final notEnabled = _feed.status == PagesFeedStatus.notEnabled;
+          // "Edytuj stronę" takes the whole content slot (pageEdit A, the
+          // approved 1440 frame: the form with its standing preview beside
+          // the shell's rail). The panel is kept alive and only steps
+          // aside, so it is back, unchanged, when the form closes.
+          final focused = _topRoute == pageEditRouteName;
           // Keyboard order between the two columns: the panel is group 1,
           // the feed column (and whatever is pushed over it) group 2, so Tab
           // leaves the end of the feed for the panel instead of looping.
@@ -554,47 +578,52 @@ class _ContentScreenState extends State<ContentScreen> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const SizedBox(width: 24),
-                SizedBox(
-                  width: ContentDesktopPanel.width,
-                  child: FocusTraversalOrder(
-                    order: const NumericFocusOrder(1),
-                    child: FocusTraversalGroup(
-                      child: ContentDesktopPanel(
-                        userId: _userId,
-                        ownPageName: _userName,
-                        followed: _followedController(),
-                        access: _access,
-                        showNavigation: !notEnabled,
-                        selectedPageId: _openPageId,
-                        selection: _topRoute == _findRouteName
-                            ? ContentPanelSelection.findPages
-                            : _canPop
-                            ? ContentPanelSelection.none
-                            : ContentPanelSelection.allPosts,
-                        onAllPosts: () {
-                          if (_canPop) {
-                            _popToFeed();
-                          } else {
-                            _onReselect();
-                          }
-                        },
-                        onFindPages: _openFind,
-                        onOpenPage: _openPageFromPanel,
-                        onCreatePage: widget.flows.openCreatePage == null
-                            ? null
-                            : () {
-                                final navigatorContext =
-                                    _navigatorKey.currentContext;
-                                if (navigatorContext != null) {
-                                  _openCreate(navigatorContext);
-                                }
-                              },
+                SizedBox(width: focused ? 0 : 24),
+                Visibility(
+                  key: const ValueKey('content-desktop-panel-slot'),
+                  visible: !focused,
+                  maintainState: true,
+                  child: SizedBox(
+                    width: ContentDesktopPanel.width,
+                    child: FocusTraversalOrder(
+                      order: const NumericFocusOrder(1),
+                      child: FocusTraversalGroup(
+                        child: ContentDesktopPanel(
+                          userId: _userId,
+                          ownPageName: _userName,
+                          followed: _followedController(),
+                          access: _access,
+                          showNavigation: !notEnabled,
+                          selectedPageId: _openPageId,
+                          selection: _topRoute == _findRouteName
+                              ? ContentPanelSelection.findPages
+                              : _canPop
+                              ? ContentPanelSelection.none
+                              : ContentPanelSelection.allPosts,
+                          onAllPosts: () {
+                            if (_canPop) {
+                              _popToFeed();
+                            } else {
+                              _onReselect();
+                            }
+                          },
+                          onFindPages: _openFind,
+                          onOpenPage: _openPageFromPanel,
+                          onCreatePage: widget.flows.openCreatePage == null
+                              ? null
+                              : () {
+                                  final navigatorContext =
+                                      _navigatorKey.currentContext;
+                                  if (navigatorContext != null) {
+                                    _openCreate(navigatorContext);
+                                  }
+                                },
+                        ),
                       ),
                     ),
                   ),
                 ),
-                const SizedBox(width: 24),
+                SizedBox(width: focused ? 0 : 24),
                 Expanded(
                   child: FocusTraversalOrder(
                     order: const NumericFocusOrder(2),

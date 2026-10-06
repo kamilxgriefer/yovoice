@@ -12,6 +12,7 @@ import 'package:yovoice/features/pages/data/models/page_views.dart';
 import 'package:yovoice/features/pages/data/services/pages_service.dart';
 import 'package:yovoice/features/pages/presentation/page_profile_copy.dart';
 import 'package:yovoice/features/pages/presentation/pages_copy.dart';
+import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
 import 'package:yovoice/shared/widgets/cards/yo_card.dart';
 import 'package:yovoice/shared/widgets/profile/profile_banner.dart';
 
@@ -144,28 +145,64 @@ class PageStatusPill extends StatelessWidget {
 /// The Page cover: the account's own banner through the viewer-authorized
 /// media path (the brand gradient when there is none), with the top scrim
 /// that keeps the glass controls legible.
+///
+/// [localImage] replaces the stored banner with a picture that is not saved
+/// yet (the cover the owner just chose in "Edytuj stronę").
 class PageCover extends StatelessWidget {
-  const PageCover({required this.pageId, this.scrim = true, super.key});
+  const PageCover({
+    required this.pageId,
+    this.scrim = true,
+    this.localImage,
+    this.mediaService,
+    this.mediaRevision,
+    super.key,
+  });
 
   final String pageId;
   final bool scrim;
+  final ImageProvider<Object>? localImage;
+
+  /// Test seam; the app uses the shared service.
+  final ProfileMediaService? mediaService;
+  final Object? mediaRevision;
 
   @override
   Widget build(BuildContext context) {
+    final overlay = scrim
+        ? LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Colors.black.withValues(alpha: .35),
+              Colors.black.withValues(alpha: 0),
+            ],
+            stops: const [0, .56],
+          )
+        : null;
+    final local = localImage;
+    if (local != null) {
+      return ExcludeSemantics(
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Image(
+              key: const ValueKey('page-cover-local'),
+              image: local,
+              fit: BoxFit.cover,
+              gaplessPlayback: true,
+            ),
+            if (overlay != null)
+              DecoratedBox(decoration: BoxDecoration(gradient: overlay)),
+          ],
+        ),
+      );
+    }
     return ExcludeSemantics(
       child: ProfileBanner(
         userId: pageId,
-        overlay: scrim
-            ? LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  Colors.black.withValues(alpha: .35),
-                  Colors.black.withValues(alpha: 0),
-                ],
-                stops: const [0, .56],
-              )
-            : null,
+        mediaService: mediaService,
+        mediaRevision: mediaRevision,
+        overlay: overlay,
       ),
     );
   }

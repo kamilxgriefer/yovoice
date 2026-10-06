@@ -31,6 +31,12 @@ class PagesNavigatorScope extends InheritedWidget {
       desktop != oldWidget.desktop;
 }
 
+/// The route name of "Edytuj stronę" (`PageEditScreen`). While it is the top
+/// route of Treści's desktop navigator, the destination's 240 px panel steps
+/// aside, so the form and its live preview get the whole content slot
+/// (pageEdit A, the approved 1440 frame).
+const String pageEditRouteName = 'pages/edit';
+
 /// Hosts a Page opened from OUTSIDE Treści (a chat, a notification, a friend
 /// list, a room): the shell registers one that shows the Page with the
 /// persistent chrome (the dock with Treści selected on phones, the Treści

@@ -12,6 +12,7 @@ import 'package:yovoice/features/pages/presentation/widgets/page_face.dart';
 import 'package:yovoice/features/pages/presentation/widgets/page_follow_button.dart';
 import 'package:yovoice/features/pages/presentation/widgets/page_type_chip.dart';
 import 'package:yovoice/features/pages/presentation/widgets/pages_focus_ink.dart';
+import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
 import 'package:yovoice/shared/widgets/cards/yo_card.dart';
 import 'package:yovoice/shared/widgets/identity/yo_vip_rosette.dart';
 import 'package:yovoice/shared/widgets/layout/home_section_header.dart';
@@ -237,12 +238,23 @@ class PageListRow extends StatelessWidget {
     this.lastPostLabel,
     this.showMeta = true,
     this.divider = true,
+    this.faceImage,
+    this.mediaService,
+    this.mediaRevision,
     super.key,
   });
 
   final PageCard card;
   final PageFollowBinding follow;
   final VoidCallback onOpen;
+
+  /// A photo that is not saved yet (the live preview of "Edytuj stronę"),
+  /// shown instead of the stored one.
+  final ImageProvider<Object>? faceImage;
+
+  /// Test seam for the face's media grant; the app uses the shared service.
+  final ProfileMediaService? mediaService;
+  final Object? mediaRevision;
 
   /// "post 2 godz. temu" (the suggestions list only, as rendered).
   final String? lastPostLabel;
@@ -349,6 +361,9 @@ class PageListRow extends StatelessWidget {
                           name: card.displayName,
                           kind: card.kind,
                           size: 48,
+                          localImage: faceImage,
+                          mediaService: mediaService,
+                          mediaRevision: mediaRevision,
                         ),
                         const SizedBox(width: 12),
                         Expanded(child: identity),

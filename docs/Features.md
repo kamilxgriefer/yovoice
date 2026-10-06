@@ -416,7 +416,10 @@ A VIP account can turn itself into a Page of type Business or Community
   description, public Business contact fields or Community rules + one linked
   public Server the owner runs, an 18+ birth date that is never stored),
   `update` (kind is fixed), `pause` (always works, even muted, unverified or
-  with Pages switched off) and `resume`. A Page needs a public profile and a
+  with Pages switched off), `resume`, and `clearContact` (ADR-241: removes
+  the six public contact fields of a Business Page; like `pause` it always
+  works, also while Premium / VIP has lapsed or the Page is suspended, so
+  "you can clear them any time" is true). A Page needs a public profile and a
   name that is not reserved ("YO Voice", VIP, Admin, Support, Pomoc,
   Official, Verified … and check-mark look-alikes), and cannot be created on
   an account that already has followers.
@@ -540,7 +543,21 @@ deep link is reachable. The spec and the owner-approved renders live in
   one.
 - **Page profile.** Cover, Page face, name with the VIP rosette, Follow /
   Message actions, Wall · About · Photos tabs; the owner gets New post, Edit
-  Page, and Page settings (pause/resume, contact fields, follower count).
+  Page, and (in the ⋯ menu) Page settings.
+- **Edit Page ("Edytuj stronę", build 42, pageEdit A).** One form for the
+  whole Page: cover and photo on top (tap to pick and crop), name (once per
+  30 days; a renamed Page is out of Find for 7 days), the locked type,
+  category, description, then the six optional contact fields (Business) or
+  rules and the linked server (Community). One "Save changes": the name, the
+  pictures and a single `managePageV1 update`, each only if it changed;
+  leaving with unsaved edits asks first. Tablet shows a collapsible preview
+  card, desktop a standing live preview beside the form (the Page on the
+  Content wall and its profile header). The cover, photo and name are the
+  account's own, and the form says so. While the owner cannot edit (Premium
+  / VIP lapsed, or the Page suspended) the form is read-only and keeps
+  "Clear contact details".
+- **Page settings.** Short: the identity card, the "Edit Page" entry, the
+  follower count (the account's own counter) and Pause / Resume.
 - **Create.** From the Premium screen's "Your Page" block (and the Treści
   entries). An account without VIP gets the honest "Pages" upsell instead of
   the form (`PremiumUpsellContext.pages`): it never offers a purchase while

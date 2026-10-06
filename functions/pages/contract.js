@@ -431,6 +431,30 @@ function newPageDocument({
   return page;
 }
 
+/// The stored `business` of a business Page with every contact detail
+/// removed: the exact key set, all null (validBusiness accepts it).
+function emptyPageBusiness() {
+  return Object.fromEntries(BUSINESS_KEYS.map((key) => [key, null]));
+}
+
+/**
+ * What `managePageV1 {op:"clearContact"}` must store in `business`
+ * (ADR-241), or `undefined` when there is nothing to remove.
+ *
+ * A business Page ends with the empty contact object; a community Page has
+ * no contact fields and keeps `business: null`. It also repairs what a
+ * malformed Page may hold (the op is a safety action and reads through
+ * pageForSafetyAction): anything that is not the Page's canonical empty
+ * value is replaced by it, so no stray contact detail can outlive the call.
+ */
+function clearedPageContact(page) {
+  const business = page?.business ?? null;
+  if (page?.kind !== "business") return business === null ? undefined : null;
+  const alreadyEmpty = exactKeys(business, BUSINESS_KEYS) &&
+    BUSINESS_KEYS.every((key) => business[key] === null);
+  return alreadyEmpty ? undefined : emptyPageBusiness();
+}
+
 /// The owner-facing result of every managePageV1 op.
 function pageLifecycleResult(page) {
   return {
@@ -457,7 +481,9 @@ module.exports = {
   PAGE_STATUSES,
   canonicalPage,
   canonicalPageOrNull,
+  clearedPageContact,
   derivePageListed,
+  emptyPageBusiness,
   newPageDocument,
   pageDisplayNameMirror,
   pageLifecycleResult,

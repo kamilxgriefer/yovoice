@@ -384,6 +384,19 @@ class PagesService {
     return _parse(() => PageLifecycleResult.fromWire(raw));
   }
 
+  /// `managePageV1 {op:"clearContact"}` (ADR-241): removes every public
+  /// contact detail of a business Page. A safety action like [pausePage]: it
+  /// works while the Page is lapsed, paused or suspended, while the account
+  /// is muted, and with the kill switch on. A community Page has no contact
+  /// details and comes back unchanged.
+  Future<PageLifecycleResult> clearPageContact() async {
+    final raw = await _call(managePageCallable, <String, Object?>{
+      'requestId': newRequestId(),
+      'op': 'clearContact',
+    });
+    return _parse(() => PageLifecycleResult.fromWire(raw));
+  }
+
   /// `managePageV1 {op:"resume"}`.
   Future<PageLifecycleResult> resumePage() async {
     final raw = await _call(managePageCallable, <String, Object?>{

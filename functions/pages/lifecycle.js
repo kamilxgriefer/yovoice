@@ -1,6 +1,7 @@
 // managePageV1: create, update, pause and resume a Premium Page (ADR-233
-// §2.2). One op callable, europe-west1, App Check in the project's rollout
-// mode (enforceAppCheck:false, like every profile callable).
+// §2.2), and clear its public contact details (ADR-241). One op callable,
+// europe-west1, App Check in the project's rollout mode
+// (enforceAppCheck:false, like every profile callable).
 //
 // Order inside every op: auth -> exact input -> activation (non-safety only)
 // -> rate budget -> gate (writes only) -> content. `create` is the one
@@ -14,10 +15,18 @@
 //   update  write       pages.update   yes   active, !muted, verified  allowed while paused; not while suspended
 //   pause   NONE        none           NO    none (allowed while muted, unverified)  a safety action (§2.1)
 //   resume  write       pages.update   yes   active, !muted, verified  public profile + current name re-checked
+//   clearContact NONE    none           NO    none (allowed while muted, unverified,  a safety action (ADR-241): only
+//                                             lapsed, paused or suspended)           REMOVES the public contact details
 //
 // Every write that finds the capability live also RESTORES a lapsed Page to
 // `active` (§2.8 "every write path, live"); pause writes the visibility index
-// in the same transaction as the Page.
+// in the same transaction as the Page. clearContact passes no gate, so it
+// restores nothing, and nothing it changes decides visibility, so it leaves
+// the index alone. Both safety ops are idempotent and keep no ledger.
+//
+// Every op answers the same owner result, {pageId, kind, status, ownerPaused}
+// (pageLifecycleResult): a client that predates an op never sends it and
+// reads every other answer exactly as before.
 //
 // The birth date is used for one calculation and then dropped: never stored,
 // never hashed (the ledger's inputHash covers {adultEligibility:true}), never
@@ -79,6 +88,7 @@ const {
   PAGE_CONSENT_VERSION,
   PAGE_ERRORS,
   canonicalPage,
+  clearedPageContact,
   derivePageListed,
   newPageDocument,
   pageDisplayNameMirror,
@@ -112,7 +122,13 @@ const PAGES_LIFECYCLE_RATE_LIMITS = Object.freeze({
   "pages.create": Object.freeze({ maxEvents: 5, windowMs: DAY_MS }),
   "pages.update": Object.freeze({ maxEvents: 20, windowMs: HOUR_MS }),
 });
-const MANAGE_PAGE_OPS = Object.freeze(["create", "update", "pause", "resume"]);
+const MANAGE_PAGE_OPS = Object.freeze([
+  "create", "update", "pause", "resume", "clearContact",
+]);
+// The ops that must work whatever state the Page, the account or the kill
+// switch is in (activation.js PAGES_SAFETY_ACTIONS): no verified e-mail, no
+// activation read, no rate budget, no capability gate.
+const MANAGE_PAGE_SAFETY_OPS = Object.freeze(["pause", "clearContact"]);
 const MANAGE_PAGE_FIELDS = Object.freeze({
   create: Object.freeze([
     "requestId", "op", "kind", "category", "description", "business",
@@ -123,6 +139,7 @@ const MANAGE_PAGE_FIELDS = Object.freeze({
   ]),
   pause: Object.freeze(["requestId", "op"]),
   resume: Object.freeze(["requestId", "op"]),
+  clearContact: Object.freeze(["requestId", "op"]),
 });
 const LEDGER_KINDS = Object.freeze({
   create: "pages.page.create.v1",
@@ -514,11 +531,34 @@ function createPagesLifecycleService({
     });
   }
 
+  // ----------------------------------------------------------- clearContact
+
+  // Removes the public contact details of the caller's own Page (ADR-241).
+  // The create consent promises "you can clear them any time", and an owner
+  // whose Premium lapsed, whose Page is suspended or who is muted cannot
+  // `update`: this op keeps the promise. It can only take public data away,
+  // so it is a safety action like pause: one transaction over pages/{uid},
+  // tolerant of a malformed Page, a write only when something is stored.
+  async function clearContact(auth, timed) {
+    const uid = auth.uid;
+    const pageRef = pageReference(firestore, uid);
+    return firestore.runTransaction(async (transaction) => {
+      const pageSnapshot = await transaction.get(pageRef);
+      const page = pageForSafetyAction(pageSnapshot, uid, logger);
+      if (page === null) throw PAGE_ERRORS.notFound();
+      const business = clearedPageContact(page);
+      if (business === undefined) return pageLifecycleResult(page);
+      transaction.update(pageRef, { business, updatedAt: timed.now });
+      return pageLifecycleResult({ ...page, business });
+    });
+  }
+
   async function managePageV1(request) {
-    // Only pause may run unverified (a safety action); every other op needs
-    // the verified e-mail the common write preconditions require.
+    // Only the safety actions (pause, clearContact) may run unverified;
+    // every other op needs the verified e-mail the common write
+    // preconditions require.
     const op = request?.data?.op;
-    const auth = requireActor(request, { verified: op !== "pause" });
+    const auth = requireActor(request, { verified: !MANAGE_PAGE_SAFETY_OPS.includes(op) });
     const input = exactManagePageInput(request.data);
     const timed = timing();
     switch (input.op) {
@@ -526,6 +566,7 @@ function createPagesLifecycleService({
       case "update": return update(auth, input, timed);
       case "resume": return resume(auth, input, timed);
       case "pause": return pause(auth, timed);
+      case "clearContact": return clearContact(auth, timed);
       default: return fail("invalid-argument", "op is invalid.");
     }
   }
@@ -550,6 +591,7 @@ const managePageV1 = onCall(
 module.exports = {
   MANAGE_PAGE_FIELDS,
   MANAGE_PAGE_OPS,
+  MANAGE_PAGE_SAFETY_OPS,
   PAGE_ADULT_REFUSAL_COOLDOWN_MS,
   PAGES_LIFECYCLE_RATE_LIMITS,
   createPagesLifecycleService,

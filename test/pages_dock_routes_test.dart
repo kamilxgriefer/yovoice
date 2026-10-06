@@ -58,11 +58,13 @@ import 'package:yovoice/features/pages/presentation/pages_flows.dart';
 import 'package:yovoice/features/pages/presentation/screens/content_screen.dart';
 import 'package:yovoice/features/pages/presentation/screens/find_pages_screen.dart';
 import 'package:yovoice/features/pages/presentation/screens/page_composer.dart';
+import 'package:yovoice/features/pages/presentation/screens/page_edit_screen.dart';
 import 'package:yovoice/features/pages/presentation/screens/page_profile_screen.dart';
 import 'package:yovoice/features/pages/presentation/screens/page_settings_screen.dart';
 import 'package:yovoice/features/permissions/data/permission_readiness_service.dart';
 import 'package:yovoice/features/profile/data/models/profile_visibility.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
+import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/servers/data/models/server.dart';
 import 'package:yovoice/features/servers/data/models/server_member_role.dart';
 import 'package:yovoice/features/servers/data/models/server_type.dart';
@@ -252,6 +254,25 @@ UserProfile _profile() => UserProfile(
   createdAt: null,
   profileVisibility: ProfileVisibility.public,
 );
+
+/// The account behind the Page, for "Edytuj stronę".
+class _EditAccount implements PageEditAccount {
+  @override
+  Stream<UserProfile> watchProfile() => Stream.value(_profile());
+
+  @override
+  Future<DisplayNameChangeResult> rename(String displayName) async =>
+      throw StateError('not expected');
+
+  @override
+  Future<void> uploadImage(PickedProfileImage image) async {}
+
+  @override
+  Future<PickedProfileImage?> pickImage(
+    BuildContext context,
+    ProfileImageKind kind,
+  ) async => null;
+}
 
 /// The chat's message service without the conversation callable: the
 /// conversation id is known up front (profile_preview_sheet_test pattern).
@@ -589,6 +610,13 @@ Future<_Tresci> _pumpTresci(
       service: service,
       accessStream: accessStream,
       profileStream: () => Stream.value(_profile()),
+      userId: 'cafe',
+      clock: () => _now,
+    ),
+    editBuilder: (_) => PageEditScreen(
+      service: service,
+      account: _EditAccount(),
+      accessStream: accessStream,
       serverStream: () => Stream.value(const []),
       userId: 'cafe',
       clock: () => _now,
@@ -799,7 +827,7 @@ void main() {
     });
 
     testWidgets('Page settings: its last action scrolls above the dock; the '
-        'field sheet and the composer cover the dock', (tester) async {
+        'edit form and the composer cover the dock', (tester) async {
       await _pumpTresci(tester, owner: true);
       await _openCafe(tester);
 
@@ -816,23 +844,36 @@ void main() {
       expect(_key('page-composer'), findsNothing);
       _expectTresciWithDock(tester);
 
+      // "Edytuj stronę" (pageEdit A): the one form, pushed over the shell
+      // like create A, so its pinned "Zapisz zmiany" owns the bottom edge.
       await tester.tap(_key('page-edit'));
+      await _settle(tester);
+      _expectOverShell(tester, find.byType(PageEditScreen));
+      await tester.enterText(_key('page-edit-description'), 'Nowy opis.');
+      await _settle(tester);
+      expect(_key('page-edit-save').hitTestable(), findsOneWidget);
+      expect(
+        tester.getRect(_key('page-edit-save-bar')).bottom,
+        moreOrLessEquals(_phone.height, epsilon: .5),
+      );
+      // Back with unsaved edits asks first; discarding returns to the Page.
+      await tester.tap(_key('page-edit-back'));
+      await _settle(tester);
+      expect(find.text('Odrzucić zmiany?'), findsOneWidget);
+      await tester.tap(_key('page-confirm-action'));
+      await _settle(tester);
+      expect(find.byType(PageEditScreen), findsNothing);
+      _expectTresciWithDock(tester);
+
+      // Page settings stay one tap away in the ⋯ menu, on Treści's own
+      // navigator (the dock stays).
+      await _openPageMenu(tester);
+      await tester.tap(find.text('Ustawienia strony'));
       await _settle(tester);
       expect(find.byType(PageSettingsScreen), findsOneWidget);
       _expectAboveDock(tester, find.byType(PageSettingsScreen));
       _expectTresciWithDock(tester);
-
-      // A one-field sheet (root): Zapisz right under the field.
-      await tester.tap(_key('settings-description'));
-      await _settle(tester);
-      _expectRootSheet(
-        tester,
-        find.byType(BottomSheet),
-        _key('page-field-save'),
-      );
-      await tester.binding.handlePopRoute();
-      await _settle(tester);
-      expect(_key('page-field-save'), findsNothing);
+      expect(_key('settings-edit'), findsOneWidget);
 
       // The list's last action, scrolled to: above the dock, tappable.
       await tester.scrollUntilVisible(

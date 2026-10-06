@@ -26,6 +26,7 @@ import 'package:yovoice/features/pages/presentation/page_navigation.dart';
 import 'package:yovoice/features/pages/presentation/pages_flows.dart';
 import 'package:yovoice/features/pages/presentation/screens/content_screen.dart';
 import 'package:yovoice/features/pages/presentation/screens/create_page_screen.dart';
+import 'package:yovoice/features/pages/presentation/screens/page_edit_screen.dart';
 import 'package:yovoice/features/pages/presentation/screens/page_profile_screen.dart';
 import 'package:yovoice/features/pages/presentation/screens/page_settings_screen.dart';
 import 'package:yovoice/features/pages/presentation/widgets/pages_focus_ink.dart';
@@ -255,6 +256,7 @@ UserProfile _profile({
   accountType: AccountType.personal,
   friendCount: 0,
   followerCount: followers,
+  accountFollowerCount: followers,
   followingCount: 0,
   roomCount: 0,
   communityCount: 0,
@@ -297,6 +299,29 @@ OwnPage _own({
   lapsedAt: lapsedAt,
   suspensionReason: suspended ? 'spam' : null,
 );
+
+/// The account behind the Page, for "Edytuj stronę" opened from settings.
+class _EditAccount implements PageEditAccount {
+  _EditAccount(this.profile);
+
+  final UserProfile profile;
+
+  @override
+  Stream<UserProfile> watchProfile() => Stream.value(profile);
+
+  @override
+  Future<DisplayNameChangeResult> rename(String displayName) async =>
+      throw StateError('not expected');
+
+  @override
+  Future<void> uploadImage(PickedProfileImage image) async {}
+
+  @override
+  Future<PickedProfileImage?> pickImage(
+    BuildContext context,
+    ProfileImageKind kind,
+  ) async => null;
+}
 
 Stream<PageAccessState> Function() _access({bool vip = true, OwnPage? own}) =>
     () => Stream<PageAccessState>.value(
@@ -1541,8 +1566,15 @@ void main() {
       service: _service(backend),
       accessStream: _access(own: own ?? _own()),
       profileStream: () => Stream.value(profile ?? _profile()),
-      serverStream: () => Stream.value(const []),
       userId: 'me',
+      editBuilder: (_) => PageEditScreen(
+        service: _service(backend),
+        account: _EditAccount(profile ?? _profile()),
+        accessStream: _access(own: own ?? _own()),
+        serverStream: () => Stream.value(const []),
+        userId: 'me',
+        clock: () => _now,
+      ),
     );
 
     testWidgets('rows, count only, pause with confirmation', (tester) async {
@@ -1557,9 +1589,22 @@ void main() {
       await _pump(tester, settings(backend));
       expect(find.text('Ustawienia strony'), findsOneWidget);
       expect(find.text('AKTYWNA'), findsOneWidget);
-      expect(find.text('Typ strony'), findsOneWidget);
-      expect(find.text('Nie dodano'), findsWidgets);
-      expect(find.text('Dodaj'), findsWidgets);
+      // The short list (pageEdit A): one entry to the edit form, no field
+      // rows of its own.
+      expect(find.byKey(const ValueKey('settings-edit')), findsOneWidget);
+      expect(find.text('Edytuj stronę'), findsOneWidget);
+      expect(
+        find.text(
+          'Okładka, zdjęcie, nazwa, opis i wszystko, co widzą odwiedzający',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Typ strony'), findsNothing);
+      expect(
+        find.text('Kontakt · widoczne publicznie'.toUpperCase()),
+        findsNothing,
+      );
+      expect(find.text('Nie dodano'), findsNothing);
       await _reveal(tester, find.byKey(const ValueKey('settings-pause')));
       expect(_meta('1 214 obserwujących'), findsOneWidget);
       expect(
@@ -1578,41 +1623,69 @@ void main() {
       });
     });
 
-    testWidgets('a contact field edits and clears through one-field sheets', (
-      tester,
-    ) async {
-      final backend = _Backend({
-        'managePageV1': (_) => {
-          'pageId': 'me',
-          'kind': 'business',
-          'status': 'active',
-          'ownerPaused': false,
-        },
-      });
+    testWidgets('"Edytuj stronę" opens the one edit form with the stored '
+        'values', (tester) async {
+      final backend = _Backend({});
       await _pump(tester, settings(backend));
-      await tester.tap(find.byKey(const ValueKey('settings-phone')));
+      await tester.tap(find.byKey(const ValueKey('settings-edit')));
       await _settle(tester);
-      expect(find.text('Usuń numer ze strony'), findsOneWidget);
-      await tester.enterText(
-        find.byKey(const ValueKey('page-field-input')),
-        '12345',
-      );
-      await tester.tap(find.byKey(const ValueKey('page-field-save')));
-      await _settle(tester);
-      expect(backend.payloadsOf('managePageV1'), isEmpty);
-      expect(find.textContaining('+48 58 555 01 27'), findsWidgets);
-
-      await tester.tap(find.byKey(const ValueKey('page-field-clear')));
-      await _settle(tester);
-      final update = backend.payloadsOf('managePageV1').single;
-      expect(update['op'], 'update');
-      expect((update['business']! as Map)['phone'], isNull);
+      expect(find.byType(PageEditScreen), findsOneWidget);
       expect(
-        (update['business']! as Map)['website'],
-        'https://kawiarniaziarno.pl',
-        reason: 'the other fields are sent unchanged',
+        tester
+            .widget<TextField>(find.byKey(const ValueKey('page-edit-name')))
+            .controller!
+            .text,
+        'Kawiarnia Ziarno',
       );
-      expect(update['community'], isNull);
+      expect(find.text('Typ strony'), findsOneWidget);
+      // Opening the form sends nothing.
+      expect(backend.payloadsOf('managePageV1'), isEmpty);
+      await tester.tap(find.byKey(const ValueKey('page-edit-back')));
+      await _settle(tester);
+      expect(find.byType(PageEditScreen), findsNothing);
+      expect(find.byType(PageSettingsScreen), findsOneWidget);
+    });
+
+    testWidgets('the follower count is the account\'s own counter, which a '
+        'Page shows to everyone', (tester) async {
+      // What `UserProfile.fromFirestore` yields for every Page owner: the
+      // Creator-gated `followerCount` is 0 (a Page has Creator audience
+      // off), the account's counter carries the followers.
+      final base = _profile();
+      final owner = UserProfile(
+        uid: base.uid,
+        email: base.email,
+        displayName: base.displayName,
+        username: base.username,
+        bio: base.bio,
+        country: base.country,
+        nativeLanguage: base.nativeLanguage,
+        spokenLanguages: base.spokenLanguages,
+        learningLanguages: base.learningLanguages,
+        photoUrl: null,
+        bannerUrl: null,
+        website: base.website,
+        accountType: base.accountType,
+        friendCount: 0,
+        followerCount: 0,
+        accountFollowerCount: 128,
+        followingCount: 0,
+        roomCount: 0,
+        communityCount: 0,
+        voiceMinutes: 0,
+        messageCount: 0,
+        activeDays: 0,
+        momentCount: 0,
+        reactionCount: 0,
+        hostMinutes: 0,
+        selectedTitleId: null,
+        unlockedTitleIds: const [],
+        unlockedTitleTimestamps: const {},
+        createdAt: null,
+      );
+      await _pump(tester, settings(_Backend({}), profile: owner));
+      expect(_meta('128 obserwujących'), findsOneWidget);
+      expect(_meta('0 obserwujących'), findsNothing);
     });
 
     testWidgets('paused after going private: resume waits for a public '

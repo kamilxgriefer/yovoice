@@ -39,8 +39,13 @@ class PageFace extends StatelessWidget {
     this.mediaRevision,
     this.mediaService,
     this.kind,
+    this.localImage,
     super.key,
   });
+
+  /// A picture that is not saved yet (the photo the owner just chose in
+  /// "Edytuj stronę"), shown instead of the stored one.
+  final ImageProvider<Object>? localImage;
 
   /// The Page's kind, for the letter fallback's identity.
   final PageKind? kind;
@@ -121,14 +126,21 @@ class PageFace extends StatelessWidget {
       height: size,
       child: ClipRRect(
         borderRadius: AppRadius.md,
-        child: ProfileMediaImage(
-          userId: pageId,
-          kind: ProfileMediaKind.avatar,
-          fit: BoxFit.cover,
-          fallback: SizedBox.expand(child: letter),
-          service: mediaService,
-          revision: mediaRevision,
-        ),
+        child: localImage != null
+            ? Image(
+                key: const ValueKey('page-face-local'),
+                image: localImage!,
+                fit: BoxFit.cover,
+                gaplessPlayback: true,
+              )
+            : ProfileMediaImage(
+                userId: pageId,
+                kind: ProfileMediaKind.avatar,
+                fit: BoxFit.cover,
+                fallback: SizedBox.expand(child: letter),
+                service: mediaService,
+                revision: mediaRevision,
+              ),
       ),
     );
     face = DecoratedBox(

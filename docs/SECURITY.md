@@ -1623,6 +1623,21 @@ call's own transaction.
   sound. The existing **"Comments and mentions" switch silences it**:
   `notificationPreferences.momentComment == false` (the key every installed
   client writes for that switch) or its own `pagePostComment` key.
+- **Clearing contact details is a safety action (ADR-241, build 42).**
+  `managePageV1 {op:"clearContact"}` takes exactly `{requestId, op}` and acts
+  on `pages/{caller uid}` only: no input can name another Page. Like
+  `pause` it reads no activation switch, charges no rate budget, passes no
+  capability gate, needs no verified e-mail and keeps no ledger (it is
+  idempotent), so it works while Premium / VIP has lapsed (read-only or
+  hidden), while the Page is paused or suspended, while the account is muted
+  and with the kill switch on. It can only REMOVE public data: a Business
+  Page's `business` becomes the six-null object (a write only when something
+  is stored), a Community Page is left as it is, and a malformed Page is
+  tolerated (`pageForSafetyAction`) and still emptied. It never restores a
+  lapsed Page, never touches `pageVisibility/v1`, and answers the unchanged
+  owner result `{pageId, kind, status, ownerPaused}`. Emulator tests:
+  `functions/test/pages_lifecycle.test.js` ("clearContact …") and the
+  kill-switch case in `pages_activation.test.js`.
 - **Comment delete is a safety action.** No activation read, allowed while
   muted and unverified; the comment's author or the Page owner only (anyone
   else, and a missing comment, get the uniform `pageUnavailable`). The

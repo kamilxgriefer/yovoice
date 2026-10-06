@@ -200,6 +200,15 @@ test("with the kill switch on, pause and go-private still work", async () => {
   assert.deepEqual(paused, { pageId: first, kind: "business", status: "active", ownerPaused: true });
   assert.equal((await db.doc(`pages/${first}`).get()).data().ownerPaused, true);
 
+  // Removing the public contact details is a safety action too (ADR-241).
+  assert.ok(PAGES_SAFETY_ACTIONS.includes("managePageV1.clearContact"));
+  assert.equal((await db.doc(`pages/${first}`).get()).data().business.website, "https://example.com");
+  const cleared = await lifecycle.managePageV1(
+    request(first, { requestId: "req-clear-1", op: "clearContact" }),
+  );
+  assert.deepEqual(cleared, { pageId: first, kind: "business", status: "active", ownerPaused: true });
+  assert.equal((await db.doc(`pages/${first}`).get()).data().business.website, null);
+
   const privateResult = await visibility.setMyProfileVisibility({
     auth: { uid: second, token: {} },
     data: { visibility: "private" },

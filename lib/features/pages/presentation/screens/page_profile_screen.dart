@@ -27,6 +27,7 @@ import 'package:yovoice/features/pages/data/services/page_voice_player.dart';
 import 'package:yovoice/features/pages/presentation/page_post_copy.dart';
 import 'package:yovoice/features/pages/presentation/screens/page_composer.dart';
 import 'package:yovoice/features/pages/presentation/pages_flows.dart';
+import 'package:yovoice/features/pages/presentation/screens/page_edit_screen.dart';
 import 'package:yovoice/features/pages/presentation/screens/page_settings_screen.dart';
 import 'package:yovoice/features/pages/presentation/widgets/page_face.dart';
 import 'package:yovoice/features/pages/presentation/widgets/page_menus.dart';
@@ -97,6 +98,7 @@ class PageProfileScreen extends StatefulWidget {
     this.clock,
     this.shareLink,
     this.settingsBuilder,
+    this.editBuilder,
     super.key,
   });
 
@@ -119,6 +121,9 @@ class PageProfileScreen extends StatefulWidget {
 
   /// Builds the owner's Page settings (test seam).
   final WidgetBuilder? settingsBuilder;
+
+  /// Builds the owner's "Edytuj stronę" (test seam).
+  final WidgetBuilder? editBuilder;
 
   static const double phoneCover = 184;
   static const double tabletCover = 160;
@@ -175,12 +180,12 @@ class _PageProfileScreenState extends State<PageProfileScreen> {
           widget.accessStream?.call() ?? PageAccessService.instance.watch();
       _accessSub = stream.listen((state) {
         if (!mounted || state.ownPage == _ownPage) return;
-        final wasRunning = _ownPage?.canPublish;
+        final previous = _ownPage;
         setState(() => _ownPage = state.ownPage);
-        // Settings changed the Page (paused, resumed, edited): refresh.
-        if (wasRunning != null && wasRunning != state.ownPage?.canPublish) {
-          unawaited(_controller.load());
-        }
+        // The owner changed the Page (paused or resumed in settings, or
+        // saved "Edytuj stronę": name, category, description, contact):
+        // refresh, so the header and Informacje show what was stored.
+        if (previous != null) unawaited(_controller.load());
       }, onError: (Object _, StackTrace _) {});
     } else {
       unawaited(_resolveRelationship());
@@ -282,6 +287,18 @@ class _PageProfileScreenState extends State<PageProfileScreen> {
       ),
     );
   }
+
+  /// "Edytuj stronę": the one form with the live preview. What it saves
+  /// reaches this screen through the owner's own Page record (see
+  /// [initState]), which reloads the header.
+  void _openEdit() => unawaited(
+    openPageEdit(
+      context,
+      builder:
+          widget.editBuilder ??
+          (_) => PageEditScreen(service: _service, userId: _userId),
+    ),
+  );
 
   Future<void> _resume() async {
     try {
@@ -1713,7 +1730,7 @@ class _PageProfileScreenState extends State<PageProfileScreen> {
             key: const ValueKey('page-edit'),
             label: copy.editPage,
             icon: Icons.edit_outlined,
-            onPressed: _openSettings,
+            onPressed: _openEdit,
           );
         case PageHeaderState.paused:
           primaryLabel = copy.resumePage;
