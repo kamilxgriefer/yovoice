@@ -317,6 +317,16 @@ Future<void> _type(WidgetTester tester, String key, String value) async {
   await tester.pump();
 }
 
+/// The app bar's save action: the words "Zapisz" where they fit beside the
+/// title, the check mark where they do not (the flutter_test font is wider
+/// than Inter, so most tests get the check mark at 390 px).
+VoidCallback? _saveActionCallback(WidgetTester tester) {
+  final action = tester.widget(_key('page-edit-save-action'));
+  return action is TextButton
+      ? action.onPressed
+      : (action as IconButton).onPressed;
+}
+
 bool _saveEnabled(WidgetTester tester) =>
     tester.widget<YoGradientFilledButton>(_key('page-edit-save')).onPressed !=
     null;
@@ -365,10 +375,7 @@ void main() {
       expect(_text(tester, 'page-edit-phone'), '+48585550127');
 
       // Clean: "Zapisz" is off, there is no save bar, Back just leaves.
-      expect(
-        tester.widget<TextButton>(_key('page-edit-save-action')).onPressed,
-        isNull,
-      );
+      expect(_saveActionCallback(tester), isNull);
       expect(_key('page-edit-save-bar'), findsNothing);
       expect(_key('page-edit-unsaved'), findsNothing);
       await tester.tap(_key('page-edit-back'));
@@ -386,10 +393,7 @@ void main() {
       await _type(tester, 'page-edit-phone', '+48 58 555 01 42');
       expect(find.text('Masz niezapisane zmiany'), findsOneWidget);
       expect(_saveEnabled(tester), isTrue);
-      expect(
-        tester.widget<TextButton>(_key('page-edit-save-action')).onPressed,
-        isNotNull,
-      );
+      expect(_saveActionCallback(tester), isNotNull);
 
       await tester.tap(_key('page-edit-save'));
       await _settle(tester);
@@ -689,6 +693,82 @@ void main() {
       expect(find.byType(PageEditScreen), findsNothing);
     });
 
+    testWidgets('a failed save is shown where the owner is: its banner comes '
+        'into view from the bottom of the form', (tester) async {
+      final backend = _Backend({
+        'managePageV1': (_) => throw _refusal('unavailable'),
+      });
+      for (final size in const [Size(390, 844), Size(768, 1024)]) {
+        await _pump(tester, _edit(backend), size: size);
+        // The last field: the top of the form, where the banner goes, is
+        // far above the screen.
+        await _type(tester, 'page-edit-legal', 'Ziarno sp. z o.o.');
+        final position = tester
+            .state<ScrollableState>(
+              find
+                  .descendant(
+                    of: _key('page-edit-scroll'),
+                    matching: find.byType(Scrollable),
+                  )
+                  .first,
+            )
+            .position;
+        expect(position.pixels, greaterThan(400), reason: '$size');
+        await tester.tap(_key('page-edit-save'));
+        await _settle(tester);
+        final banner = find.text('Nie udało się zapisać zmian');
+        expect(banner.hitTestable(), findsOneWidget, reason: '$size');
+        expect(
+          tester.getRect(banner).top,
+          greaterThan(tester.getRect(find.byType(AppBar)).bottom),
+          reason: '$size',
+        );
+        expect(
+          tester.getRect(banner).bottom,
+          lessThan(tester.getRect(_key('page-edit-save-bar')).top),
+          reason: '$size',
+        );
+      }
+
+      // The split layout, inside the desktop shell's slot.
+      await _pump(
+        tester,
+        _edit(backend),
+        size: const Size(1280, 720),
+        desktop: true,
+      );
+      await _type(tester, 'page-edit-legal', 'Ziarno sp. z o.o.');
+      expect(
+        find.text('Nie udało się zapisać zmian').hitTestable(),
+        findsNothing,
+      );
+      await tester.tap(_key('page-edit-save'));
+      await _settle(tester);
+      expect(
+        find.text('Nie udało się zapisać zmian').hitTestable(),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('tablet: an invalid name is brought back into view and '
+        'focused from the bottom of the form', (tester) async {
+      final backend = _Backend();
+      await _pump(tester, _edit(backend), size: const Size(768, 1024));
+      await _type(tester, 'page-edit-name', 'K');
+      await _type(tester, 'page-edit-legal', 'Ziarno sp. z o.o.');
+      await tester.tap(_key('page-edit-save'));
+      await _settle(tester);
+      expect(backend.manage, isEmpty);
+      expect(
+        find.text('Nazwa musi mieć od 2 do 120 znaków.').hitTestable(),
+        findsOneWidget,
+      );
+      expect(
+        tester.widget<TextField>(_key('page-edit-name')).focusNode!.hasFocus,
+        isTrue,
+      );
+    });
+
     testWidgets('a picture that cannot be uploaded keeps the form open', (
       tester,
     ) async {
@@ -909,6 +989,65 @@ void main() {
       expect(backend.manage.single['op'], 'clearContact');
       // What was cleared is not an unsaved change.
       expect(_key('page-edit-save-bar'), findsNothing);
+    });
+
+    testWidgets('a clear in flight holds Save back and makes the form inert, '
+        'so no update can put the contact details back', (tester) async {
+      const result = <String, Object?>{
+        'pageId': 'me',
+        'kind': 'business',
+        'status': 'active',
+        'ownerPaused': false,
+      };
+      final answer = Completer<Object?>();
+      final backend = _Backend({
+        'managePageV1': (payload) =>
+            payload['op'] == 'clearContact' ? answer.future : result,
+      });
+      await _pump(tester, _edit(backend));
+      bool inert() => tester
+          .widget<AbsorbPointer>(
+            find
+                .ancestor(
+                  of: _key('page-edit-scroll'),
+                  matching: find.byType(AbsorbPointer),
+                )
+                .first,
+          )
+          .absorbing;
+      await _type(tester, 'page-edit-description', 'Nowy opis.');
+      expect(_saveEnabled(tester), isTrue);
+
+      await _reveal(tester, _key('page-edit-clear-contact'));
+      await tester.tap(_key('page-edit-clear-contact'));
+      await _settle(tester);
+      await tester.tap(_key('page-confirm-action'));
+      await _settle(tester);
+      // The clear is on its way and has not answered.
+      expect(backend.manage.single['op'], 'clearContact');
+      expect(inert(), isTrue);
+      expect(_saveEnabled(tester), isFalse);
+      expect(_saveActionCallback(tester), isNull);
+      await tester.tap(_key('page-edit-save'), warnIfMissed: false);
+      await _settle(tester);
+      expect(backend.manage, hasLength(1));
+      expect(_text(tester, 'page-edit-website'), 'https://kawiarniaziarno.pl');
+
+      answer.complete(result);
+      await _settle(tester);
+      expect(inert(), isFalse);
+      expect(_text(tester, 'page-edit-website'), '');
+      // The other unsaved edit is still there, and saving it sends the
+      // emptied contact details, not the ones just removed.
+      expect(_saveEnabled(tester), isTrue);
+      await tester.tap(_key('page-edit-save'));
+      await _settle(tester);
+      expect(backend.manage, hasLength(2));
+      final update = backend.manage.last;
+      expect(update['op'], 'update');
+      expect(update['description'], 'Nowy opis.');
+      expect((update['business']! as Map)['website'], isNull);
+      expect((update['business']! as Map)['phone'], isNull);
     });
   });
 
@@ -1265,10 +1404,7 @@ void main() {
       await _settle(tester);
       expect(find.text('page chor'), findsOneWidget);
       expect(find.text('page glina', skipOffstage: false), findsNothing);
-      expect(
-        find.byType(PageEditScreen, skipOffstage: false),
-        findsOneWidget,
-      );
+      expect(find.byType(PageEditScreen, skipOffstage: false), findsOneWidget);
 
       // Back from the Page: the form, as it was left.
       tester
@@ -1371,6 +1507,83 @@ void main() {
           );
         }
       }
+    });
+
+    testWidgets('the app bar never cuts the title: the text action gives '
+        'way to a check mark, in all 43 locales', (tester) async {
+      Finder inBar(Type type) =>
+          find.descendant(of: find.byType(AppBar), matching: find.byType(type));
+      for (final locale in AppLocalizations.supportedLocales) {
+        for (final (size, scale) in const [
+          (Size(390, 844), 1.0),
+          (Size(360, 780), 1.0),
+          (Size(320, 640), 1.0),
+          (Size(390, 844), 1.3),
+          (Size(390, 844), 2.0),
+          (Size(320, 640), 2.0),
+        ]) {
+          await _pump(
+            tester,
+            _edit(_Backend()),
+            size: size,
+            textScale: scale,
+            locale: locale,
+          );
+          final reason = '$locale $size x$scale';
+          expect(tester.takeException(), isNull, reason: reason);
+          final fitted = inBar(FittedBox);
+          final title = tester.renderObject<RenderParagraph>(
+            find.descendant(of: fitted, matching: find.byType(RichText)),
+          );
+          expect(title.didExceedMaxLines, isFalse, reason: reason);
+          // How much the title had to shrink to stay whole.
+          final shrink = tester.getSize(fitted).width / title.size.width;
+          if (scale == 1.0 && size.width >= 360) {
+            expect(shrink, greaterThan(.985), reason: reason);
+          } else {
+            expect(shrink, greaterThan(.6), reason: reason);
+          }
+          // The action is whole and on screen, as words or as the check.
+          final action = _key('page-edit-save-action');
+          final rect = tester.getRect(action);
+          expect(rect.left, greaterThanOrEqualTo(0), reason: reason);
+          expect(rect.right, lessThanOrEqualTo(size.width), reason: reason);
+          final words = find.descendant(
+            of: action,
+            matching: find.byType(RichText),
+          );
+          if (tester.widget(action) is TextButton) {
+            expect(
+              tester.renderObject<RenderParagraph>(words).didExceedMaxLines,
+              isFalse,
+              reason: reason,
+            );
+          } else {
+            expect(
+              tester.widget<IconButton>(action).tooltip,
+              isNotEmpty,
+              reason: reason,
+            );
+          }
+        }
+      }
+
+      // The approved frame keeps its words; a long pair gets the check mark,
+      // which still saves.
+      await _pump(tester, _edit(_Backend()));
+      expect(tester.widget(_key('page-edit-save-action')), isA<TextButton>());
+      expect(find.text('Zapisz'), findsOneWidget);
+
+      final backend = _Backend();
+      await _pump(tester, _edit(backend), locale: const Locale('ru'));
+      final check = tester.widget<IconButton>(_key('page-edit-save-action'));
+      expect(check.tooltip, 'Сохранить');
+      expect(check.onPressed, isNull, reason: 'nothing to save yet');
+      await _type(tester, 'page-edit-description', 'Новое описание.');
+      await tester.tap(_key('page-edit-save-action'));
+      await _settle(tester);
+      expect(backend.manage.single['op'], 'update');
+      expect(backend.manage.single['description'], 'Новое описание.');
     });
   });
 }

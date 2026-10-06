@@ -1040,7 +1040,13 @@ card, the "Edytuj stronę" entry, followers, visibility).
   on with the first change, which also brings the pinned bar ("● Masz
   niezapisane zmiany" + the gradient "Zapisz zmiany"); Back, system Back
   and "Anuluj" ask "Odrzucić zmiany?" first. A failed step shows a danger
-  banner above the form that says whether something was already saved.
+  banner above the form that says whether something was already saved, and
+  the form scrolls to it (the save is pinned, so the owner is usually far
+  below the top of the form); a field the save cannot go out with is
+  scrolled to and focused. Both rely on every field staying built: all
+  three layouts put the form in ONE scroll child, never a lazy list (a lazy
+  tablet list used to drop the off-screen fields, so a refused save did
+  nothing visible).
 - **Widths (by the space given, not by device).** < 600: one column, cover
   132 edge to edge, photo 84 overlapping by 28. 600-999: one 640 column
   under a collapsible "Podgląd" card. ≥ 1000: the create screen's 1040
@@ -1059,13 +1065,20 @@ card, the "Edytuj stronę" entry, followers, visibility).
   rail leaves the form the way Back does (it asks "Odrzucić zmiany?" when
   there are unsaved edits), and a Page link that arrives meanwhile opens
   over the form, which is still there, edits intact, on the way back
-  (`ContentScreen._popToFeed` stops at the edit route). The app bar's text
-  action "Zapisz" keeps the toolbar's own 1.34× text cap, so a long
-  translation at a large text size cannot squeeze the title out; the pinned
-  "Zapisz zmiany" scales fully and takes a second line rather than being cut
-  ("Änderungen speichern" at 200 % on a phone). While a save is in flight the
-  form is inert (`AbsorbPointer`): a successful save closes the screen, so a
-  change made meanwhile would be lost.
+  (`ContentScreen._popToFeed` stops at the edit route). The app bar never
+  cuts its title: the action "Zapisz" keeps the toolbar's own 1.34× text cap
+  and is drawn as words only where the title and the words fit side by side;
+  where they do not (Russian "Редактировать страницу" + "Сохранить" at
+  390 px, Greek and Bulgarian at 360 px, most languages at 200 %) it is a
+  check mark with the same tooltip and screen-reader label, and as a last
+  resort (320 px at a large text size) the title scales down instead of
+  ending in an ellipsis. The pinned "Zapisz zmiany" scales fully and takes a
+  second line rather than being cut ("Änderungen speichern" at 200 % on a
+  phone). While a save is in flight the form is inert (`AbsorbPointer`): a
+  successful save closes the screen, so a change made meanwhile would be
+  lost. It is inert, with both save actions off, while "Wyczyść dane
+  kontaktowe" is in flight too, so no `update` can go out with the contact
+  details the owner is removing.
 - **Read-only.** When the owner cannot `update` (suspended, or neither
   Premium nor VIP) the fields are disabled under a notice and the camera
   controls are gone; a Business Page keeps "Wyczyść dane kontaktowe"

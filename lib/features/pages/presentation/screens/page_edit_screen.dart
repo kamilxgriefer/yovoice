@@ -522,14 +522,12 @@ class _PageEditScreenState extends State<PageEditScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final target = node.context;
-      if (target != null) {
+      if (target != null && target.mounted) {
         unawaited(
           Scrollable.ensureVisible(
             target,
             alignment: .2,
-            duration: MediaQuery.maybeDisableAnimationsOf(context) ?? false
-                ? Duration.zero
-                : const Duration(milliseconds: 240),
+            duration: _revealDuration,
           ),
         );
         node.requestFocus();
@@ -537,6 +535,11 @@ class _PageEditScreenState extends State<PageEditScreen> {
       announcePages(context, message, assertive: true);
     });
   }
+
+  Duration get _revealDuration =>
+      MediaQuery.maybeDisableAnimationsOf(context) ?? false
+      ? Duration.zero
+      : const Duration(milliseconds: 240);
 
   // ------------------------------------------------------------- actions
 
@@ -675,7 +678,12 @@ class _PageEditScreenState extends State<PageEditScreen> {
   Future<void> _save() async {
     final kind = _kind;
     final base = _base;
-    if (_saving || kind == null || base == null || !_dirty) return;
+    // Never beside a clear in flight: the update would go out with the
+    // contact details still in the fields and put back what the owner is
+    // removing.
+    if (_saving || _clearing || kind == null || base == null || !_dirty) {
+      return;
+    }
     FocusManager.instance.primaryFocus?.unfocus();
     final invalid = _firstError;
     if (invalid != null) {
@@ -742,6 +750,7 @@ class _PageEditScreenState extends State<PageEditScreen> {
           () => _failure = (title: copy.savedPartly, body: copy.nameSavedRetry),
         );
         announcePages(context, copy.nameSavedRetry, assertive: true);
+        _revealFailure();
         return;
       }
       // Announced only after every stage completed. The messenger was taken
@@ -766,10 +775,25 @@ class _PageEditScreenState extends State<PageEditScreen> {
     final title = savedSomething ? copy.savedPartly : copy.saveFailed;
     setState(() => _failure = (title: title, body: reason));
     announcePages(context, '$title. $reason', assertive: true);
-    final target = _failureKey.currentContext;
-    if (target != null) {
-      unawaited(Scrollable.ensureVisible(target, alignment: .1));
-    }
+    _revealFailure();
+  }
+
+  /// The banner stands at the top of the form and "Zapisz zmiany" is pinned,
+  /// so the owner is usually far below it. It is built by the frame the
+  /// caller's setState asks for: bring it into view once it exists.
+  void _revealFailure() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final target = _failureKey.currentContext;
+      if (target == null || !target.mounted) return;
+      unawaited(
+        Scrollable.ensureVisible(
+          target,
+          alignment: .1,
+          duration: _revealDuration,
+        ),
+      );
+    });
   }
 
   final GlobalKey _failureKey = GlobalKey(debugLabel: 'page-edit-failure');
@@ -890,12 +914,58 @@ class _PageEditScreenState extends State<PageEditScreen> {
 
   // ---- Pushed as a route: a real app bar ------------------------------------
 
+  /// The app bar caps its title's text size at this factor.
+  static const double _toolbarTextCap = 1.34;
+
+  static final TextStyle _saveActionStyle = AppTypography.labelLarge.copyWith(
+    fontSize: 15,
+    fontWeight: FontWeight.w700,
+  );
+
+  /// Whether the toolbar holds the whole title beside the TEXT action
+  /// ("Edytuj stronę" + "Zapisz"). The title is the name of the screen, so
+  /// it wins: when the two do not fit (long translations, a narrow phone, a
+  /// large text size) the action is drawn as a check mark instead.
+  bool _textActionFits(BuildContext context, double width, TextStyle title) {
+    final copy = _copy;
+    final scaler = MediaQuery.textScalerOf(
+      context,
+    ).clamp(maxScaleFactor: _toolbarTextCap);
+    final direction = Directionality.of(context);
+    double measure(String text, TextStyle style) {
+      final painter = TextPainter(
+        text: TextSpan(text: text, style: style),
+        textDirection: direction,
+        textScaler: scaler,
+        maxLines: 1,
+      )..layout();
+      final measured = painter.width;
+      painter.dispose();
+      return measured;
+    }
+
+    // Back (56), the title's margin on both sides (2 x 16) and the gap
+    // after the action (8). A fraction of a pixel either way is taken up by
+    // the title's own scale-down.
+    const chrome = 56.0 + 32 + 8;
+    // The button: its label and padding (2 x 12), never under 64.
+    final action = math.max(64.0, measure(copy.save, _saveActionStyle) + 24);
+    return measure(copy.editPage, title) + action + chrome <= width;
+  }
+
   Widget _pushed(BuildContext context, _Layout layout, double width) {
     final palette = context.appPalette;
     final copy = _copy;
     final state = _stateView(context);
     final dirty = _dirty;
     final keyboardUp = MediaQuery.viewInsetsOf(context).bottom > 0;
+    final titleStyle = AppTypography.titleMedium.copyWith(
+      color: palette.textPrimary,
+      fontWeight: FontWeight.w700,
+    );
+    final saveAction = dirty && !_saving && !_clearing
+        ? () => unawaited(_save())
+        : null;
     return Scaffold(
       backgroundColor: palette.background,
       appBar: AppBar(
@@ -907,34 +977,43 @@ class _PageEditScreenState extends State<PageEditScreen> {
           key: const ValueKey('page-edit-back'),
           onPressed: () => unawaited(_leave()),
         ),
-        title: Text(
-          copy.editPage,
-          style: AppTypography.titleMedium.copyWith(
-            color: palette.textPrimary,
-            fontWeight: FontWeight.w700,
-          ),
+        // The whole title, always: where even the check-mark action leaves
+        // it too little room (320 px at a large text size) it gets smaller
+        // instead of ending in an ellipsis.
+        title: FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: AlignmentDirectional.centerStart,
+          child: Text(copy.editPage, maxLines: 1, style: titleStyle),
         ),
         actions: [
           if (state == null && !_locked)
             // The toolbar does not grow with the text size, and the app bar
-            // caps its title at 1.34x: the action keeps the same cap, so a
-            // long "Save" at a large text size cannot squeeze the title out
-            // ("Edytuj s…"). The pinned "Zapisz zmiany" below scales fully.
+            // caps its title at 1.34x: the action keeps the same cap. The
+            // pinned "Zapisz zmiany" below scales fully.
             MediaQuery.withClampedTextScaling(
-              maxScaleFactor: 1.34,
-              child: TextButton(
-                key: const ValueKey('page-edit-save-action'),
-                onPressed: dirty && !_saving ? () => unawaited(_save()) : null,
-                style: TextButton.styleFrom(
-                  foregroundColor: palette.interactiveForeground,
-                  minimumSize: const Size(64, 44),
-                  textStyle: AppTypography.labelLarge.copyWith(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                child: Text(copy.save),
-              ),
+              maxScaleFactor: _toolbarTextCap,
+              child: _textActionFits(context, width, titleStyle)
+                  ? TextButton(
+                      key: const ValueKey('page-edit-save-action'),
+                      onPressed: saveAction,
+                      style: TextButton.styleFrom(
+                        foregroundColor: palette.interactiveForeground,
+                        minimumSize: const Size(64, 44),
+                        textStyle: _saveActionStyle,
+                      ),
+                      child: Text(copy.save),
+                    )
+                  // A long title and a long "Save" do not fit one toolbar
+                  // ("Редактировать страницу" + "Сохранить" at 390 px): the
+                  // title stays whole and the action becomes a check mark
+                  // that says "Save" to a screen reader and on long press.
+                  : IconButton(
+                      key: const ValueKey('page-edit-save-action'),
+                      onPressed: saveAction,
+                      tooltip: copy.save,
+                      color: palette.interactiveForeground,
+                      icon: const Icon(Icons.check_rounded),
+                    ),
             ),
           const SizedBox(width: 8),
         ],
@@ -1053,7 +1132,7 @@ class _PageEditScreenState extends State<PageEditScreen> {
   /// modifications") is wider than the phone's pinned button.
   Widget _saveButton(Size minimumSize) => YoGradientFilledButton(
     key: const ValueKey('page-edit-save'),
-    onPressed: _dirty ? () => unawaited(_save()) : null,
+    onPressed: _dirty && !_clearing ? () => unawaited(_save()) : null,
     busy: _saving,
     minimumSize: minimumSize,
     padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
@@ -1075,14 +1154,17 @@ class _PageEditScreenState extends State<PageEditScreen> {
   // ---- The body at the three widths ------------------------------------------
 
   /// The form, inert while a save is in flight: a successful save closes
-  /// the screen, so anything changed meanwhile would be dropped unsaved.
+  /// the screen, so anything changed meanwhile would be dropped unsaved. It
+  /// is inert during "Wyczyść dane kontaktowe" too: that call empties the
+  /// contact fields when it answers, so nothing typed meanwhile is lost
+  /// without a word.
   Widget _formBody(
     BuildContext context,
     _Layout layout,
     double width, {
     double topPadding = 8,
   }) => AbsorbPointer(
-    absorbing: _saving,
+    absorbing: _saving || _clearing,
     child: _formLayout(context, layout, width, topPadding: topPadding),
   );
 
@@ -1116,16 +1198,31 @@ class _PageEditScreenState extends State<PageEditScreen> {
           keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
           padding: EdgeInsets.fromLTRB(gutter, topPadding, gutter, 40),
           children: [
-            _PreviewCard(
-              expanded: _previewExpanded,
-              onToggle: () =>
-                  setState(() => _previewExpanded = !_previewExpanded),
-              child: _profilePreview(),
+            // ONE child, as on the phone and in the split layout: every
+            // field stays built wherever the form is scrolled to. A lazy
+            // list would drop the fields that are off screen, and then a
+            // refused save could neither scroll back to the field at fault
+            // nor show the banner that says why (and a field would lose its
+            // focus by being scrolled away).
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _PreviewCard(
+                  expanded: _previewExpanded,
+                  onToggle: () =>
+                      setState(() => _previewExpanded = !_previewExpanded),
+                  child: _profilePreview(),
+                ),
+                const SizedBox(height: 24),
+                _photos(
+                  context,
+                  cover: PageEditScreen.wideCover,
+                  rounded: true,
+                ),
+                const SizedBox(height: 20),
+                ..._fields(context),
+              ],
             ),
-            const SizedBox(height: 24),
-            _photos(context, cover: PageEditScreen.wideCover, rounded: true),
-            const SizedBox(height: 20),
-            ..._fields(context),
           ],
         );
       case _Layout.split:
@@ -1766,17 +1863,27 @@ class _PreviewCard extends StatelessWidget {
             children: [
               Icon(
                 Icons.visibility_outlined,
-                size: 20,
+                // The eye follows the reader's text size as the title does,
+                // up to the size of the toggle beside it.
+                size: MediaQuery.textScalerOf(
+                  context,
+                ).scale(20).clamp(20, 28).toDouble(),
                 color: palette.interactiveForeground,
               ),
               const SizedBox(width: 10),
               Expanded(
                 child: Semantics(
                   header: true,
-                  child: Text(
-                    copy.previewOverline,
-                    style: AppTypography.sectionTitle.copyWith(
-                      color: palette.textPrimary,
+                  // At the usual size the 48 px toggle sets the row's height;
+                  // at a large one the title does, and keeps this much air
+                  // above the preview.
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    child: Text(
+                      copy.previewOverline,
+                      style: AppTypography.sectionTitle.copyWith(
+                        color: palette.textPrimary,
+                      ),
                     ),
                   ),
                 ),

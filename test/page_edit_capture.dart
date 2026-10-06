@@ -993,6 +993,24 @@ void main() {
     textScale: 2,
     then: _dirty,
   );
+  // A long title beside a long "Save" (Russian): the title stays whole and
+  // the app bar's action is the check mark; at 320 px and 200 % the title
+  // gets smaller instead of ending in an ellipsis.
+  _frame(
+    'edit_390_dark_ru_dirty',
+    _phone,
+    _edit,
+    locale: const Locale('ru'),
+    then: _dirty,
+  );
+  _frame(
+    'edit_320_dark_ru_text200_dirty',
+    const Size(320, 640),
+    _edit,
+    locale: const Locale('ru'),
+    textScale: 2,
+    then: _dirty,
+  );
   _frame(
     'edit_390_dark_no_pictures_new_cover',
     _phone,
