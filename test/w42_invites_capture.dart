@@ -857,6 +857,65 @@ void main() {
     ),
   );
 
+  // The create-account form of the same screen — the one a newly invited
+  // person actually uses. Its supporting line names the link too.
+  Future<void> openRegister(WidgetTester t) async {
+    final tab = find.byKey(const ValueKey('auth-mode-register'));
+    await t.ensureVisible(tab);
+    await t.tap(tab);
+  }
+
+  for (final size in const [_phone, _tablet, _desk]) {
+    _frame(
+      'a3b_signed-out_profile-link_register_${_tag(size)}_dark_pl',
+      size,
+      () async => LoginScreen(
+        authService: _VisualAuthService(),
+        entryLink: AuthEntryLink.profile,
+      ),
+      then: openRegister,
+    );
+  }
+  _frame(
+    'a3b_signed-out_profile-link_register_390_dark_pl_200',
+    _phone,
+    () async => LoginScreen(
+      authService: _VisualAuthService(),
+      entryLink: AuthEntryLink.profile,
+    ),
+    text: 2,
+    then: openRegister,
+  );
+  _frame(
+    'a3b_signed-out_profile-link_register_390_dark_el',
+    _phone,
+    () async => LoginScreen(
+      authService: _VisualAuthService(),
+      entryLink: AuthEntryLink.profile,
+    ),
+    locale: const Locale('el'),
+    then: openRegister,
+  );
+  _frame(
+    'a3b_signed-out_profile-link_register_390_dark_ar_rtl',
+    _phone,
+    () async => LoginScreen(
+      authService: _VisualAuthService(),
+      entryLink: AuthEntryLink.profile,
+    ),
+    locale: const Locale('ar'),
+    then: openRegister,
+  );
+  _frame(
+    'a3b_signed-out_voice-link_register_390_dark_pl',
+    _phone,
+    () async => LoginScreen(
+      authService: _VisualAuthService(),
+      entryLink: AuthEntryLink.voiceMoment,
+    ),
+    then: openRegister,
+  );
+
   // ---- A `?moment=` link that does not resolve ----------------------------
   for (final size in const [_phone, _tablet, _desk]) {
     _frame(

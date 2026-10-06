@@ -619,6 +619,41 @@ void main() {
           expect(opened, 1);
         },
       );
+
+      test('a pop that happened before anyone waited is not a stale '
+          'permission', () async {
+        final gate = ShellRouteCurrentGate();
+        gate.routeBecameCurrent();
+        var opened = false;
+        unawaited(gate.wait(isCurrent: false).then((_) => opened = true));
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        expect(opened, isFalse);
+        gate.routeBecameCurrent();
+        await Future<void>.delayed(Duration.zero);
+        expect(opened, isTrue);
+      });
+
+      test('the profile link asks at the moment of presenting, after its '
+          'lookups — a route pushed meanwhile is waited for too', () {
+        final shell = File(
+          'lib/features/home/presentation/screens/main_shell.dart',
+        ).readAsStringSync();
+        final start = shell.indexOf(
+          'Future<void> _openInitialUserLink(String userId) async {',
+        );
+        expect(start, greaterThan(0));
+        final body = shell.substring(
+          start,
+          shell.indexOf('Future<void> _whenShellRouteIsCurrent()', start),
+        );
+        final settle = body.indexOf('await settlePagesForInitialUserLink(');
+        final gate = body.indexOf('await _whenShellRouteIsCurrent();');
+        final present = body.indexOf('await showProfilePreview(');
+        expect(settle, greaterThan(0));
+        expect(gate, greaterThan(settle));
+        expect(present, greaterThan(gate));
+        expect(body, isNot(contains('Future.wait')));
+      });
     });
 
     test('the Voice link destination is built with the parsed id only', () {
@@ -650,6 +685,15 @@ void main() {
       expect(
         authEntryLinkLine(pl, AuthEntryLink.voiceMoment),
         'Zaloguj się, aby posłuchać tego Voice Momentu.',
+      );
+      // The create-account form — the one an invited person uses.
+      expect(
+        authEntryLinkRegisterLine(pl, AuthEntryLink.profile),
+        'Utwórz konto, aby zobaczyć ten profil i dodać tę osobę do znajomych.',
+      );
+      expect(
+        authEntryLinkRegisterLine(pl, AuthEntryLink.voiceMoment),
+        'Utwórz konto, aby posłuchać tego Voice Momentu.',
       );
     });
   });

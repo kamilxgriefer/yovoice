@@ -612,5 +612,84 @@ void main() {
       );
       expect(find.textContaining('Zaloguj się, aby'), findsNothing);
     });
+
+    // Whoever follows an invitation usually has no account yet. The form
+    // they actually use — "Utwórz konto" — must say that the link still
+    // opens, not fall back to the generic line.
+    Future<void> openRegister(WidgetTester tester) async {
+      await tester.tap(find.byKey(const ValueKey('auth-mode-register')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byKey(const ValueKey('auth-form-register')), findsOneWidget);
+    }
+
+    testWidgets('the create-account form says what the profile link opens', (
+      tester,
+    ) async {
+      await pumpLogin(tester, AuthEntryLink.profile);
+      await openRegister(tester);
+      expect(
+        find.text(
+          'Utwórz konto, aby zobaczyć ten profil i dodać tę osobę do '
+          'znajomych.',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.text('Jedno konto — serwery, Voice Moments i prawdziwe rozmowy.'),
+        findsNothing,
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('the create-account form has its own Voice line', (
+      tester,
+    ) async {
+      await pumpLogin(tester, AuthEntryLink.voiceMoment);
+      await openRegister(tester);
+      expect(
+        find.text('Utwórz konto, aby posłuchać tego Voice Momentu.'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('without a link the create-account form is unchanged', (
+      tester,
+    ) async {
+      await pumpLogin(tester, null);
+      await openRegister(tester);
+      expect(
+        find.text('Jedno konto — serwery, Voice Moments i prawdziwe rozmowy.'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('Utwórz konto, aby'), findsNothing);
+    });
+
+    testWidgets('320 px at 200 % text: the create-account line wraps, nothing '
+        'overflows', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(320, 640));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(
+        _app(
+          MediaQuery(
+            data: const MediaQueryData(
+              size: Size(320, 640),
+              textScaler: TextScaler.linear(2),
+            ),
+            child: LoginScreen(
+              authService: _AuthSvc(),
+              entryLink: AuthEntryLink.profile,
+            ),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('auth-mode-register')),
+      );
+      await openRegister(tester);
+      expect(find.textContaining('Utwórz konto, aby'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
   });
 }

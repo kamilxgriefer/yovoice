@@ -3,7 +3,9 @@
 /// texts built around a public link (the own profile, a Voice Moment), and
 /// what a profile or Voice Moment link says when it cannot be opened — the
 /// profile preview's unavailable line, the Voice Moment detail's gone card
-/// and the sign-in line a signed-out visitor reads.
+/// and the line a signed-out visitor reads on the sign-in form and on the
+/// create-account form. It also carries the Voice Moment detail header's
+/// Share tooltip, which moved into the shared header with this feature.
 ///
 /// English and Polish are authored at the call sites (`MyLinkCopy`,
 /// `moment_detail_chrome.dart`); this module gives every other selectable
@@ -31,6 +33,9 @@ const myLinkTranslationKeys = <String>[
   'Back to Moments',
   'Sign in to see this profile and add this person as a friend.',
   'Sign in to listen to this Voice Moment.',
+  'Create an account to see this profile and add this person as a friend.',
+  'Create an account to listen to this Voice Moment.',
+  'Share this Moment',
 ];
 
 const myLinkTranslations = <String, Map<String, String>>{
@@ -61,6 +66,11 @@ const myLinkTranslations = <String, Map<String, String>>{
         'Melde dich an, um dieses Profil zu sehen und diese Person als Freund hinzuzufügen.',
     'Sign in to listen to this Voice Moment.':
         'Melde dich an, um diesen Voice Moment anzuhören.',
+    'Create an account to see this profile and add this person as a friend.':
+        'Erstelle ein Konto, um dieses Profil zu sehen und diese Person als Freund hinzuzufügen.',
+    'Create an account to listen to this Voice Moment.':
+        'Erstelle ein Konto, um diesen Voice Moment anzuhören.',
+    'Share this Moment': 'Diesen Moment teilen',
   },
   'es': <String, String>{
     'My link': 'Mi enlace',
@@ -88,6 +98,11 @@ const myLinkTranslations = <String, Map<String, String>>{
         'Inicia sesión para ver este perfil y añadir a esta persona como amigo.',
     'Sign in to listen to this Voice Moment.':
         'Inicia sesión para escuchar este Voice Moment.',
+    'Create an account to see this profile and add this person as a friend.':
+        'Crea una cuenta para ver este perfil y añadir a esta persona como amigo.',
+    'Create an account to listen to this Voice Moment.':
+        'Crea una cuenta para escuchar este Voice Moment.',
+    'Share this Moment': 'Compartir este Moment',
   },
   'pt': <String, String>{
     'My link': 'A minha ligação',
@@ -114,6 +129,11 @@ const myLinkTranslations = <String, Map<String, String>>{
         'Inicia sessão para ver este perfil e adicionar esta pessoa como amigo.',
     'Sign in to listen to this Voice Moment.':
         'Inicia sessão para ouvir este Voice Moment.',
+    'Create an account to see this profile and add this person as a friend.':
+        'Cria uma conta para ver este perfil e adicionar esta pessoa como amigo.',
+    'Create an account to listen to this Voice Moment.':
+        'Cria uma conta para ouvir este Voice Moment.',
+    'Share this Moment': 'Partilhar este Moment',
   },
   'pt_BR': <String, String>{
     'My link': 'Meu link',
@@ -141,6 +161,11 @@ const myLinkTranslations = <String, Map<String, String>>{
         'Entre na sua conta para ver este perfil e adicionar esta pessoa como amigo.',
     'Sign in to listen to this Voice Moment.':
         'Entre na sua conta para ouvir este Voice Moment.',
+    'Create an account to see this profile and add this person as a friend.':
+        'Crie uma conta para ver este perfil e adicionar esta pessoa como amigo.',
+    'Create an account to listen to this Voice Moment.':
+        'Crie uma conta para ouvir este Voice Moment.',
+    'Share this Moment': 'Compartilhar este Moment',
   },
   'fr': <String, String>{
     'My link': 'Mon lien',
@@ -168,6 +193,11 @@ const myLinkTranslations = <String, Map<String, String>>{
         'Connectez-vous pour voir ce profil et ajouter cette personne en ami.',
     'Sign in to listen to this Voice Moment.':
         'Connectez-vous pour écouter ce Voice Moment.',
+    'Create an account to see this profile and add this person as a friend.':
+        'Créez un compte pour voir ce profil et ajouter cette personne en ami.',
+    'Create an account to listen to this Voice Moment.':
+        'Créez un compte pour écouter ce Voice Moment.',
+    'Share this Moment': 'Partager ce Moment',
   },
   'it': <String, String>{
     'My link': 'Il mio link',
@@ -195,6 +225,11 @@ const myLinkTranslations = <String, Map<String, String>>{
         'Accedi per vedere questo profilo e aggiungere questa persona agli amici.',
     'Sign in to listen to this Voice Moment.':
         'Accedi per ascoltare questo Voice Moment.',
+    'Create an account to see this profile and add this person as a friend.':
+        'Crea un account per vedere questo profilo e aggiungere questa persona agli amici.',
+    'Create an account to listen to this Voice Moment.':
+        'Crea un account per ascoltare questo Voice Moment.',
+    'Share this Moment': 'Condividi questo Moment',
   },
   'nl': <String, String>{
     'My link': 'Mijn link',
@@ -221,6 +256,11 @@ const myLinkTranslations = <String, Map<String, String>>{
         'Log in om dit profiel te bekijken en deze persoon als vriend toe te voegen.',
     'Sign in to listen to this Voice Moment.':
         'Log in om dit Voice Moment te beluisteren.',
+    'Create an account to see this profile and add this person as a friend.':
+        'Maak een account om dit profiel te bekijken en deze persoon als vriend toe te voegen.',
+    'Create an account to listen to this Voice Moment.':
+        'Maak een account om dit Voice Moment te beluisteren.',
+    'Share this Moment': 'Dit Moment delen',
   },
   'ro': <String, String>{
     'My link': 'Linkul meu',
@@ -248,6 +288,11 @@ const myLinkTranslations = <String, Map<String, String>>{
         'Conectează-te pentru a vedea acest profil și a adăuga această persoană ca prieten.',
     'Sign in to listen to this Voice Moment.':
         'Conectează-te pentru a asculta acest Voice Moment.',
+    'Create an account to see this profile and add this person as a friend.':
+        'Creează un cont pentru a vedea acest profil și a adăuga această persoană ca prieten.',
+    'Create an account to listen to this Voice Moment.':
+        'Creează un cont pentru a asculta acest Voice Moment.',
+    'Share this Moment': 'Distribuie acest Moment',
   },
   'tr': <String, String>{
     'My link': 'Bağlantım',
@@ -275,6 +320,11 @@ const myLinkTranslations = <String, Map<String, String>>{
         'Bu profili görmek ve bu kişiyi arkadaş olarak eklemek için oturum açın.',
     'Sign in to listen to this Voice Moment.':
         'Bu Voice Moment’ı dinlemek için oturum açın.',
+    'Create an account to see this profile and add this person as a friend.':
+        'Bu profili görmek ve bu kişiyi arkadaş olarak eklemek için hesap oluşturun.',
+    'Create an account to listen to this Voice Moment.':
+        'Bu Voice Moment’ı dinlemek için hesap oluşturun.',
+    'Share this Moment': 'Bu Moment’ı paylaş',
   },
   'el': <String, String>{
     'My link': 'Ο σύνδεσμός μου',
@@ -303,6 +353,11 @@ const myLinkTranslations = <String, Map<String, String>>{
         'Συνδεθείτε για να δείτε αυτό το προφίλ και να προσθέσετε αυτό το άτομο ως φίλο.',
     'Sign in to listen to this Voice Moment.':
         'Συνδεθείτε για να ακούσετε αυτό το Voice Moment.',
+    'Create an account to see this profile and add this person as a friend.':
+        'Δημιουργήστε λογαριασμό για να δείτε αυτό το προφίλ και να προσθέσετε αυτό το άτομο ως φίλο.',
+    'Create an account to listen to this Voice Moment.':
+        'Δημιουργήστε λογαριασμό για να ακούσετε αυτό το Voice Moment.',
+    'Share this Moment': 'Κοινοποίηση αυτού του Moment',
   },
   'hu': <String, String>{
     'My link': 'Saját linkem',
@@ -329,6 +384,11 @@ const myLinkTranslations = <String, Map<String, String>>{
         'Jelentkezz be, hogy megnézd ezt a profilt, és ismerősnek jelöld ezt a személyt.',
     'Sign in to listen to this Voice Moment.':
         'Jelentkezz be a Voice Moment meghallgatásához.',
+    'Create an account to see this profile and add this person as a friend.':
+        'Hozz létre fiókot, hogy megnézd ezt a profilt, és ismerősnek jelöld ezt a személyt.',
+    'Create an account to listen to this Voice Moment.':
+        'Hozz létre fiókot a Voice Moment meghallgatásához.',
+    'Share this Moment': 'A Moment megosztása',
   },
   'uk': <String, String>{
     'My link': 'Моє посилання',
@@ -355,6 +415,11 @@ const myLinkTranslations = <String, Map<String, String>>{
         'Увійдіть, щоб переглянути цей профіль і додати цю людину в друзі.',
     'Sign in to listen to this Voice Moment.':
         'Увійдіть, щоб послухати цей Voice Moment.',
+    'Create an account to see this profile and add this person as a friend.':
+        'Створіть обліковий запис, щоб переглянути цей профіль і додати цю людину в друзі.',
+    'Create an account to listen to this Voice Moment.':
+        'Створіть обліковий запис, щоб послухати цей Voice Moment.',
+    'Share this Moment': 'Поділитися цим Moment',
   },
   'ru': <String, String>{
     'My link': 'Моя ссылка',
@@ -381,6 +446,11 @@ const myLinkTranslations = <String, Map<String, String>>{
         'Войдите, чтобы посмотреть этот профиль и добавить этого человека в друзья.',
     'Sign in to listen to this Voice Moment.':
         'Войдите, чтобы послушать этот Voice Moment.',
+    'Create an account to see this profile and add this person as a friend.':
+        'Создайте аккаунт, чтобы посмотреть этот профиль и добавить этого человека в друзья.',
+    'Create an account to listen to this Voice Moment.':
+        'Создайте аккаунт, чтобы послушать этот Voice Moment.',
+    'Share this Moment': 'Поделиться этим Moment',
   },
   'cs': <String, String>{
     'My link': 'Můj odkaz',
@@ -407,6 +477,11 @@ const myLinkTranslations = <String, Map<String, String>>{
         'Přihlaste se, abyste viděli tento profil a mohli si tuto osobu přidat do přátel.',
     'Sign in to listen to this Voice Moment.':
         'Přihlaste se a poslechněte si tento Voice Moment.',
+    'Create an account to see this profile and add this person as a friend.':
+        'Vytvořte si účet, abyste viděli tento profil a mohli si tuto osobu přidat do přátel.',
+    'Create an account to listen to this Voice Moment.':
+        'Vytvořte si účet a poslechněte si tento Voice Moment.',
+    'Share this Moment': 'Sdílet tento Moment',
   },
   'sk': <String, String>{
     'My link': 'Môj odkaz',
@@ -433,6 +508,11 @@ const myLinkTranslations = <String, Map<String, String>>{
         'Prihláste sa, aby ste videli tento profil a mohli si túto osobu pridať medzi priateľov.',
     'Sign in to listen to this Voice Moment.':
         'Prihláste sa a vypočujte si tento Voice Moment.',
+    'Create an account to see this profile and add this person as a friend.':
+        'Vytvorte si účet, aby ste videli tento profil a mohli si túto osobu pridať medzi priateľov.',
+    'Create an account to listen to this Voice Moment.':
+        'Vytvorte si účet a vypočujte si tento Voice Moment.',
+    'Share this Moment': 'Zdieľať tento Moment',
   },
   'bg': <String, String>{
     'My link': 'Моята връзка',
@@ -459,6 +539,11 @@ const myLinkTranslations = <String, Map<String, String>>{
         'Влезте, за да видите този профил и да добавите този човек като приятел.',
     'Sign in to listen to this Voice Moment.':
         'Влезте, за да чуете този Voice Moment.',
+    'Create an account to see this profile and add this person as a friend.':
+        'Създайте акаунт, за да видите този профил и да добавите този човек като приятел.',
+    'Create an account to listen to this Voice Moment.':
+        'Създайте акаунт, за да чуете този Voice Moment.',
+    'Share this Moment': 'Споделяне на този Moment',
   },
   'hr': <String, String>{
     'My link': 'Moja poveznica',
@@ -486,6 +571,11 @@ const myLinkTranslations = <String, Map<String, String>>{
         'Prijavite se kako biste vidjeli ovaj profil i dodali ovu osobu za prijatelja.',
     'Sign in to listen to this Voice Moment.':
         'Prijavite se kako biste poslušali ovaj Voice Moment.',
+    'Create an account to see this profile and add this person as a friend.':
+        'Izradite račun kako biste vidjeli ovaj profil i dodali ovu osobu za prijatelja.',
+    'Create an account to listen to this Voice Moment.':
+        'Izradite račun kako biste poslušali ovaj Voice Moment.',
+    'Share this Moment': 'Podijeli ovaj Moment',
   },
   'sr': <String, String>{
     'My link': 'Моја веза',
@@ -513,6 +603,11 @@ const myLinkTranslations = <String, Map<String, String>>{
         'Пријавите се да бисте видели овај профил и додали ову особу за пријатеља.',
     'Sign in to listen to this Voice Moment.':
         'Пријавите се да бисте послушали овај Voice Moment.',
+    'Create an account to see this profile and add this person as a friend.':
+        'Направите налог да бисте видели овај профил и додали ову особу за пријатеља.',
+    'Create an account to listen to this Voice Moment.':
+        'Направите налог да бисте послушали овај Voice Moment.',
+    'Share this Moment': 'Подели овај Moment',
   },
   'sv': <String, String>{
     'My link': 'Min länk',
@@ -541,6 +636,11 @@ const myLinkTranslations = <String, Map<String, String>>{
         'Logga in för att se den här profilen och lägga till personen som vän.',
     'Sign in to listen to this Voice Moment.':
         'Logga in för att lyssna på detta Voice Moment.',
+    'Create an account to see this profile and add this person as a friend.':
+        'Skapa ett konto för att se den här profilen och lägga till personen som vän.',
+    'Create an account to listen to this Voice Moment.':
+        'Skapa ett konto för att lyssna på detta Voice Moment.',
+    'Share this Moment': 'Dela detta Moment',
   },
   'da': <String, String>{
     'My link': 'Mit link',
@@ -569,6 +669,11 @@ const myLinkTranslations = <String, Map<String, String>>{
         'Log ind for at se denne profil og tilføje personen som ven.',
     'Sign in to listen to this Voice Moment.':
         'Log ind for at lytte til dette Voice Moment.',
+    'Create an account to see this profile and add this person as a friend.':
+        'Opret en konto for at se denne profil og tilføje personen som ven.',
+    'Create an account to listen to this Voice Moment.':
+        'Opret en konto for at lytte til dette Voice Moment.',
+    'Share this Moment': 'Del dette Moment',
   },
   'nb': <String, String>{
     'My link': 'Min lenke',
@@ -596,6 +701,11 @@ const myLinkTranslations = <String, Map<String, String>>{
         'Logg inn for å se denne profilen og legge til personen som venn.',
     'Sign in to listen to this Voice Moment.':
         'Logg inn for å høre på dette Voice Momentet.',
+    'Create an account to see this profile and add this person as a friend.':
+        'Opprett en konto for å se denne profilen og legge til personen som venn.',
+    'Create an account to listen to this Voice Moment.':
+        'Opprett en konto for å høre på dette Voice Momentet.',
+    'Share this Moment': 'Del dette Momentet',
   },
   'fi': <String, String>{
     'My link': 'Oma linkkini',
@@ -623,6 +733,11 @@ const myLinkTranslations = <String, Map<String, String>>{
         'Kirjaudu sisään nähdäksesi tämän profiilin ja lisätäksesi henkilön kaveriksi.',
     'Sign in to listen to this Voice Moment.':
         'Kirjaudu sisään kuunnellaksesi tämän Voice Momentin.',
+    'Create an account to see this profile and add this person as a friend.':
+        'Luo tili nähdäksesi tämän profiilin ja lisätäksesi henkilön kaveriksi.',
+    'Create an account to listen to this Voice Moment.':
+        'Luo tili kuunnellaksesi tämän Voice Momentin.',
+    'Share this Moment': 'Jaa tämä Moment',
   },
   'lt': <String, String>{
     'My link': 'Mano nuoroda',
@@ -650,6 +765,11 @@ const myLinkTranslations = <String, Map<String, String>>{
         'Prisijunkite, kad pamatytumėte šį profilį ir pridėtumėte šį žmogų prie draugų.',
     'Sign in to listen to this Voice Moment.':
         'Prisijunkite, kad paklausytumėte šio Voice Moment.',
+    'Create an account to see this profile and add this person as a friend.':
+        'Susikurkite paskyrą, kad pamatytumėte šį profilį ir pridėtumėte šį žmogų prie draugų.',
+    'Create an account to listen to this Voice Moment.':
+        'Susikurkite paskyrą, kad paklausytumėte šio Voice Moment.',
+    'Share this Moment': 'Bendrinti šį Moment',
   },
   'lv': <String, String>{
     'My link': 'Mana saite',
@@ -676,6 +796,11 @@ const myLinkTranslations = <String, Map<String, String>>{
         'Pierakstieties, lai skatītu šo profilu un pievienotu šo personu draugiem.',
     'Sign in to listen to this Voice Moment.':
         'Pierakstieties, lai noklausītos šo Voice Moment.',
+    'Create an account to see this profile and add this person as a friend.':
+        'Izveidojiet kontu, lai skatītu šo profilu un pievienotu šo personu draugiem.',
+    'Create an account to listen to this Voice Moment.':
+        'Izveidojiet kontu, lai noklausītos šo Voice Moment.',
+    'Share this Moment': 'Kopīgot šo Moment',
   },
   'et': <String, String>{
     'My link': 'Minu link',
@@ -702,6 +827,11 @@ const myLinkTranslations = <String, Map<String, String>>{
         'Logi sisse, et näha seda profiili ja lisada see inimene sõbraks.',
     'Sign in to listen to this Voice Moment.':
         'Logi sisse, et kuulata seda Voice Momenti.',
+    'Create an account to see this profile and add this person as a friend.':
+        'Loo konto, et näha seda profiili ja lisada see inimene sõbraks.',
+    'Create an account to listen to this Voice Moment.':
+        'Loo konto, et kuulata seda Voice Momenti.',
+    'Share this Moment': 'Jaga seda Momenti',
   },
   'id': <String, String>{
     'My link': 'Tautan saya',
@@ -729,6 +859,11 @@ const myLinkTranslations = <String, Map<String, String>>{
         'Masuk untuk melihat profil ini dan menambahkan orang ini sebagai teman.',
     'Sign in to listen to this Voice Moment.':
         'Masuk untuk mendengarkan Voice Moment ini.',
+    'Create an account to see this profile and add this person as a friend.':
+        'Buat akun untuk melihat profil ini dan menambahkan orang ini sebagai teman.',
+    'Create an account to listen to this Voice Moment.':
+        'Buat akun untuk mendengarkan Voice Moment ini.',
+    'Share this Moment': 'Bagikan Moment ini',
   },
   'vi': <String, String>{
     'My link': 'Liên kết của tôi',
@@ -755,6 +890,11 @@ const myLinkTranslations = <String, Map<String, String>>{
         'Đăng nhập để xem hồ sơ này và kết bạn với người này.',
     'Sign in to listen to this Voice Moment.':
         'Đăng nhập để nghe Voice Moment này.',
+    'Create an account to see this profile and add this person as a friend.':
+        'Tạo tài khoản để xem hồ sơ này và kết bạn với người này.',
+    'Create an account to listen to this Voice Moment.':
+        'Tạo tài khoản để nghe Voice Moment này.',
+    'Share this Moment': 'Chia sẻ Moment này',
   },
   'zh_CN': <String, String>{
     'My link': '我的链接',
@@ -779,6 +919,11 @@ const myLinkTranslations = <String, Map<String, String>>{
     'Sign in to see this profile and add this person as a friend.':
         '登录以查看此个人资料并添加此人为好友。',
     'Sign in to listen to this Voice Moment.': '登录以收听此 Voice Moment。',
+    'Create an account to see this profile and add this person as a friend.':
+        '创建账号以查看此个人资料并添加此人为好友。',
+    'Create an account to listen to this Voice Moment.':
+        '创建账号以收听此 Voice Moment。',
+    'Share this Moment': '分享此 Moment',
   },
   'zh_TW': <String, String>{
     'My link': '我的連結',
@@ -803,6 +948,11 @@ const myLinkTranslations = <String, Map<String, String>>{
     'Sign in to see this profile and add this person as a friend.':
         '登入以查看此個人檔案並將此人加為好友。',
     'Sign in to listen to this Voice Moment.': '登入以收聽此 Voice Moment。',
+    'Create an account to see this profile and add this person as a friend.':
+        '建立賬號以查看此個人檔案並將此人加為好友。',
+    'Create an account to listen to this Voice Moment.':
+        '建立賬號以收聽此 Voice Moment。',
+    'Share this Moment': '分享此 Moment',
   },
   'ja': <String, String>{
     'My link': 'マイリンク',
@@ -827,6 +977,11 @@ const myLinkTranslations = <String, Map<String, String>>{
     'Sign in to see this profile and add this person as a friend.':
         'このプロフィールを見て友達に追加するには、ログインしてください。',
     'Sign in to listen to this Voice Moment.': 'このVoice Momentを聴くにはログインしてください。',
+    'Create an account to see this profile and add this person as a friend.':
+        'このプロフィールを見て友達に追加するには、アカウントを作成してください。',
+    'Create an account to listen to this Voice Moment.':
+        'このVoice Momentを聴くにはアカウントを作成してください。',
+    'Share this Moment': 'このMomentを共有',
   },
   'ko': <String, String>{
     'My link': '내 링크',
@@ -852,6 +1007,11 @@ const myLinkTranslations = <String, Map<String, String>>{
     'Sign in to see this profile and add this person as a friend.':
         '이 프로필을 보고 친구로 추가하려면 로그인하세요.',
     'Sign in to listen to this Voice Moment.': '이 Voice Moment를 들으려면 로그인하세요.',
+    'Create an account to see this profile and add this person as a friend.':
+        '이 프로필을 보고 친구로 추가하려면 계정을 만드세요.',
+    'Create an account to listen to this Voice Moment.':
+        '이 Voice Moment를 들으려면 계정을 만드세요.',
+    'Share this Moment': '이 Moment 공유',
   },
   'ar': <String, String>{
     'My link': 'رابطي',
@@ -878,6 +1038,11 @@ const myLinkTranslations = <String, Map<String, String>>{
         'سجّل الدخول لعرض هذا الملف الشخصي وإضافة هذا الشخص كصديق.',
     'Sign in to listen to this Voice Moment.':
         'سجّل الدخول للاستماع إلى هذا الـ Voice Moment.',
+    'Create an account to see this profile and add this person as a friend.':
+        'أنشئ حسابًا لعرض هذا الملف الشخصي وإضافة هذا الشخص كصديق.',
+    'Create an account to listen to this Voice Moment.':
+        'أنشئ حسابًا للاستماع إلى هذا الـ Voice Moment.',
+    'Share this Moment': 'مشاركة هذا الـ Moment',
   },
   'th': <String, String>{
     'My link': 'ลิงก์ของฉัน',
@@ -904,6 +1069,11 @@ const myLinkTranslations = <String, Map<String, String>>{
         'เข้าสู่ระบบเพื่อดูโปรไฟล์นี้และเพิ่มบุคคลนี้เป็นเพื่อน',
     'Sign in to listen to this Voice Moment.':
         'เข้าสู่ระบบเพื่อฟัง Voice Moment นี้',
+    'Create an account to see this profile and add this person as a friend.':
+        'สร้างบัญชีเพื่อดูโปรไฟล์นี้และเพิ่มบุคคลนี้เป็นเพื่อน',
+    'Create an account to listen to this Voice Moment.':
+        'สร้างบัญชีเพื่อฟัง Voice Moment นี้',
+    'Share this Moment': 'แชร์ Moment นี้',
   },
   'ms': <String, String>{
     'My link': 'Pautan saya',
@@ -930,6 +1100,11 @@ const myLinkTranslations = <String, Map<String, String>>{
         'Log masuk untuk melihat profil ini dan menambah orang ini sebagai rakan.',
     'Sign in to listen to this Voice Moment.':
         'Log masuk untuk mendengar Voice Moment ini.',
+    'Create an account to see this profile and add this person as a friend.':
+        'Buat akaun untuk melihat profil ini dan menambah orang ini sebagai rakan.',
+    'Create an account to listen to this Voice Moment.':
+        'Buat akaun untuk mendengar Voice Moment ini.',
+    'Share this Moment': 'Kongsi Moment ini',
   },
   'fil': <String, String>{
     'My link': 'Ang link ko',
@@ -958,6 +1133,11 @@ const myLinkTranslations = <String, Map<String, String>>{
         'Mag-sign in para makita ang profile na ito at idagdag ang taong ito bilang kaibigan.',
     'Sign in to listen to this Voice Moment.':
         'Mag-sign in para pakinggan ang Voice Moment na ito.',
+    'Create an account to see this profile and add this person as a friend.':
+        'Gumawa ng account para makita ang profile na ito at idagdag ang taong ito bilang kaibigan.',
+    'Create an account to listen to this Voice Moment.':
+        'Gumawa ng account para pakinggan ang Voice Moment na ito.',
+    'Share this Moment': 'Ibahagi ang Moment na ito',
   },
   'he': <String, String>{
     'My link': 'הקישור שלי',
@@ -984,6 +1164,11 @@ const myLinkTranslations = <String, Map<String, String>>{
         'יש להתחבר כדי לראות את הפרופיל הזה ולהוסיף את האדם הזה כחבר.',
     'Sign in to listen to this Voice Moment.':
         'יש להתחבר כדי להאזין ל-Voice Moment הזה.',
+    'Create an account to see this profile and add this person as a friend.':
+        'יש ליצור חשבון כדי לראות את הפרופיל הזה ולהוסיף את האדם הזה כחבר.',
+    'Create an account to listen to this Voice Moment.':
+        'יש ליצור חשבון כדי להאזין ל-Voice Moment הזה.',
+    'Share this Moment': 'שיתוף ה-Moment הזה',
   },
   'fa': <String, String>{
     'My link': 'پیوند من',
@@ -1011,6 +1196,11 @@ const myLinkTranslations = <String, Map<String, String>>{
         'برای دیدن این نمایه و افزودن این شخص به دوستان وارد شوید.',
     'Sign in to listen to this Voice Moment.':
         'برای گوش دادن به این Voice Moment وارد شوید.',
+    'Create an account to see this profile and add this person as a friend.':
+        'برای دیدن این نمایه و افزودن این شخص به دوستان، حساب کاربری بسازید.',
+    'Create an account to listen to this Voice Moment.':
+        'برای گوش دادن به این Voice Moment حساب کاربری بسازید.',
+    'Share this Moment': 'اشتراک‌گذاری این Moment',
   },
   'sw': <String, String>{
     'My link': 'Kiungo changu',
@@ -1038,6 +1228,11 @@ const myLinkTranslations = <String, Map<String, String>>{
         'Ingia ili kuona wasifu huu na kumwongeza mtu huyu kama rafiki.',
     'Sign in to listen to this Voice Moment.':
         'Ingia ili kusikiliza Voice Moment hii.',
+    'Create an account to see this profile and add this person as a friend.':
+        'Fungua akaunti ili kuona wasifu huu na kumwongeza mtu huyu kama rafiki.',
+    'Create an account to listen to this Voice Moment.':
+        'Fungua akaunti ili kusikiliza Voice Moment hii.',
+    'Share this Moment': 'Shiriki Moment hii',
   },
   'hi': <String, String>{
     'My link': 'मेरा लिंक',
@@ -1064,6 +1259,11 @@ const myLinkTranslations = <String, Map<String, String>>{
         'यह प्रोफ़ाइल देखने और इस व्यक्ति को दोस्त के रूप में जोड़ने के लिए साइन इन करें।',
     'Sign in to listen to this Voice Moment.':
         'यह Voice Moment सुनने के लिए साइन इन करें।',
+    'Create an account to see this profile and add this person as a friend.':
+        'यह प्रोफ़ाइल देखने और इस व्यक्ति को दोस्त के रूप में जोड़ने के लिए खाता बनाएं।',
+    'Create an account to listen to this Voice Moment.':
+        'यह Voice Moment सुनने के लिए खाता बनाएं।',
+    'Share this Moment': 'यह Moment साझा करें',
   },
   'bn': <String, String>{
     'My link': 'আমার লিংক',
@@ -1091,6 +1291,11 @@ const myLinkTranslations = <String, Map<String, String>>{
         'এই প্রোফাইল দেখতে এবং এই ব্যক্তিকে বন্ধু হিসেবে যোগ করতে সাইন ইন করুন।',
     'Sign in to listen to this Voice Moment.':
         'এই Voice Moment শুনতে সাইন ইন করুন।',
+    'Create an account to see this profile and add this person as a friend.':
+        'এই প্রোফাইল দেখতে এবং এই ব্যক্তিকে বন্ধু হিসেবে যোগ করতে অ্যাকাউন্ট তৈরি করুন।',
+    'Create an account to listen to this Voice Moment.':
+        'এই Voice Moment শুনতে অ্যাকাউন্ট তৈরি করুন।',
+    'Share this Moment': 'এই Moment শেয়ার করুন',
   },
   'ur': <String, String>{
     'My link': 'میرا لنک',
@@ -1117,5 +1322,10 @@ const myLinkTranslations = <String, Map<String, String>>{
         'یہ پروفائل دیکھنے اور اس شخص کو دوست کے طور پر شامل کرنے کے لیے سائن ان کریں۔',
     'Sign in to listen to this Voice Moment.':
         'یہ Voice Moment سننے کے لیے سائن ان کریں۔',
+    'Create an account to see this profile and add this person as a friend.':
+        'یہ پروفائل دیکھنے اور اس شخص کو دوست کے طور پر شامل کرنے کے لیے اکاؤنٹ بنائیں۔',
+    'Create an account to listen to this Voice Moment.':
+        'یہ Voice Moment سننے کے لیے اکاؤنٹ بنائیں۔',
+    'Share this Moment': 'یہ Moment شیئر کریں',
   },
 };

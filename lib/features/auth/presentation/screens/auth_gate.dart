@@ -160,6 +160,10 @@ class _AuthGateState extends ConsumerState<AuthGate> {
         key: const ValueKey('auth-signed-out'),
         child: LoginScreen(
           onRegistrationLoadingChanged: setRegistrationLoading,
+          // The same line as the resolved signed-out screen below: this
+          // element becomes that one (same key), and the copy must not
+          // change under the visitor.
+          entryLink: widget.entryLink,
         ),
       ),
       AsyncLoading() when widget.initialAuthError != null => KeyedSubtree(

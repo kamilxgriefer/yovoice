@@ -1114,12 +1114,21 @@ empty friends list (`friends-empty-share-my-link`, "no friends yet" only),
 the profile hero toolbar's end control (raised 44 px, like Back), the ⋯
 sheet's first row and the account section's row.
 
+A signed-out visitor of a profile or Voice link sees no new screen: the
+sign-in chain's supporting line (`AuthTypography.subtitle`, under the
+headline) names what the link opens, on the sign-in form AND on the
+create-account form of the same screen. The mode rail's selection tile is
+placed directionally (`Positioned.directional`), so in a right-to-left
+locale it sits under the selected mode like the labels do.
+
 Contracts: `test/my_link_sheet_test.dart`,
 `test/my_link_entry_points_test.dart`, `test/my_link_links_test.dart`,
 `test/my_link_localization_test.dart`. Frames:
 `test/w42_invites_capture.dart` (real widgets, real typeface; Dark and
 Pearl, 320 / 390 / 768 / 1440, 200 % text, Greek, German, Hungarian,
-Arabic; the not-public sentence at 390 / 1440, Pearl, 200 % and RTL) in
+Arabic; the not-public sentence at 390 / 1440, Pearl, 200 % and RTL; the
+signed-out sign-in and create-account forms at 390 / 768 / 1440, 200 %,
+Greek and Arabic) in
 `yovoice-evidence/2026-10-03/w42/invites/`. **Not verified on a device,
 simulator or real browser.**
 

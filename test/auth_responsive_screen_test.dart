@@ -287,6 +287,39 @@ void main() {
     }
   });
 
+  testWidgets('the mode rail\'s tile sits under the selected mode in a '
+      'right-to-left locale too', (tester) async {
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    for (final locale in const [Locale('en'), Locale('ar')]) {
+      await _pumpAuth(
+        tester,
+        size: const Size(390, 844),
+        screen: LoginScreen(
+          key: ValueKey('login-${locale.languageCode}'),
+          authService: _FakeAuthService(),
+        ),
+        locale: locale,
+      );
+      double centre(String key) =>
+          tester.getCenter(find.byKey(ValueKey(key))).dx;
+
+      expect(
+        centre('auth-mode-rail-tile'),
+        moreOrLessEquals(centre('auth-mode-login'), epsilon: 1),
+        reason: '${locale.languageCode}: sign-in is selected',
+      );
+
+      await _switchToRegisterAndSettle(tester);
+      expect(find.byKey(const ValueKey('auth-form-register')), findsOneWidget);
+      expect(
+        centre('auth-mode-rail-tile'),
+        moreOrLessEquals(centre('auth-mode-register'), epsilon: 1),
+        reason: '${locale.languageCode}: create account is selected',
+      );
+      expect(tester.takeException(), isNull);
+    }
+  });
+
   testWidgets('compact Voice Relay swaps once at 247ms and reverses', (
     tester,
   ) async {

@@ -5,9 +5,9 @@ import 'package:yovoice/features/profile/presentation/my_link_copy.dart';
 
 /// What the browser entry URL points at, for a visitor who is not signed in
 /// (ADR-238). A profile link or a Voice Moment link opens only after sign-in,
-/// so the sign-in form's supporting line says what signing in opens instead
-/// of the generic "your people and conversations are waiting". The headline
-/// and the form are unchanged.
+/// so the supporting line of the sign-in form — and of the create-account
+/// form, which is the one a newly invited person uses — says what it opens
+/// instead of the generic copy. The headlines and the forms are unchanged.
 ///
 /// The line never names the person or the Moment: a signed-out visitor
 /// cannot read either (public profiles and Moments are readable by signed-in
@@ -28,5 +28,16 @@ String authEntryLinkLine(AppLocalizations copy, AuthEntryLink link) {
   return switch (link) {
     AuthEntryLink.profile => myLink.signInForProfile,
     AuthEntryLink.voiceMoment => myLink.signInForMoment,
+  };
+}
+
+/// The create-account form's supporting line for [link]. Someone who follows
+/// an invitation usually has no account yet; the link opens after
+/// registration exactly as it does after sign-in, so this form says so too.
+String authEntryLinkRegisterLine(AppLocalizations copy, AuthEntryLink link) {
+  final myLink = MyLinkCopy(copy);
+  return switch (link) {
+    AuthEntryLink.profile => myLink.createAccountForProfile,
+    AuthEntryLink.voiceMoment => myLink.createAccountForMoment,
   };
 }

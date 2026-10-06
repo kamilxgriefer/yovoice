@@ -1280,14 +1280,17 @@ class _MainShellState extends State<MainShell>
   /// answer, and a cold start has neither on its first frame: both are
   /// settled first (bounded), so a Page account's link really opens its Page.
   Future<void> _openInitialUserLink(String userId) async {
-    await Future.wait<void>([
-      settlePagesForInitialUserLink(
-        userId: userId,
-        resolveIdentity: PublicIdentityRepository.instance.resolve,
-        refreshPages: () => _pagesAvailability.refresh(_currentUserId),
-      ),
-      _whenShellRouteIsCurrent(),
-    ]);
+    await settlePagesForInitialUserLink(
+      userId: userId,
+      resolveIdentity: PublicIdentityRepository.instance.resolve,
+      refreshPages: () => _pagesAvailability.refresh(_currentUserId),
+    );
+    if (!mounted) return;
+    // Asked AFTER the lookups, at the moment of presenting: the lookups take
+    // a network round trip, and a route pushed over the shell meanwhile
+    // (the verify-e-mail screen of a registration that finishes just then)
+    // must be waited for as well.
+    await _whenShellRouteIsCurrent();
     if (!mounted) return;
     await showProfilePreview(context, userId: userId);
   }

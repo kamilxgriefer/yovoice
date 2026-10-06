@@ -132,7 +132,9 @@ later shell in the same tab neither opens it again nor apologises for it,
 and the sign-in screen's line is shown only while the link is still pending.
 A shell that mounts under the pushed "verify your e-mail" route waits for
 its own route (`ShellRouteCurrentGate`, opened by `didPopNext`) instead of
-laying the profile over that screen. An address that already carries a
+laying the profile over that screen; the profile link asks that question
+after its lookups, at the moment of presenting, so a route pushed while they
+ran is waited for too. An address that already carries a
 fragment when the page loads (a reload of a tab that navigated) is refused
 silently. `?server=` and `?page=` links still read the live address and are
 not covered by this — see Bugs.
@@ -149,9 +151,14 @@ link recipient send a friend request to a non-public profile is a product
 and privacy decision that has not been taken.
 
 **Signed out.** Public profiles are readable by signed-in accounts only, so
-a signed-out visitor cannot be shown whose link it is. The sign-in screen
+a signed-out visitor cannot be shown whose link it is. The sign-in form
 says "Zaloguj się, aby zobaczyć ten profil i dodać tę osobę do znajomych."
-(`AuthEntryLink`), and the link opens after sign-in. Showing the person's
+and the create-account form — the one a newly invited person actually uses —
+says "Utwórz konto, aby zobaczyć ten profil i dodać tę osobę do znajomych."
+(`AuthEntryLink`, `authEntryLinkLine` / `authEntryLinkRegisterLine`; a Voice
+link has its own pair). The link opens after sign-in or after registration
+in the same tab; a visitor who finishes e-mail verification in ANOTHER tab
+lands there without the link and has to open it again. Showing the person's
 name and photo before sign-in needs a public preview endpoint — a backend
 decision that is not part of this build.
 

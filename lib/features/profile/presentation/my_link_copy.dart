@@ -116,4 +116,19 @@ class MyLinkCopy {
     'Sign in to listen to this Voice Moment.',
     'Zaloguj się, aby posłuchać tego Voice Momentu.',
   );
+
+  /// Under the create-account headline when the app was opened from a
+  /// profile link. Most people who follow an invitation have no account yet:
+  /// the form they actually use must say that the link still opens.
+  String get createAccountForProfile => copy.text(
+    'Create an account to see this profile and add this person as a friend.',
+    'Utwórz konto, aby zobaczyć ten profil i dodać tę osobę do znajomych.',
+  );
+
+  /// Under the create-account headline when the app was opened from a Voice
+  /// link.
+  String get createAccountForMoment => copy.text(
+    'Create an account to listen to this Voice Moment.',
+    'Utwórz konto, aby posłuchać tego Voice Momentu.',
+  );
 }

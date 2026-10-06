@@ -41,9 +41,6 @@ const _translatedElsewhere = <String>{
 };
 const _productMarks = <String>{'Voice Moment'};
 
-/// A phrase a module had before this one, left exactly as it was.
-const _legacyUncatalogued = <String>{'Share this Moment'};
-
 Set<String> _translatedLocaleKeys() => selectableAppLanguages
     .where(
       (language) =>
@@ -135,10 +132,7 @@ void main() {
       for (final path in _myLinkSources) {
         for (final key in _catalogKeys(File(path).readAsStringSync())) {
           used.add(key);
-          if (_productMarks.contains(key) ||
-              _legacyUncatalogued.contains(key)) {
-            continue;
-          }
+          if (_productMarks.contains(key)) continue;
           if (!appTranslationKeys.contains(key)) missing.add('$path: "$key"');
         }
       }
@@ -205,6 +199,38 @@ void main() {
         'Find me on YO Voice: https://app.yovoice.app/?user=abc',
       );
       expect(pl.profileUnavailable, 'Ten profil jest niedostępny.');
+      expect(
+        pl.createAccountForProfile,
+        'Utwórz konto, aby zobaczyć ten profil i dodać tę osobę do znajomych.',
+      );
+      expect(
+        en.createAccountForProfile,
+        'Create an account to see this profile and add this person as a '
+        'friend.',
+      );
+      expect(
+        pl.createAccountForMoment,
+        'Utwórz konto, aby posłuchać tego Voice Momentu.',
+      );
+      expect(
+        en.createAccountForMoment,
+        'Create an account to listen to this Voice Moment.',
+      );
+    });
+
+    test('the Voice Moment header\'s Share tooltip is translated too', () {
+      // It moved into the shared header with this feature; it used to fall
+      // back to English in the 41 other locales.
+      for (final language in selectableAppLanguages) {
+        if (language == AppLanguagePreference.english) continue;
+        expect(
+          AppLocalizations(
+            language.locale!,
+          ).text('Share this Moment', 'Udostępnij ten Moment'),
+          isNot('Share this Moment'),
+          reason: language.localeKey,
+        );
+      }
     });
 
     test('no locale falls back to English, and the link survives', () {
@@ -247,6 +273,29 @@ void main() {
         );
         expect(copy.signInForProfile, isNot(en.signInForProfile), reason: key);
         expect(copy.signInForMoment, isNot(en.signInForMoment), reason: key);
+        expect(
+          copy.createAccountForProfile,
+          isNot(en.createAccountForProfile),
+          reason: key,
+        );
+        expect(
+          copy.createAccountForMoment,
+          isNot(en.createAccountForMoment),
+          reason: key,
+        );
+        // A sign-in line and its create-account twin are different sentences
+        // in every language (a copy-paste would say "sign in" on the
+        // registration form).
+        expect(
+          copy.createAccountForProfile,
+          isNot(copy.signInForProfile),
+          reason: key,
+        );
+        expect(
+          copy.createAccountForMoment,
+          isNot(copy.signInForMoment),
+          reason: key,
+        );
 
         final shared = copy.shareText(link);
         expect(shared, isNot(en.shareText(link)), reason: key);

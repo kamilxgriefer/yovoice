@@ -43,8 +43,8 @@ class ResponsiveAuthScreen extends StatefulWidget {
   });
 
   /// Set when a signed-out visitor arrived through a profile or Voice Moment
-  /// link (ADR-238): the sign-in form's supporting line then says what
-  /// signing in opens.
+  /// link (ADR-238): the supporting line of the sign-in form and of the
+  /// create-account form then says what the link opens.
   final AuthEntryLink? entryLink;
 
   final AuthMode initialMode;
@@ -1040,10 +1040,15 @@ class _ResponsiveAuthScreenState extends State<ResponsiveAuthScreen>
         children: [
           _FormHeading(
             title: copy.text('Create your voice', 'Utwórz konto'),
-            subtitle: copy.text(
-              'One account for servers, Moments and real conversations.',
-              'Jedno konto — serwery, Voice Moments i prawdziwe rozmowy.',
-            ),
+            // An invited person usually has no account: the link they
+            // followed opens after registration too (ADR-238).
+            subtitle: switch (widget.entryLink) {
+              final entryLink? => authEntryLinkRegisterLine(copy, entryLink),
+              null => copy.text(
+                'One account for servers, Moments and real conversations.',
+                'Jedno konto — serwery, Voice Moments i prawdziwe rozmowy.',
+              ),
+            },
           ),
           const SizedBox(height: 20),
           _ProviderSection(
@@ -1250,8 +1255,13 @@ class AuthModeRail extends StatelessWidget {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  Positioned(
-                    left: capsuleX,
+                  // Directional, like the Row of labels above it: in a
+                  // right-to-left locale the first mode sits at the right,
+                  // and a physical `left` put the tile under the OTHER
+                  // mode's label.
+                  Positioned.directional(
+                    textDirection: Directionality.of(context),
+                    start: capsuleX,
                     top: 0,
                     bottom: 0,
                     width: half,
