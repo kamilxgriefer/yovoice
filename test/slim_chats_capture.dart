@@ -37,7 +37,11 @@
 //             `rail-no-friends` the two actions alone, `chats_390_dark_ar`
 //             the whole screen in Arabic, and `rail-languages-*` contact
 //             sheets of the rail's two action labels in all 43 languages at
-//             100 % and 200 %. Run them with `--name rail`.
+//             100 % and 200 %, and `rail-long-surname` the top of the
+//             screen at 200 % with a 153 px surname first in the rail
+//             (whole from 360 px up: her own tile on a phone, every tile
+//             on a wide rail; still broken at 320 px). Run them with
+//             `--name rail`.
 //
 // Technique of `test/moderation_screenshot.dart`: real widgets, fixtures
 // through the screens' own constructor seams, an exact viewport and the real
@@ -98,6 +102,7 @@ import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/rooms/data/services/room_service.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_gradient_disc.dart';
+import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/voice/voice_player_row.dart';
 
 import 'support/material_icons_font.dart';
@@ -464,8 +469,13 @@ List<Conversation> _conversations() => [
   ),
 ];
 
-List<FriendUser> _friends({bool rail = false}) => [
-  for (final person in [..._people, if (rail) ..._railExtras])
+List<FriendUser> _friends({bool rail = false, String? lead}) => [
+  for (final person in [
+    // `lead`: that friend first, so their tile is on screen at any width.
+    if (lead != null) _person(lead),
+    for (final person in [..._people, if (rail) ..._railExtras])
+      if (person.id != lead) person,
+  ])
     FriendUser(
       id: person.id,
       displayName: person.name,
@@ -892,7 +902,7 @@ class _ScriptedAudioHost {
 }
 
 class _FixtureFriendService extends FriendService {
-  _FixtureFriendService({this.friends = true, this.rail = false})
+  _FixtureFriendService({this.friends = true, this.rail = false, this.lead})
     : super(
         firestore: FakeFirebaseFirestore(),
         auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: _me)),
@@ -903,9 +913,13 @@ class _FixtureFriendService extends FriendService {
   /// Fourteen friends instead of seven (the `rail` frames).
   final bool rail;
 
+  /// The id of the friend who stands first in the rail.
+  final String? lead;
+
   @override
-  Stream<List<FriendUser>> watchFriends() =>
-      _replay<List<FriendUser>>(friends ? _friends(rail: rail) : const []);
+  Stream<List<FriendUser>> watchFriends() => _replay<List<FriendUser>>(
+    friends ? _friends(rail: rail, lead: lead) : const [],
+  );
 }
 
 class _FixtureMessageService extends MessageService {
@@ -1111,11 +1125,16 @@ MessagesScreen _list(
   _FixtureMessageService service, {
   bool friends = true,
   bool railFriends = false,
+  String? railLead,
   Key? key,
 }) => MessagesScreen(
   key: key,
   messageService: service,
-  friendService: _FixtureFriendService(friends: friends, rail: railFriends),
+  friendService: _FixtureFriendService(
+    friends: friends,
+    rail: railFriends,
+    lead: railLead,
+  ),
   auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: _me)),
   // The shell always wires "Dodaj znajomego"; without a callback the tile
   // is disabled and cannot take focus.
@@ -1547,6 +1566,55 @@ void main() {
       print('$name rail: $rail add: $add write: $write');
       expect(tester.takeException(), isNull);
     });
+  }
+
+  // A long surname at 200 %. "Lewandowska" is 153 px there and needs a
+  // 160 px tile. The friends' shared tile may pass its 144 px only while
+  // half of the second friend's avatar still shows beside the two actions
+  // (a 430 px phone, a tablet, the desktop column: every tile 160 px). On a
+  // 360–412 px phone only her own tile is 160 px and her neighbours keep
+  // the shared width; at 320 px no 160 px tile fits beside the actions and
+  // the word is still broken. "Ania Lewandowska" leads the rail here so her
+  // tile is in view at every width.
+  if (_textScales().contains(2.0)) {
+    for (final frame in [
+      _Frame(320, _dark, 2, height: 690),
+      _Frame(360, _dark, 2, height: 780),
+      _Frame(390, _dark, 2),
+      _Frame(390, _pearl, 2),
+      _Frame(430, _dark, 2, height: 932),
+      _Frame(430, _pearl, 2, height: 932),
+      _Frame(768, _dark, 2),
+      _Frame(768, _pearl, 2),
+      _Frame(1440, _dark, 2),
+      _Frame(768, _dark, 2, rtl: true),
+    ]) {
+      final name = frame.name('chats', 'rail-long-surname');
+      _capture('rail ${frame.width.toInt()} $name', (tester) async {
+        await _pumpScreen(
+          tester,
+          frame,
+          _list(_FixtureMessageService(), railFriends: true, railLead: 'ania'),
+        );
+        // The top of the screen: the rail is what this frame is about.
+        await _captureRegionPng(
+          tester,
+          name,
+          region: Rect.fromLTWH(0, 0, frame.width, 420),
+          pixelRatio: frame.width < 600 ? 3 : 2,
+        );
+        final tile = find.ancestor(
+          of: find.descendant(
+            of: railList,
+            matching: find.text('Ania Lewandowska'),
+          ),
+          matching: find.byType(AccessibleTapRegion),
+        );
+        // ignore: avoid_print
+        print('$name friend tile: ${tester.getRect(tile.first)}');
+        expect(tester.takeException(), isNull);
+      });
+    }
   }
 
   // The rail with no friends yet: the two actions stand alone.

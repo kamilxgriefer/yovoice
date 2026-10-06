@@ -1128,7 +1128,9 @@ void main() {
       expect(listAvatar.photoUrl, '');
       expect(find.text('Fresh identity'), findsWidgets);
       expect(find.bySemanticsLabel('Fresh identity, offline'), findsOneWidget);
-      expect(find.bySemanticsLabel('New message'), findsOneWidget);
+      // The rail's "Write" tile: its spoken name is led by the word on
+      // screen (WCAG 2.5.3, build 42).
+      expect(find.bySemanticsLabel('Write, New message'), findsOneWidget);
       // The friend rail's avatar: radius 22 in its 2 px band since build 42
       // ("Równy rytm 48", 48 px marks); it was 27.
       final storyAvatar = tester

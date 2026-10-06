@@ -78,14 +78,16 @@ void main() {
       (
         locale: Locale('en'),
         add: 'Add friend',
-        message: 'New message',
+        // The spoken name contains the word on screen (WCAG 2.5.3): "Add"
+        // is in "Add friend"; "Write" leads "New message".
+        message: 'Write, New message',
         addLabel: 'Add',
         messageLabel: 'Write',
       ),
       (
         locale: Locale('pl'),
         add: 'Dodaj znajomego',
-        message: 'Nowa wiadomość',
+        message: 'Napisz, Nowa wiadomość',
         addLabel: 'Dodaj',
         messageLabel: 'Napisz',
       ),
@@ -132,7 +134,7 @@ void main() {
           findsOneWidget,
         );
         // Build 42 ("Równy rytm 48"): each action shows one short word under
-        // its disc; the full phrase above stays its spoken name.
+        // its disc; the full phrase above stays in its spoken name.
         expect(
           find.descendant(
             of: find.byKey(const ValueKey('messages-add-friend')),

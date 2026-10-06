@@ -6,7 +6,8 @@
 // marks stand 16 px apart and the first one starts on the page's 16 px
 // gutter; the rail is 76 px tall and a 390 px phone shows six whole marks
 // instead of four. The two actions carry one short word ("Dodaj" /
-// "Napisz") and keep the full phrase as their spoken name and tooltip.
+// "Napisz") and keep the full phrase as their tooltip and in their spoken
+// name, which always contains the word on screen (WCAG 2.5.3).
 //
 // These tests pin that geometry at 320, 390, 768 and 1440 px and in RTL
 // with the real product font, and that every one of the 43 selectable
@@ -83,7 +84,7 @@ class _Service extends MessageService {
 }
 
 class _Friends extends FriendService {
-  _Friends({this.count = 14})
+  _Friends({this.count = 14, this.names})
     : super(
         firestore: FakeFirebaseFirestore(),
         auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: _me)),
@@ -91,9 +92,13 @@ class _Friends extends FriendService {
 
   final int count;
 
+  /// These friends, in this order, instead of the first [count] of
+  /// [_friendNames].
+  final List<String>? names;
+
   @override
   Stream<List<FriendUser>> watchFriends() => Stream<List<FriendUser>>.value([
-    for (final (index, name) in _friendNames.take(count).indexed)
+    for (final (index, name) in (names ?? _friendNames.take(count)).indexed)
       FriendUser(
         id: 'friend-$index',
         displayName: name,
@@ -109,6 +114,7 @@ Widget _host({
   Locale locale = const Locale('pl'),
   double textScale = 1,
   int friends = 14,
+  List<String>? names,
   bool boldText = false,
   VoidCallback? onFindFriends,
 }) => MaterialApp(
@@ -132,9 +138,11 @@ Widget _host({
   home: MessagesScreen(
     // Keyed by locale, so a new language is a fresh screen with fresh
     // streams rather than a rebuild of the previous one.
-    key: ValueKey('${locale.toLanguageTag()}-$textScale-$friends-$boldText'),
+    key: ValueKey(
+      '${locale.toLanguageTag()}-$textScale-$friends-$names-$boldText',
+    ),
     messageService: _Service(),
-    friendService: _Friends(count: friends),
+    friendService: _Friends(count: friends, names: names),
     auth: MockFirebaseAuth(signedIn: true, mockUser: MockUser(uid: _me)),
     onFindFriends: onFindFriends ?? () {},
   ),
@@ -257,11 +265,29 @@ Rect _friendTile(WidgetTester tester, String name) => tester.getRect(
       .first,
 );
 
+/// What a tile is spoken and voice-controlled by: the label of the button
+/// node its `AccessibleTapRegion` owns.
+String _spokenName(WidgetTester tester, Finder tile) {
+  final semantics = tester.widget<Semantics>(
+    find
+        .descendant(
+          of: tile,
+          matching: find.byWidgetPredicate(
+            (widget) => widget is Semantics && widget.properties.button == true,
+          ),
+        )
+        .first,
+  );
+  return semantics.properties.label!;
+}
+
 typedef _RailCopy = ({
   String add,
   String write,
   String addName,
   String writeName,
+  String online,
+  String offline,
 });
 
 /// What the rail shows and says in [language].
@@ -272,6 +298,8 @@ _RailCopy _copyFor(AppLanguagePreference language) {
       write: 'Write',
       addName: 'Add friend',
       writeName: 'New message',
+      online: 'online',
+      offline: 'offline',
     );
   }
   if (language == AppLanguagePreference.polish) {
@@ -280,6 +308,8 @@ _RailCopy _copyFor(AppLanguagePreference language) {
       write: 'Napisz',
       addName: 'Dodaj znajomego',
       writeName: 'Nowa wiadomość',
+      online: 'aktywny',
+      offline: 'nieaktywny',
     );
   }
   final entries = chatsRailTranslations[language.localeKey]!;
@@ -288,6 +318,8 @@ _RailCopy _copyFor(AppLanguagePreference language) {
     write: entries['chatsRail.write']!,
     addName: entries['chatsRail.addFriend']!,
     writeName: entries['chatsRail.newMessage']!,
+    online: entries['chatsRail.online']!,
+    offline: entries['chatsRail.offline']!,
   );
 }
 
@@ -402,9 +434,8 @@ void main() {
       expect(name.right, lessThanOrEqualTo(firstFriend.right + 8 - 3));
     });
 
-    testWidgets('the short word is the label, the full phrase the name', (
-      tester,
-    ) async {
+    testWidgets('the short word is the label, the full phrase the name and '
+        'the tooltip', (tester) async {
       _surface(tester, const Size(390, 844));
       var opened = 0;
       await tester.pumpWidget(_host(onFindFriends: () => opened++));
@@ -422,12 +453,20 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('Dodaj znajomego'), findsNothing);
-      // The spoken name and the tooltip keep the whole phrase.
+      // The spoken name and the tooltip keep the whole phrase. "Dodaj" is
+      // already in "Dodaj znajomego"; "Napisz" is not in "Nowa wiadomość",
+      // so it leads that name: a voice-control user says the word on screen
+      // (WCAG 2.5.3, Label in Name).
       expect(find.bySemanticsLabel('Dodaj znajomego'), findsOneWidget);
+      expect(_spokenName(tester, find.byKey(_addKey)), 'Dodaj znajomego');
+      expect(
+        _spokenName(tester, find.byKey(_writeKey)),
+        'Napisz, Nowa wiadomość',
+      );
       expect(
         find.descendant(
           of: find.byKey(_writeKey),
-          matching: find.bySemanticsLabel('Nowa wiadomość'),
+          matching: find.bySemanticsLabel('Napisz, Nowa wiadomość'),
         ),
         findsOneWidget,
       );
@@ -494,7 +533,14 @@ void main() {
   });
 
   group('large text', () {
-    for (final width in const [320.0, 390.0, 768.0, 1440.0]) {
+    // `roomy`: a rail wide enough to give every friend the width the longest
+    // surname needs (see "a long surname stays whole" below).
+    for (final (width, roomy) in const [
+      (320.0, false),
+      (390.0, false),
+      (768.0, true),
+      (1440.0, true),
+    ]) {
       testWidgets('200 % at ${width.toInt()} px: marks stay 48 px, tiles '
           'widen, labels take two lines', (tester) async {
         _surface(tester, Size(width, 900));
@@ -519,13 +565,16 @@ void main() {
           expect(label.maxLines, 2);
           expect(label.didExceedMaxLines, isFalse);
         }
-        // The friends share one width. "Lewandowska" is 153 px at 200 %,
-        // more than any tile holds, so they stand at the 144 px cap, which
-        // keeps every word up to 138 px whole ("Wiśniewski").
+        // The friends share one width, set by the longest word among the
+        // twelve names: "Lewandowska", 153 px at 200 %. A phone holds them
+        // at the 144 px cap, which keeps every word up to 138 px whole
+        // ("Wiśniewski"), so the first screen is what it was (only that
+        // friend's own tile is wider, further along the rail); a tablet and
+        // the desktop column have the room for 160 px on every tile.
         final ola = _friendTile(tester, 'Ola Nowak');
         final kuba = _friendTile(tester, 'Kuba Wiśniewski');
-        expect(ola.width, moreOrLessEquals(144));
-        expect(kuba.width, moreOrLessEquals(144));
+        expect(ola.width, moreOrLessEquals(roomy ? 160 : 144));
+        expect(kuba.width, moreOrLessEquals(ola.width));
         expect(kuba.left, moreOrLessEquals(ola.right));
         for (final name in const ['Ola Nowak', 'Kuba Wiśniewski']) {
           final label = _nameLabel(tester, name);
@@ -540,6 +589,169 @@ void main() {
         expect(tester.takeException(), isNull);
       });
     }
+
+    // The surname the 144 px cap used to break inside the word ("Ania
+    // Lewand|owska"), first in the rail so its tile is on screen.
+    const longSurname = ['Ania Lewandowska', 'Ola Nowak', 'Kuba Wiśniewski'];
+
+    for (final width in const [430.0, 768.0, 1440.0]) {
+      testWidgets('200 % at ${width.toInt()} px: a long surname stays whole, '
+          'every tile as wide, where the rail has room', (tester) async {
+        _surface(tester, Size(width, 932));
+        await tester.pumpWidget(_host(textScale: 2, names: longSurname));
+        await tester.pumpAndSettle();
+
+        final label = _nameLabel(tester, 'Ania Lewandowska');
+        // The word, 3 px of air on each side, rounded up to a whole pixel.
+        final needed = (_longestWordWidth(label) + 6).ceilToDouble();
+        expect(needed, greaterThan(_tile * 2.25), reason: 'wider than 144');
+        expect(needed, lessThanOrEqualTo(_tile * 3));
+        expect(
+          label.constraints.maxWidth,
+          greaterThanOrEqualTo(_longestWordWidth(label)),
+          reason: '"Lewandowska" is broken inside the word',
+        );
+        expect(label.didExceedMaxLines, isFalse);
+        // First name on one line, surname on the other.
+        expect((label.size.height / (11 * 1.2 * 2)).round(), 2);
+        // The first two: on a 430 px phone the third tile is out of view,
+        // and a finder skips what is scrolled out.
+        for (final name in longSurname.take(2)) {
+          expect(
+            _friendTile(tester, name).width,
+            moreOrLessEquals(needed, epsilon: .001),
+            reason: '$name: the friends share one width',
+          );
+        }
+        // What the wider shared tile may not cost: at least half of the
+        // second friend's mark is still in view beside the two actions.
+        final rail = tester.getRect(_rail());
+        final marks = _marks(tester);
+        expect(marks[3].center.dx, lessThanOrEqualTo(rail.right));
+        expect(tester.takeException(), isNull);
+      });
+    }
+
+    // `shared`: the width every other friend has there. It may pass 144 px
+    // only as far as half of the second friend's mark still shows, which is
+    // (412 − 8 − 2 × 83.2) / 1.5 = 158.4 px on a 412 px phone.
+    for (final (width, shared) in const [
+      (360.0, 144.0),
+      (390.0, 144.0),
+      (412.0, 158.4),
+    ]) {
+      testWidgets('200 % at ${width.toInt()} px: on a phone only the '
+          'long-named friend\'s own tile grows, and the name is whole', (
+        tester,
+      ) async {
+        _surface(tester, Size(width, 844));
+        await tester.pumpWidget(_host(textScale: 2, names: longSurname));
+        await tester.pumpAndSettle();
+
+        final label = _nameLabel(tester, 'Ania Lewandowska');
+        final needed = (_longestWordWidth(label) + 6).ceilToDouble();
+        final ania = _friendTile(tester, 'Ania Lewandowska');
+        expect(ania.width, moreOrLessEquals(needed, epsilon: .001));
+        expect(
+          label.constraints.maxWidth,
+          greaterThanOrEqualTo(_longestWordWidth(label)),
+          reason: '"Lewandowska" is broken inside the word',
+        );
+        expect(label.didExceedMaxLines, isFalse);
+        expect((label.size.height / (11 * 1.2 * 2)).round(), 2);
+        // Her whole tile is on screen beside the two actions.
+        final rail = tester.getRect(_rail());
+        expect(ania.right, lessThanOrEqualTo(rail.right));
+        // Her neighbour keeps the shared width: one long surname does not
+        // push every friend's avatar further out on a phone.
+        final ola = _friendTile(tester, 'Ola Nowak');
+        expect(ola.width, moreOrLessEquals(shared, epsilon: .001));
+        expect(ola.width, lessThan(ania.width));
+        expect(ola.left, moreOrLessEquals(ania.right));
+        expect(tester.takeException(), isNull);
+      });
+    }
+
+    testWidgets('200 % at 390 px: the first screen keeps its 144 px tiles '
+        'while the long-named friend is further along the rail', (
+      tester,
+    ) async {
+      _surface(tester, const Size(390, 844));
+      // The fourteen-friend fixture: "Ania Lewandowska" is the seventh.
+      await tester.pumpWidget(_host(textScale: 2));
+      await tester.pumpAndSettle();
+      final rail = tester.getRect(_rail());
+      expect(_friendTile(tester, 'Ola Nowak').width, moreOrLessEquals(144));
+      // Half of the second friend's mark still shows (to within the half
+      // pixel the 83.2 px action tiles leave).
+      expect(_marks(tester)[3].center.dx, lessThanOrEqualTo(rail.right + .5));
+
+      // Brought into view, her own tile holds her surname whole. (The list
+      // itself, not `_rail()`: that finder goes through the "Add" tile,
+      // which is scrolled away by then.)
+      final list = find.byWidget(tester.widget<ListView>(_rail()));
+      final name = find.descendant(
+        of: list,
+        matching: find.text('Ania Lewandowska'),
+      );
+      await tester.dragUntilVisible(name, list, const Offset(-120, 0));
+      await tester.pumpAndSettle();
+      final label = tester.renderObject<RenderParagraph>(
+        find.descendant(of: name, matching: find.byType(RichText)),
+      );
+      expect(
+        label.constraints.maxWidth,
+        greaterThanOrEqualTo(_longestWordWidth(label)),
+        reason: '"Lewandowska" is broken inside the word',
+      );
+      expect(label.didExceedMaxLines, isFalse);
+      final tile = find.ancestor(
+        of: name,
+        matching: find.byType(AccessibleTapRegion),
+      );
+      expect(
+        tester.getSize(tile.first).width,
+        moreOrLessEquals((_longestWordWidth(label) + 6).ceilToDouble()),
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('200 % at 320 px: no room for a 160 px tile, the friends '
+        'keep 144 px and nothing is cut', (tester) async {
+      _surface(tester, const Size(320, 690));
+      await tester.pumpWidget(_host(textScale: 2, names: longSurname));
+      await tester.pumpAndSettle();
+      // 145.6 px are left beside the two actions: a 160 px tile would not
+      // be whole on screen, so the name stays in the shared tile, on two
+      // lines, as before build 42.
+      expect(
+        _friendTile(tester, 'Ania Lewandowska').width,
+        moreOrLessEquals(144),
+      );
+      final label = _nameLabel(tester, 'Ania Lewandowska');
+      expect(label.maxLines, 2);
+      expect(label.didExceedMaxLines, isFalse, reason: 'nothing is cut');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('200 % in RTL: the long surname is whole on a tablet', (
+      tester,
+    ) async {
+      _surface(tester, const Size(768, 1024));
+      await tester.pumpWidget(
+        _host(locale: const Locale('ar'), textScale: 2, names: longSurname),
+      );
+      await tester.pumpAndSettle();
+      final label = _nameLabel(tester, 'Ania Lewandowska');
+      expect(
+        label.constraints.maxWidth,
+        greaterThanOrEqualTo(_longestWordWidth(label)),
+      );
+      final rail = tester.getRect(_rail());
+      final marks = _marks(tester, rtl: true);
+      expect(marks[3].center.dx, greaterThanOrEqualTo(rail.left));
+      expect(tester.takeException(), isNull);
+    });
 
     testWidgets('200 % with short names: a friend is 128 px', (tester) async {
       // Wide enough to show all three (a finder skips a tile that is built
@@ -675,7 +887,7 @@ void main() {
         )
         .toList();
 
-    test('every translated locale carries all four rail strings', () {
+    test('every translated locale carries all six rail strings', () {
       expect(AppLocalizations.supportedLocales, hasLength(43));
       expect(translated, hasLength(41));
       expect(
@@ -692,7 +904,26 @@ void main() {
         'chatsRail.write': 'Write',
         'chatsRail.addFriend': 'Add friend',
         'chatsRail.newMessage': 'New message',
+        'chatsRail.online': 'online',
+        'chatsRail.offline': 'offline',
       };
+      // The languages whose own word for a friend's presence is "online" /
+      // "offline": there the English spelling is the translation.
+      const saysOnline = <String>{
+        'de',
+        'pt',
+        'pt_BR',
+        'it',
+        'nl',
+        'ro',
+        'cs',
+        'sk',
+        'sv',
+        'da',
+        'id',
+        'fil',
+      };
+      const presenceKeys = <String>{'chatsRail.online', 'chatsRail.offline'};
       for (final language in translated) {
         final key = language.localeKey;
         final entries = chatsRailTranslations[key]!;
@@ -704,11 +935,15 @@ void main() {
         for (final entry in entries.entries) {
           expect(entry.value.trim(), entry.value, reason: '$key: ${entry.key}');
           expect(entry.value, isNotEmpty, reason: '$key: ${entry.key}');
-          expect(
-            entry.value,
-            isNot(english[entry.key]),
-            reason: '$key: English fallback shipped for ${entry.key}',
-          );
+          if (presenceKeys.contains(entry.key) && saysOnline.contains(key)) {
+            expect(entry.value, english[entry.key], reason: '$key: $entry');
+          } else {
+            expect(
+              entry.value,
+              isNot(english[entry.key]),
+              reason: '$key: English fallback shipped for ${entry.key}',
+            );
+          }
           expect(
             translatedPhrase(key, entry.key),
             entry.value,
@@ -719,7 +954,7 @@ void main() {
     });
 
     testWidgets('each language shows a short word that fits the 64 px tile '
-        'and says the full phrase', (tester) async {
+        'and says it with the full phrase', (tester) async {
       _surface(tester, const Size(390, 844));
       final measured = <String, double>{};
       for (final language in selectableAppLanguages) {
@@ -740,13 +975,28 @@ void main() {
             findsOneWidget,
             reason: '$reason: "$short"',
           );
+          // Spoken: the full phrase, and in it the word on screen (WCAG
+          // 2.5.3, Label in Name), which leads the name where the phrase
+          // does not contain it.
+          final spoken = _spokenName(tester, find.byKey(key));
+          expect(spoken, endsWith(name), reason: '$reason: "$spoken"');
+          expect(
+            spoken.toLowerCase(),
+            contains(short.toLowerCase()),
+            reason: '$reason: "$short" is not in the spoken name "$spoken"',
+          );
+          expect(
+            spoken,
+            anyOf(name, '$short, $name'),
+            reason: '$reason: "$spoken"',
+          );
           expect(
             find.descendant(
               of: find.byKey(key),
-              matching: find.bySemanticsLabel(name),
+              matching: find.byTooltip(name),
             ),
             findsOneWidget,
-            reason: '$reason: "$name"',
+            reason: '$reason: tooltip "$name"',
           );
           if (measurable) {
             // No language widens its tile: the rhythm is the same
@@ -778,7 +1028,9 @@ void main() {
             // kept to a few glyphs; with the macOS system fonts the widest
             // are Urdu "شامل کریں" (about 53 px) and Bengali "যোগ করুন"
             // (about 47 px), and test/slim_chats_capture.dart renders every
-            // one of them (`rail-languages`).
+            // one of them (`rail-languages`). Measured once with Android's
+            // own fonts (Noto, 2026-10-06) the widest are Bengali, 53.4 px,
+            // and Urdu, 45.0 px: inside the 58 px box on both platforms.
             expect(
               short.runes.length,
               lessThanOrEqualTo(9),
@@ -786,6 +1038,18 @@ void main() {
             );
           }
         }
+        // A friend is spoken with the language's own presence word (the
+        // fixture's first friend is online, the second is not).
+        expect(
+          find.bySemanticsLabel('${_friendNames[0]}, ${copy.online}'),
+          findsOneWidget,
+          reason: '$reason: "${copy.online}"',
+        );
+        expect(
+          find.bySemanticsLabel('${_friendNames[1]}, ${copy.offline}'),
+          findsOneWidget,
+          reason: '$reason: "${copy.offline}"',
+        );
         expect(tester.getSize(_rail()).height, _railHeight, reason: reason);
         expect(tester.takeException(), isNull, reason: reason);
       }

@@ -907,7 +907,9 @@ class _FriendsRow extends StatelessWidget {
     // "Równy rytm 48" (build 42): the two actions carry one short word
     // ("Dodaj" / "Napisz"); the full phrase stays their spoken name and
     // tooltip. Every language has its own short word, chosen to fit the
-    // 64 px tile on one line (test/chats_rail_rhythm_test.dart).
+    // 64 px tile on one line (test/chats_rail_rhythm_test.dart). The
+    // spoken name always contains the word on screen
+    // ([_FriendStory.actionName]).
     final addLabel = copy.contextualText('chatsRail.add', 'Add', 'Dodaj');
     final addName = copy.contextualText(
       'chatsRail.addFriend',
@@ -986,66 +988,91 @@ class _FriendsRow extends StatelessWidget {
     // wrap, none is broken inside a word while the tile can still grow: the
     // friends share one width (one pitch), the text-scaled tile or what the
     // longest word among their names needs ("Malinowska" at 200 % is 127 px
-    // and needs a 134 px tile), up to 2.25× (144 px, a friend's width at
-    // 200 % before the marks became 48 px).
+    // and needs a 134 px tile), up to [_FriendStory.sharedWordLimit]. A
+    // name that this shared width would still break gets a tile of its own
+    // width, up to [_FriendStory.ownWordLimit].
     final shownFriends = friends.take(12).toList(growable: false);
     final scaledFriendWidth =
         _FriendStory.tileWidth *
         labelScale.clamp(1.0, _FriendStory.friendGrowthCap);
-    final friendWidth = labelLines == 1
-        ? scaledFriendWidth
-        : math.min(
-            _FriendStory.tileWidth * _FriendStory.friendWordCap,
-            shownFriends.fold(
-              scaledFriendWidth,
-              (width, friend) => math.max(
-                width,
-                widthNeeded(friend.displayName, action: false),
-              ),
-            ),
-          );
+    // The tile each name needs to stay whole.
+    final wordWidths = <double>[
+      for (final friend in shownFriends)
+        labelLines == 1
+            ? scaledFriendWidth
+            : widthNeeded(friend.displayName, action: false),
+    ];
+    final wordWidth = wordWidths.fold(scaledFriendWidth, math.max);
+    final online = copy.contextualText('chatsRail.online', 'online', 'aktywny');
+    final offline = copy.contextualText(
+      'chatsRail.offline',
+      'offline',
+      'nieaktywny',
+    );
 
-    return SizedBox(
-      height: _FriendStory.railHeight(labelScale, labelLines),
-      child: ListView(
-        scrollDirection: Axis.horizontal,
-        // The first 48 px mark sits on the page's 16 px gutter: 8 px of
-        // list padding plus the 8 px between a 64 px tile and its mark.
-        padding: const EdgeInsets.symmetric(
-          horizontal: _FriendStory.railPadding,
-        ),
-        children: [
-          _FriendStory(
-            key: const ValueKey('messages-add-friend'),
-            label: addLabel,
-            semanticLabel: addName,
-            icon: AppIcons.addFriend,
-            onTap: onFindFriends,
-            width: actionWidth,
-            labelLines: labelLines,
-          ),
-          _FriendStory(
-            key: const ValueKey('messages-new-message'),
-            label: writeLabel,
-            semanticLabel: writeName,
-            icon: AppIcons.compose,
-            onTap: onNewMessage,
-            width: actionWidth,
-            labelLines: labelLines,
-          ),
-          ...shownFriends.map(
-            (friend) => _FriendStory(
-              label: friend.displayName,
-              semanticLabel:
-                  '${friend.displayName}, ${friend.isOnline ? copy.text('online', 'aktywny') : copy.text('offline', 'nieaktywny')}',
-              friend: friend,
-              onTap: () => onFriendSelected(friend),
-              width: friendWidth,
-              labelLines: labelLines,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // What is left beside the two actions with the rail at its start.
+        final room =
+            constraints.maxWidth - _FriendStory.railPadding - 2 * actionWidth;
+        final sharedWidth = math.min(
+          wordWidth,
+          _FriendStory.sharedWordLimit(room),
+        );
+        final ownLimit = _FriendStory.ownWordLimit(room);
+        // One pitch for every friend; a tile of its own only for the name
+        // the shared width would break and its own width keeps whole.
+        double friendWidth(int index) {
+          final needed = wordWidths[index];
+          return needed > sharedWidth && needed <= ownLimit
+              ? needed
+              : sharedWidth;
+        }
+
+        return SizedBox(
+          height: _FriendStory.railHeight(labelScale, labelLines),
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            // The first 48 px mark sits on the page's 16 px gutter: 8 px of
+            // list padding plus the 8 px between a 64 px tile and its mark.
+            padding: const EdgeInsets.symmetric(
+              horizontal: _FriendStory.railPadding,
             ),
+            children: [
+              _FriendStory(
+                key: const ValueKey('messages-add-friend'),
+                label: addLabel,
+                semanticLabel: _FriendStory.actionName(addLabel, addName),
+                tooltip: addName,
+                icon: AppIcons.addFriend,
+                onTap: onFindFriends,
+                width: actionWidth,
+                labelLines: labelLines,
+              ),
+              _FriendStory(
+                key: const ValueKey('messages-new-message'),
+                label: writeLabel,
+                semanticLabel: _FriendStory.actionName(writeLabel, writeName),
+                tooltip: writeName,
+                icon: AppIcons.compose,
+                onTap: onNewMessage,
+                width: actionWidth,
+                labelLines: labelLines,
+              ),
+              for (final (index, friend) in shownFriends.indexed)
+                _FriendStory(
+                  label: friend.displayName,
+                  semanticLabel:
+                      '${friend.displayName}, ${friend.isOnline ? online : offline}',
+                  friend: friend,
+                  onTap: () => onFriendSelected(friend),
+                  width: friendWidth(index),
+                  labelLines: labelLines,
+                ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 }
@@ -1055,6 +1082,7 @@ class _FriendStory extends StatelessWidget {
     required this.label,
     required this.semanticLabel,
     required this.onTap,
+    this.tooltip,
     this.friend,
     this.icon,
     this.width = tileWidth,
@@ -1064,6 +1092,9 @@ class _FriendStory extends StatelessWidget {
 
   final String label;
   final String semanticLabel;
+
+  /// The hover hint; the spoken name where none is given.
+  final String? tooltip;
   final VoidCallback? onTap;
   final FriendUser? friend;
   final IconData? icon;
@@ -1091,10 +1122,50 @@ class _FriendStory extends StatelessWidget {
   static const double actionGrowthCap = 1.3;
   static const double friendGrowthCap = 2;
 
-  /// How far the friends' shared tile may widen beyond that, so a long
-  /// surname is not broken inside the word: 2.25× (144 px, which holds a
-  /// 138 px word).
+  /// How far a friend's tile may widen beyond that, so a long surname is
+  /// not broken inside the word: always to 2.25× (144 px, which holds a
+  /// 138 px word and is a friend's width at 200 % before the marks became
+  /// 48 px), and to 3× (192 px, a 186 px word) where the rail has the room
+  /// for it, see [sharedWordLimit] and [ownWordLimit].
   static const double friendWordCap = 2.25;
+  static const double friendWideWordCap = 3;
+
+  /// The widest the friends' shared tile may be, given the [room] beside
+  /// the two actions with the rail at its start.
+  ///
+  /// The shared width is what every friend pays for the longest word among
+  /// them, also while its owner is scrolled out of view. So it may pass
+  /// 144 px only while the second friend still shows: half of that friend's
+  /// 48 px mark is in view as long as one and a half tiles fit in the room.
+  /// A tablet or the desktop column gives "Lewandowska" (153 px at 200 %)
+  /// its 160 px on every tile; a 390 px phone keeps 144 px tiles.
+  static double sharedWordLimit(double room) {
+    const floor = tileWidth * friendWordCap;
+    if (!room.isFinite) return floor;
+    return (room / 1.5).clamp(floor, tileWidth * friendWideWordCap);
+  }
+
+  /// The widest one friend's own tile may be where the shared width would
+  /// break their name inside a word: all of the [room], so that friend is
+  /// whole on screen beside the two actions. On a 360–412 px phone only
+  /// "Ania Lewandowska" is 160 px wide; her neighbours keep the shared
+  /// 144 px, and the first screen is as it was unless she is first.
+  static double ownWordLimit(double room) {
+    const floor = tileWidth * friendWordCap;
+    if (!room.isFinite) return floor;
+    return room.clamp(floor, tileWidth * friendWideWordCap);
+  }
+
+  /// The name an action tile is spoken and voice-controlled by: its full
+  /// [phrase], led by the word on screen where the phrase does not already
+  /// contain it ("Napisz, Nowa wiadomość"; "Dodaj znajomego" stays as it
+  /// is). The accessible name therefore always contains the visible label
+  /// (WCAG 2.5.3, Label in Name), so a voice-control user can say the word
+  /// they see.
+  static String actionName(String label, String phrase) =>
+      phrase.toLowerCase().contains(label.toLowerCase())
+      ? phrase
+      : '$label, $phrase';
 
   /// Above this text scale the label may take a second line.
   static const double wrapScale = 1.15;
@@ -1194,7 +1265,7 @@ class _FriendStory extends StatelessWidget {
     return AccessibleTapRegion(
       onTap: onTap,
       semanticLabel: semanticLabel,
-      tooltip: semanticLabel,
+      tooltip: tooltip ?? semanticLabel,
       borderRadius: 18,
       minimumSize: const Size(48, 48),
       child: ExcludeSemantics(

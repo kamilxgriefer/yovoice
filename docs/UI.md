@@ -1087,13 +1087,19 @@ conversation rows under it are as they were. It carries no unread marks.
   the right gutter.
 - **Short labels, full names.** The actions show one word — "Dodaj" /
   "Napisz", "Add" / "Write" — and keep the whole phrase ("Dodaj znajomego" /
-  "Nowa wiadomość") as their semantics label and tooltip. The copy lives
-  under `chatsRail.*` context keys (`translations_chats_rail.dart`): every
-  one of the 43 languages has its own short word that fits the 58 px label
-  box in the product font; where a language's verb does not (German, Dutch,
-  Hungarian, Greek) the label is the noun of the spoken phrase ("Freund" /
-  "Nachricht"). A label that a device's fallback font draws wider widens
-  both action tiles together rather than being cut.
+  "Nowa wiadomość") as their tooltip and in their semantics label. The
+  semantics label always contains the word on screen (WCAG 2.5.3, Label in
+  Name), so a voice-control user can say what they see: where the phrase
+  does not contain that word, the word leads it — "Napisz, Nowa wiadomość",
+  "Write, New message" — and "Dodaj znajomego" stays as it is
+  (`_FriendStory.actionName`). A friend's tile is spoken as the name and the
+  presence word ("Ola Nowak, aktywny"). The copy lives under `chatsRail.*`
+  context keys (`translations_chats_rail.dart`): every one of the 43
+  languages has its own presence words and its own short word that fits the
+  58 px label box in the product font; where a language's verb does not
+  (German, Dutch, Hungarian, Greek) the label is the noun of the spoken
+  phrase ("Freund" / "Nachricht"). A label that a device's fallback font
+  draws wider widens both action tiles together rather than being cut.
 - **Large text.** Above 115 % a label may take two lines and the rail grows
   with it (115.6 px at 200 %). The marks stay 48 px. The actions widen to
   1.3× (83 px), or to their longest word where that is more, and far enough
@@ -1101,10 +1107,23 @@ conversation rows under it are as they were. It carries no unread marks.
   text scale (12 px at 200 %; 6 px between two 22 px words is a word space,
   and "Добавить Написать" read as one phrase). The friends share one width —
   64 px × the text scale up to 128 px, or what the longest word among their
-  names needs, up to 144 px — so a first name and a surname take a line each
-  and no name is broken inside a word that 138 px can hold. Names are
-  measured at the weight they are drawn with, so this also holds under the
-  platform's Bold Text setting.
+  names needs — so a first name and a surname take a line each. How far a
+  tile may grow depends on the room beside the two actions with the rail at
+  its start. The shared width (`_FriendStory.sharedWordLimit`) goes to
+  144 px always (a 138 px word) and on to 192 px (a 186 px word) only while
+  half of the second friend's avatar still shows, which is one and a half
+  tiles of room: every friend pays the shared width, also for a surname
+  that is scrolled out of view. A name the shared width would still break
+  gets a tile of its own width (`_FriendStory.ownWordLimit`, up to 192 px)
+  where that whole tile fits in the room. So at 200 % "Lewandowska"
+  (153 px) is whole in a 160 px tile everywhere from a 360 px phone up: on
+  a tablet, the desktop column and a 430 px phone every friend tile is
+  160 px; on a 360–412 px phone only hers is, her neighbours keep 144 px
+  (158 px at 412) and the first screen is what it was unless she is first.
+  At 320 px there are 145.6 px of room, no 160 px tile fits, and the
+  surname is still broken inside the word, as before build 42; so is any
+  word wider than 186 px. Names are measured at the weight they are drawn
+  with, so this also holds under the platform's Bold Text setting.
 
 Evidence: `test/chats_rail_rhythm_test.dart` (geometry at 320, 390, 768 and
 1440 px, RTL, 130 % and 200 %, and all 43 languages), plus real-font harness
@@ -1112,8 +1131,10 @@ renders of the real screen from `test/slim_chats_capture.dart --name rail`
 (Dark and Pearl, 100 % and 200 %, high contrast, RTL, the screen in Arabic,
 and contact sheets of the two labels in every language) in
 `yovoice-evidence/2026-10-03/w42/chats`. Scripts other than Latin, Cyrillic
-and Greek were rendered with the capture host's macOS fonts, not the fonts a
-phone uses. **Not verified on a device, simulator or real browser.**
+and Greek were rendered with the capture host's macOS fonts; their label
+widths were also measured once with Android's own Noto fonts (2026-10-06,
+widest Bengali "যোগ করুন" 53.4 px, inside the 58 px box). **Not verified on
+a device, simulator or real browser.**
 
 ## The "Coming soon" pattern
 
