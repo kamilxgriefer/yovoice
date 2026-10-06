@@ -309,8 +309,8 @@ void main() {
           ),
         );
         if (width < 768) {
-          await tester.tap(find.byKey(const ValueKey('server-open-channels')));
-          await _settle(tester);
+          // The phone's channel list is the server page's last row.
+          await openServerChannelList(tester);
         }
         await _shoot(
           tester,

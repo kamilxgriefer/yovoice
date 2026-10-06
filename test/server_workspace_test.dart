@@ -116,6 +116,9 @@ void main() {
               key: UniqueKey(),
               serverId: 's',
               repository: repository,
+              // A server opens on its page (ADR-240), where no channel row
+              // is selected; the wash is measured on an opened channel.
+              initialChannelId: 'voice',
             ),
             size: const Size(1440, 900),
             light: light,
@@ -313,6 +316,9 @@ void main() {
       ServerWorkspaceScreen(
         serverId: 's',
         repository: repository,
+        // A channel's own content, not the server page the workspace opens
+        // on (ADR-240): the revocation has to take the channel off screen.
+        initialChannelId: 'voice',
         channelBuilder: (_, _, channel) => Text('private-${channel.id}'),
       ),
       settle: false,

@@ -76,8 +76,8 @@ void main() {
     await tester.binding.setSurfaceSize(const Size(390, 844));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const ValueKey('server-open-channels')).first);
-    await tester.pumpAndSettle();
+    // The phone's channel list is the server page's `Wszystkie kanały` row.
+    await openServerChannelList(tester);
     await tester.tap(find.byKey(const ValueKey('server-rail-t')));
     await tester.pumpAndSettle();
     expectStillHosted(tester);

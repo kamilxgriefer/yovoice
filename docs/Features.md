@@ -28,6 +28,47 @@ navigation layout and behavior. Its former Rooms destination now shows the
 Servers hub with a server-hub icon and Server label. The standalone Rooms,
 Discover and Clubs destinations are no longer exposed in the product UI.
 
+**A server opens on its page** (`Strona serwera`, ADR-240; source only,
+build 42 track). One scrolling page instead of a tab strip that was different
+in every template: a 120 px cover in the template's own gradient with the
+identity tile (a server has no artwork upload, so there is never a photo),
+the name, one meta line (`Społeczność · publiczny · 128 osób`) and the
+description; the actions this person really has (`Zaproś` by the invite
+authority, `Udostępnij` only for a server anyone may join, `Nadaj LIVE` — which
+opens the stage — for a role that may start a quiet stage); the template's main
+thing; then `Rozmowy` (`Czat` for friends and family), `Głos`, the next two
+events, and `Wszystkie kanały (N)`, the one entry to the full channel list.
+
+- The main thing: the friends' lounge (joined in place, with the provider's
+  roster and controls on the card), the family's `Dom` board, the company's
+  meeting, and for a community or podcast the stage — a 16:9 live card with
+  the marker, "od HH:MM" and `Oglądaj` / `Słuchaj` while the channel document
+  says live, otherwise the next real event (`Następny LIVE`, `Następny
+  odcinek`) or the plain statement that the stage is quiet.
+- The next-event card's action is the real one for that event kind: a podcast
+  programme (and a family plan) has a reminder, so it says `Przypomnij mi`; a
+  community event has no reminder on the backend, so it offers the RSVP
+  (`Będę`) and never promises a reminder nobody would send.
+- No viewer, listener or participant count, no host name and no session title
+  anywhere on the page, and no unread mark on a conversation row: none of them
+  has a readable source. The one mark is the waiting dot on a podcast host's
+  `Pytania`.
+- Phone: the page is the surface (Back and `⋯` are glass discs on the cover);
+  a channel opened from it has a header with a way back to the page, and
+  system Back and the leading-edge swipe take that way too (one
+  `EmbeddedBackScope`, claimed only while the surface is on screen, plus the
+  shell's own `YoEdgeBackGesture`). Tablet: channel column + the page (720 px
+  measure). Desktop: channel column + the page + the server's conversation in
+  the context panel. The panel's header returns to the page from any channel.
+- Somebody who has not joined a public community or podcast sees the same
+  cover, name and meta line with `Dołącz do serwera` as the one action and
+  nothing channel-derived.
+- Inside a media channel the phone and tablet keep one switch between the
+  scene and the conversation beside it (`Scena | Czat`, the podcast's
+  `Studio | Pytania`, the company's `Spotkanie | Czat`); everything that used
+  to be a destination in a strip (the channel list, events, the family's
+  board, calendar and album) is reached from the page.
+
 Servers use a versioned facade over the existing `clubs` and `rooms` Firebase
 graph so existing identities, membership, moderation and media history remain
 compatible. Those collection names and legacy model types are implementation

@@ -59,8 +59,19 @@ void main() {
         findsNothing,
         reason: 'the surface fell back to the directory',
       );
-      // The panel is not drawn at this width, so the way back must be here.
-      expect(find.byKey(const ValueKey('server-phone-back')), findsOneWidget);
+      // The panel is not drawn at this width, so the way back must be here:
+      // from the channel to the server page (ADR-240), and from the page's
+      // cover to the directory. Neither step leaves the conversation.
+      expect(find.byKey(const ValueKey('server-channel-back')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('server-channel-back')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('server-page-back')), findsOneWidget);
+      expect(
+        link.disconnects,
+        0,
+        reason: 'returning to the server page dropped the person',
+      );
+      expect(qaDock, findsOneWidget);
 
       await tester.binding.setSurfaceSize(const Size(1440, 900));
       await tester.pumpAndSettle();

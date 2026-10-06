@@ -51,6 +51,15 @@ const _voiceChannel = ServerChannel(
   aclRevision: 1,
 );
 
+/// A new member lands on the server page; its `ogólny` row opens the channel.
+Future<void> _openGeneralFromPage(WidgetTester tester) async {
+  expect(find.byKey(const ValueKey('server-page')), findsOneWidget);
+  expect(find.text('opened-general'), findsNothing);
+  await tester.tap(find.byKey(const ValueKey('server-page-channel-general')));
+  await tester.pumpAndSettle();
+  expect(find.text('opened-general'), findsOneWidget);
+}
+
 void main() {
   group('public server admission', () {
     for (final type in [ServerType.community, ServerType.podcast]) {
@@ -108,7 +117,9 @@ void main() {
             find.byKey(const ValueKey('server-public-admission')),
             findsNothing,
           );
-          expect(find.text('opened-general'), findsOneWidget);
+          // Membership opens the server on its page (ADR-240); the channel
+          // the page lists is the one the member row made readable.
+          await _openGeneralFromPage(tester);
           expect(tester.takeException(), isNull);
         },
       );
@@ -170,7 +181,7 @@ void main() {
         roles.add(ServerMemberRole.member);
         await tester.pumpAndSettle();
         final firstId = repository.calls.single.$2['requestId'];
-        expect(find.text('opened-general'), findsOneWidget);
+        await _openGeneralFromPage(tester);
 
         repository.myRole = null;
         roles.add(null);

@@ -77,6 +77,34 @@ scrolling and local tab changes. Retain Pearl preferences and documented
 immersive-dark surfaces. This task requires **48 logical pixel** touch targets
 even where older general documentation describes 44.
 
+**The server page (ADR-240, 2026-10-03; source only).** A server no longer
+opens on a channel behind a per-template tab strip. It opens on its page
+(`ServerHomePage`), and a channel is a destination reached from the page or
+from the channel list:
+
+| Width | Server opened | A channel opened |
+| --- | --- | --- |
+| Phone (`< 768`) | The page is the whole surface: cover with Back and `⋯`, name, actions, the template's main thing, `Rozmowy` / `Głos` / events, `Wszystkie kanały (N)`; the conversation dock stays at the bottom | The channel with a header that leads back to the page (system Back and the leading-edge swipe too) and the `Kanały` entry; a media channel keeps one `scene | conversation` switch |
+| Tablet (`768–1099`) | Rail + channel column + the page as the centre | Rail + channel column + the channel; the column's header returns to the page |
+| Desktop (`>= 1100`) | Rail + channel column + the page (720 px measure) + the server's conversation in the context panel | As before: the scene, and the context panel beside a media scene |
+
+What used to be a destination in a local strip is on the page: the channel
+list (`Wszystkie kanały`, the unchanged `ServerPanel` sheet — settings, `Dodaj
+kanał`, the server rail and every channel), the events and calendar (section
+rows open the unchanged `ServerEventsBoard` with RSVP, reminders and
+editing), and the family's `Dom` board, which is that template's main thing
+with its calendar, album and shared-list modules. Stage controls, raised
+hands, OBS, listener questions and their waiting dot, the meeting's
+presentation and whiteboard are in their channels exactly as before. The
+page reads only what the client may already read — the server root, the
+member's channel list, the liveness projection (ADR-177) and the events of
+the events or calendar channel — so it shows no count of people, no host and
+no session title, and it has no backend of its own. `initialChannelId` (a
+deep link, a notification) still opens that channel directly; a server that
+was just created opens on its page with the invitation card. The public
+admission before membership is the same header with `Dołącz do serwera` and
+nothing channel-derived.
+
 ## Source audit baseline
 
 The following describes source observed on 2026-09-10 before this feature's

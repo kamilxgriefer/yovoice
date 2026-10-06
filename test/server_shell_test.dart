@@ -232,7 +232,19 @@ void main() {
     );
     expect(hr, findsOneWidget);
     expect(find.text('Prywatny serwer\u00A0· 12\u00A0osób'), findsNothing);
-    expect(find.text('Przestrzeń firmowa\u00A0· 12\u00A0osób'), findsOneWidget);
+    // The panel's subtitle; the server page beside it (ADR-240) states the
+    // same real line under the server's name.
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('server-panel')),
+        matching: find.text('Przestrzeń firmowa\u00A0· 12\u00A0osób'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      tester.widget<Text>(find.byKey(const ValueKey('server-page-meta'))).data,
+      'Przestrzeń firmowa\u00A0· 12\u00A0osób',
+    );
   });
 
   testWidgets('the panel subtitle and the phone header count real members', (
@@ -252,7 +264,13 @@ void main() {
       ),
       size: const Size(1100, 800),
     );
-    expect(find.text('Prywatny serwer\u00A0· 12\u00A0osób'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('server-panel')),
+        matching: find.text('Prywatny serwer\u00A0· 12\u00A0osób'),
+      ),
+      findsOneWidget,
+    );
     await pumpServers(
       tester,
       ServerWorkspaceScreen(
@@ -264,6 +282,14 @@ void main() {
       ),
       size: const Size(390, 800),
     );
+    // The phone opens on the server page (ADR-240), whose meta line carries
+    // the same real count; a channel's own header keeps the member line.
+    expect(
+      tester.widget<Text>(find.byKey(const ValueKey('server-page-meta'))).data,
+      'Prywatny serwer\u00A0· 12\u00A0osób',
+    );
+    await tester.tap(find.byKey(const ValueKey('server-page-channel-general')));
+    await tester.pumpAndSettle();
     expect(find.text('12 osób w serwerze'), findsOneWidget);
   });
 
@@ -755,8 +781,7 @@ void main() {
       ),
       size: const Size(390, 800),
     );
-    await tester.tap(find.byKey(const ValueKey('server-open-channels')));
-    await tester.pumpAndSettle();
+    await openServerChannelList(tester);
     await tester.tap(find.byKey(const ValueKey('server-invite-action')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Zaproś').last);
@@ -769,9 +794,9 @@ void main() {
     'a member invites on a public server and nowhere else, at every width',
     (tester) async {
       addTearDown(() => tester.binding.setSurfaceSize(null));
-      // Phone, tablet and desktop. The phone keeps the panel in the `Kanały`
-      // sheet, so the affordance is reached one tap later — the rule it
-      // follows is the same one.
+      // Phone, tablet and desktop. The phone's server page (ADR-240) carries
+      // its own `Zaproś` and keeps the panel in the channel sheet one tap
+      // later — both follow the same rule.
       for (final width in [390.0, 900.0, 1440.0]) {
         for (final entry in {
           // Anyone may already join: the invitation is a pointer, not a key.
@@ -803,11 +828,13 @@ void main() {
             ),
             size: Size(width, 900),
           );
+          expect(
+            find.byKey(const ValueKey('server-page-invite')),
+            entry.value ? findsOneWidget : findsNothing,
+            reason: 'page: ${server.type}/${server.privacy} at $width',
+          );
           if (width < ServerWorkspaceScreen.tabletBreakpoint) {
-            await tester.tap(
-              find.byKey(const ValueKey('server-open-channels')),
-            );
-            await tester.pumpAndSettle();
+            await openServerChannelList(tester);
           }
           expect(
             find.byKey(const ValueKey('server-invite-action')),
@@ -1206,12 +1233,15 @@ void main() {
       );
       await tester.tap(find.byKey(const ValueKey('server-directory-s')));
       await tester.pumpAndSettle();
-      expect(find.byType(AppBar), findsOneWidget, reason: 'a route has Back');
-      expect(
-        find.byKey(const ValueKey('server-open-channels')),
-        findsOneWidget,
-      );
+      // A phone pushes the server as a route. Its page (ADR-240) draws no app
+      // bar: the cover carries Back, and Back returns to the directory.
+      expect(find.byKey(const ValueKey('server-page')), findsOneWidget);
+      expect(find.byType(AppBar), findsNothing, reason: 'the cover has Back');
       expect(find.byKey(const ValueKey('server-panel-back')), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('server-page-back')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('server-page')), findsNothing);
+      expect(find.byKey(const ValueKey('server-directory-s')), findsOneWidget);
     },
   );
 

@@ -14,6 +14,7 @@ import '../../data/models/server_member_role.dart';
 import '../../data/models/server_type.dart';
 import '../../data/services/server_session_controller.dart';
 import '../server_localized_copy.dart';
+import '../server_page_copy.dart';
 import '../theme/server_identity.dart';
 import 'server_channel_scene.dart';
 import 'server_waiting_dot.dart';
@@ -47,6 +48,8 @@ class ServerPanel extends StatefulWidget {
     this.onJoin,
     this.onHome,
     this.homeSelected = false,
+    this.onOpenPage,
+    this.pageSelected = false,
     this.questionsWaitingChannelId,
     super.key,
   });
@@ -95,6 +98,16 @@ class ServerPanel extends StatefulWidget {
   /// carries no channel id and nothing is seeded for it.
   final VoidCallback? onHome;
   final bool homeSelected;
+
+  /// Opens the server page (ADR-240) from the panel's own header — the
+  /// squircle, the name and the meta line. It is how a tablet or a desktop
+  /// returns from a channel to the page, and how the phone's channel sheet
+  /// does. Null leaves the header inert, as it was.
+  final VoidCallback? onOpenPage;
+
+  /// The page is what the centre shows: the header carries the template's
+  /// selection wash, exactly as a selected channel row does.
+  final bool pageSelected;
 
   /// The Questions channel whose listener questions this host has not seen
   /// (`ServerQuestionAttention`), or null. Its row carries the shared waiting
@@ -240,74 +253,94 @@ class _ServerPanelState extends State<ServerPanel> {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Padding(
-                padding: const EdgeInsetsDirectional.only(start: 4, top: 2),
-                child: YoServerTile(
-                  initial: server.initial,
-                  type: server.type,
-                  size: 40,
-                ),
-              ),
-              const SizedBox(width: 12),
               Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.only(top: 2),
-                  child: Column(
+                child: _PanelIdentity(
+                  onOpenPage: widget.onOpenPage,
+                  selected: widget.pageSelected,
+                  colors: colors,
+                  tooltip: copy.serverPageTitle,
+                  child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Flexible(
-                            child: Text(
-                              server.name.isEmpty
-                                  ? copy.serversTitle
-                                  : server.name,
-                              // A server name nobody sized for (118
-                              // characters at 200 % text in a 240-px column)
-                              // ran to a dozen lines and pushed `Zaproś` and
-                              // every channel row out of the panel's lazily
-                              // built viewport — on a phone, where this panel
-                              // IS the channel list. The full name is on the
-                              // surface's own header; here it is an
-                              // identifier, so it takes two lines and elides.
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: AppTypography.titleMedium.copyWith(
-                                fontWeight: FontWeight.w700,
-                                color: palette.textPrimary,
+                      Padding(
+                        padding: const EdgeInsetsDirectional.only(
+                          start: 4,
+                          top: 2,
+                        ),
+                        child: YoServerTile(
+                          initial: server.initial,
+                          type: server.type,
+                          size: 40,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Flexible(
+                                    child: Text(
+                                      server.name.isEmpty
+                                          ? copy.serversTitle
+                                          : server.name,
+                                      // A server name nobody sized for (118
+                                      // characters at 200 % text in a 240-px column)
+                                      // ran to a dozen lines and pushed `Zaproś` and
+                                      // every channel row out of the panel's lazily
+                                      // built viewport — on a phone, where this panel
+                                      // IS the channel list. The full name is on the
+                                      // surface's own header; here it is an
+                                      // identifier, so it takes two lines and elides.
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: AppTypography.titleMedium.copyWith(
+                                        fontWeight: FontWeight.w700,
+                                        color: palette.textPrimary,
+                                      ),
+                                    ),
+                                  ),
+                                  if (server.privacy ==
+                                      ServerPrivacy.inviteOnly)
+                                    Padding(
+                                      padding: const EdgeInsetsDirectional.only(
+                                        start: 6,
+                                        top: 2,
+                                      ),
+                                      child: Icon(
+                                        Icons.lock_outline,
+                                        size: 16,
+                                        color: palette.textSecondary,
+                                        semanticLabel: copy.serverPrivacyTitle(
+                                          server.privacy,
+                                        ),
+                                      ),
+                                    ),
+                                ],
                               ),
-                            ),
-                          ),
-                          if (server.privacy == ServerPrivacy.inviteOnly)
-                            Padding(
-                              padding: const EdgeInsetsDirectional.only(
-                                start: 6,
-                                top: 2,
-                              ),
-                              child: Icon(
-                                Icons.lock_outline,
-                                size: 16,
-                                color: palette.textSecondary,
-                                semanticLabel: copy.serverPrivacyTitle(
-                                  server.privacy,
+                              const SizedBox(height: 2),
+                              Text(
+                                // Non-breaking spaces keep "12 osób" whole and the
+                                // dot with the words before it when this wraps.
+                                serverMetaLine(
+                                  copy.serverKindSubtitle(
+                                    server.type,
+                                    server.privacy,
+                                  ),
+                                  copy.serverMembers(server.memberCount),
+                                ),
+                                maxLines: 3,
+                                overflow: TextOverflow.ellipsis,
+                                style: AppTypography.bodySmall.copyWith(
+                                  color: palette.textSecondary,
                                 ),
                               ),
-                            ),
-                        ],
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        // Non-breaking spaces keep "12 osób" whole and the
-                        // dot with the words before it when this wraps.
-                        serverMetaLine(
-                          copy.serverKindSubtitle(server.type, server.privacy),
-                          copy.serverMembers(server.memberCount),
-                        ),
-                        maxLines: 3,
-                        overflow: TextOverflow.ellipsis,
-                        style: AppTypography.bodySmall.copyWith(
-                          color: palette.textSecondary,
+                            ],
+                          ),
                         ),
                       ),
                     ],
@@ -464,6 +497,81 @@ class _ServerPanelState extends State<ServerPanel> {
           ],
         ],
       ),
+    );
+  }
+}
+
+/// The panel's header as the way to the server page (ADR-240).
+///
+/// With [onOpenPage] null it is the plain header it always was. Otherwise the
+/// squircle, the name and the meta line are one control: a pointer sees the
+/// hover wash, a keyboard the 2 px focus ring (a foreground, so focus never
+/// moves the header), and assistive technology a button named after the
+/// page. While the page is on screen the header carries the template's
+/// selection wash instead.
+class _PanelIdentity extends StatelessWidget {
+  const _PanelIdentity({
+    required this.child,
+    required this.onOpenPage,
+    required this.selected,
+    required this.colors,
+    required this.tooltip,
+  });
+  final Widget child;
+  final VoidCallback? onOpenPage;
+  final bool selected;
+  final ServerIdentityVisuals colors;
+  final String tooltip;
+
+  @override
+  Widget build(BuildContext context) {
+    final onOpenPage = this.onOpenPage;
+    if (onOpenPage == null) return child;
+    final padded = Padding(
+      padding: const EdgeInsetsDirectional.only(top: 4, bottom: 6, end: 6),
+      child: child,
+    );
+    final palette = context.appPalette;
+    return Tooltip(
+      message: tooltip,
+      excludeFromSemantics: true,
+      child: Semantics(
+        button: true,
+        selected: selected,
+        label: tooltip,
+        child: Material(
+          color: selected ? colors.selectedWash : Colors.transparent,
+          borderRadius: AppRadius.md,
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            key: const ValueKey('server-panel-page'),
+            onTap: onOpenPage,
+            focusColor: Colors.transparent,
+            child: _FocusRing(color: palette.focus, child: padded),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A 2 px focus ring painted over its child while the enclosing control has
+/// keyboard focus, without taking any layout space.
+class _FocusRing extends StatelessWidget {
+  const _FocusRing({required this.color, required this.child});
+  final Color color;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final focused = Focus.maybeOf(context)?.hasPrimaryFocus ?? false;
+    return DecoratedBox(
+      position: DecorationPosition.foreground,
+      decoration: BoxDecoration(
+        borderRadius: AppRadius.md,
+        border: focused ? Border.all(color: color, width: 2) : null,
+      ),
+      child: child,
     );
   }
 }

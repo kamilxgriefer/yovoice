@@ -701,6 +701,55 @@ Everything above still holds.
 - **Server faces.** Any server initial is `YoServerTile`; a server switcher is
   `YoServerRailItem` (workspace rail on tablet/desktop and in the phone
   "Kanały" sheet), switching through `ServerWorkspaceScreen.onOpenServer`.
+- **Server page (ADR-240, source only).** A server opens on `ServerHomePage`
+  (`lib/features/servers/presentation/widgets/server_home_page.dart`), one
+  scrolling page at every width:
+  - *Header.* Cover 120 px under the status-bar inset: the template's
+    `ServerIdentity.primary` over the canvas (.58 / .24 / .06, top-start to
+    bottom-end) with a top softening (black .35 → 0 over the first 56 %; .12 in
+    Pearl). Never a photo — a server has no artwork writer. A 64 px
+    `YoServerTile` in a 3 px canvas ring overlaps the cover by 24. Name
+    `headlineMedium` (22 / w700, two lines), meta `rowPreview`, description
+    `bodyMedium` (two lines, four at 200 % text). An invite-only server puts
+    the 15 px lock before the meta line.
+  - *Cover controls (phone only).* Back and `⋯` are 44 px glass discs (drawn
+    inside a 48 px touch target, the Servers minimum) with a
+    white glyph: white @ .22 in Dark, smoked (black @ .42) in Pearl, where the
+    cover fades into a light canvas; black @ .78 with a white edge under high
+    contrast. On a tablet and a desktop the page is embedded: no discs, the
+    channel column owns Back and the settings.
+  - *Action row.* 44 px controls (56 at 200 % text): the lifted brand-gradient
+    primary (`Nadaj LIVE`) only for a role that may start a quiet stage, then
+    R7 tonal `Zaproś` and `Udostępnij` (a 44 px tonal glyph beside the
+    primary). The row is measured: when the labels of the current language
+    would not fit, or the column is under 296 px, the same controls stack at
+    full width — a label is never cut.
+  - *Main thing.* `ServerSessionCard` (quiet / live / connected) with a 48 px
+    identity disc, the channel name, one status line and a full-width join; a
+    live stage is a 16:9 frame with the live rim and under-glow, `ServerLivePill`
+    top-start and a `YoMetricPill` overlay clock top-end; a quiet stage with an
+    upcoming event is a card with the event's date block, an identity-ink
+    overline, the title and one tonal action.
+  - *Sections.* `HomeSectionHeader`, then an R2 block of 56 px `YoChannelRow`s
+    with hairline dividers indented to the text edge: glyph + name + chevron.
+    A voice row carries a 36 px tonal `Dołącz`; an event row the 52 px date
+    block. The page ends with one row, `Wszystkie kanały (N)`.
+  - *Widths.* Phone: the page is the whole surface and takes the status-bar
+    inset itself (no app bar). Tablet: rail + 264 px channel column + the page.
+    Desktop: rail + channel column + the page (720 px measure, top-aligned) +
+    the 320 / 360 px context panel with the server's conversation.
+  - *Back from a phone channel.* The channel view owns one level of Back: an
+    `EmbeddedBackScope` (claimed only while the hosting surface is on screen,
+    so one Back never also moves the shell's tab history) and, because
+    holding the route switches the platform's back swipe off, the shell's
+    `YoEdgeBackGesture` on the leading edge. Both return to the page; from
+    the page Back leaves the server.
+  - *Selection.* While the page is the centre, the channel column's header
+    (squircle, name, meta) carries the template's selection wash and no channel
+    row is selected; the header is a button (`Strona serwera`) with a hover
+    wash and a 2 px foreground focus ring.
+  Frames: `test/server_page_capture.dart` →
+  `yovoice-evidence/2026-10-03/w42/serverpage/`.
 - **Start live cards.** "Teraz na żywo" is real data only: a 16:9 card per live
   channel with `YoBadge` live and the real start time in a `YoMetricPill`,
   from a bounded listener on at most 3 servers; the section is absent when

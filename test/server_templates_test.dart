@@ -394,7 +394,8 @@ void main() {
       expect(find.byKey(const ValueKey('server-tab-events')), findsNothing);
     });
 
-    testWidgets('the phone carries Salon | Czat | Wydarzenia', (tester) async {
+    testWidgets('the phone lounge carries Salon | Czat, and the events are a '
+        'section of the server page', (tester) async {
       addTearDown(() => tester.binding.setSurfaceSize(null));
       final firestore = FakeFirebaseFirestore();
       await firestore.doc('clubs/s').set({'ownerId': 'owner', 'name': 'Po'});
@@ -414,20 +415,28 @@ void main() {
       );
       expect(find.byKey(const ValueKey('server-tab-scene')), findsOneWidget);
       expect(find.byKey(const ValueKey('server-tab-chat')), findsOneWidget);
-      expect(find.byKey(const ValueKey('server-tab-events')), findsOneWidget);
+      // The events are a destination, not a view of the lounge, so they left
+      // the lounge's strip for the server page (ADR-240).
+      expect(find.byKey(const ValueKey('server-tab-events')), findsNothing);
       await tester.tap(find.byKey(const ValueKey('server-tab-chat')));
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('server-composer')), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('server-tab-events')));
+
+      await tester.tap(find.byKey(const ValueKey('server-channel-back')));
       await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('server-events-board')), findsOneWidget);
+      final events = find.byKey(const ValueKey('server-page-events-empty'));
+      await tester.ensureVisible(events);
+      await tester.pumpAndSettle();
       expect(
         find.text('Nie ma jeszcze żadnych nadchodzących planów.'),
         findsOneWidget,
       );
+      await tester.tap(events);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('server-events-board')), findsOneWidget);
       expect(find.byKey(const ValueKey('server-create-event')), findsOneWidget);
       expect(find.text('Wkrótce'), findsNothing);
-      expect(joinAction, findsNothing, reason: 'the events tab is not a scene');
+      expect(joinAction, findsNothing, reason: 'the events are not a scene');
     });
 
     testWidgets('the desktop context panel is the salon chat over a real '
@@ -477,16 +486,29 @@ void main() {
         find.text('Znajome głosy. Te same historie. Zawsze nasz dom.'),
         findsOneWidget,
       );
+      // The board is the main thing of the family's page (ADR-240). The
+      // page's own header states the boundary — the lock and the line — so
+      // the board does not say it a second time.
+      expect(find.byKey(const ValueKey('server-page')), findsOneWidget);
       expect(
         find.descendant(
           of: find.byKey(const ValueKey('server-family-hero')),
           matching: find.byIcon(Icons.lock_outline),
         ),
-        findsOneWidget,
+        findsNothing,
       );
-      expect(find.text('Tylko na zaproszenie'), findsWidgets);
+      expect(find.byKey(const ValueKey('server-page-lock')), findsOneWidget);
       expect(
-        find.text('Tylko na zaproszenie\u00A0· 8\u00A0osób'),
+        tester
+            .widget<Text>(find.byKey(const ValueKey('server-page-meta')))
+            .data,
+        'Tylko na zaproszenie\u00A0· 8\u00A0osób',
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('server-panel')),
+          matching: find.text('Tylko na zaproszenie\u00A0· 8\u00A0osób'),
+        ),
         findsOneWidget,
       );
       expect(find.byKey(const ValueKey('server-home-board')), findsOneWidget);
@@ -661,8 +683,17 @@ void main() {
           size: const Size(1440, 900),
         );
 
-        await tester.tap(find.widgetWithText(FilledButton, 'Otwórz kalendarz'));
-        await tester.pumpAndSettle();
+        // The board is part of the scrolling server page (ADR-240), so a
+        // module below the fold is brought into view before it is pressed.
+        Future<void> press(String label) async {
+          final action = find.widgetWithText(FilledButton, label);
+          await tester.ensureVisible(action);
+          await tester.pumpAndSettle();
+          await tester.tap(action);
+          await tester.pumpAndSettle();
+        }
+
+        await press('Otwórz kalendarz');
         expect(
           find.byKey(const ValueKey('server-events-board')),
           findsOneWidget,
@@ -670,8 +701,7 @@ void main() {
 
         await tester.tap(find.byKey(const ValueKey('server-home-board')));
         await tester.pumpAndSettle();
-        await tester.tap(find.widgetWithText(FilledButton, 'Otwórz album'));
-        await tester.pumpAndSettle();
+        await press('Otwórz album');
         expect(
           find.byKey(const ValueKey('server-family-memory-album')),
           findsOneWidget,
@@ -683,10 +713,7 @@ void main() {
 
         await tester.tap(find.byKey(const ValueKey('server-home-board')));
         await tester.pumpAndSettle();
-        await tester.tap(
-          find.widgetWithText(FilledButton, 'Otwórz wspólną listę'),
-        );
-        await tester.pumpAndSettle();
+        await press('Otwórz wspólną listę');
         expect(
           find.byKey(const ValueKey('server-shared-list-board')),
           findsOneWidget,
@@ -699,13 +726,16 @@ void main() {
       },
     );
 
-    testWidgets('the module row is three, two and one column by width', (
+    testWidgets('the module row is two and one column by width', (
       tester,
     ) async {
       addTearDown(() => tester.binding.setSurfaceSize(null));
-      // Columns follow the CENTRE's width, not the window's: the panel
-      // takes 264–280 of it from tablet up.
-      final expected = <double, int>{1440: 3, 1100: 2, 390: 1};
+      // Columns follow the width the BOARD gets, not the window's. On the
+      // server page (ADR-240) that is the page's 720 px measure at most —
+      // beside the channel column and, on a desktop, the conversation — so
+      // the row is two across on a wide desktop and one below that. (Three
+      // across needs 980 px, which the page never gives it.)
+      final expected = <double, int>{1920: 2, 1440: 2, 1100: 1, 390: 1};
       for (final entry in expected.entries) {
         await pumpServers(
           tester,
@@ -741,8 +771,8 @@ void main() {
       }
     });
 
-    testWidgets('the phone board carries Dom | Kanały | Kalendarz | '
-        'Wspomnienia and each one goes somewhere real', (tester) async {
+    testWidgets('the phone family page carries the Dom board and reaches the '
+        'calendar, the album and the channel list', (tester) async {
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await pumpServers(
         tester,
@@ -756,17 +786,39 @@ void main() {
         ),
         size: const Size(390, 820),
       );
-      expect(find.byKey(const ValueKey('server-tab-home')), findsOneWidget);
-      expect(find.byKey(const ValueKey('server-tab-calendar')), findsOneWidget);
-      expect(find.byKey(const ValueKey('server-tab-memories')), findsOneWidget);
-      // `Kanały` is offered exactly once on the surface: the strip owns it.
+      final board = find.byKey(const ValueKey('server-family-board'));
+      // The page is the family's home (ADR-240): the board is its main
+      // thing and the `Dom | Kanały | Kalendarz | Wspomnienia` strip is gone.
+      expect(find.byKey(const ValueKey('server-page')), findsOneWidget);
+      expect(board, findsOneWidget);
+      for (final tab in const [
+        'server-tab-home',
+        'server-tab-calendar',
+        'server-tab-memories',
+      ]) {
+        expect(find.byKey(ValueKey(tab)), findsNothing, reason: tab);
+      }
+      // The channel list is offered exactly once on the surface.
       expect(
         find.byKey(const ValueKey('server-open-channels')),
         findsOneWidget,
       );
 
-      await tester.tap(find.byKey(const ValueKey('server-tab-calendar')));
-      await tester.pumpAndSettle();
+      Future<void> press(String label) async {
+        final action = find.widgetWithText(FilledButton, label);
+        await tester.ensureVisible(action);
+        await tester.pumpAndSettle();
+        await tester.tap(action);
+        await tester.pumpAndSettle();
+      }
+
+      Future<void> backToPage() async {
+        await tester.tap(find.byKey(const ValueKey('server-channel-back')));
+        await tester.pumpAndSettle();
+        expect(board, findsOneWidget);
+      }
+
+      await press('Otwórz kalendarz');
       // The header names the channel and, under it, its kind — which for a
       // calendar channel is the same word twice, quite correctly.
       expect(
@@ -776,39 +828,38 @@ void main() {
         ),
         findsWidgets,
       );
-      expect(find.byKey(const ValueKey('server-family-board')), findsNothing);
+      expect(board, findsNothing);
       expect(find.byKey(const ValueKey('server-events-board')), findsOneWidget);
-      // The strip is still there, so the way home is one tap.
-      await tester.tap(find.byKey(const ValueKey('server-tab-home')));
-      await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('server-family-board')), findsOneWidget);
+      // The way home is the channel's own Back.
+      await backToPage();
 
-      await tester.tap(find.byKey(const ValueKey('server-tab-memories')));
-      await tester.pumpAndSettle();
+      await press('Otwórz album');
       expect(
         find.byKey(const ValueKey('server-family-memory-album')),
         findsOneWidget,
       );
       expect(find.byType(ServerChannelEmptyState), findsNothing);
-      await tester.tap(find.byKey(const ValueKey('server-tab-home')));
-      await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('server-family-board')), findsOneWidget);
+      await backToPage();
 
-      await tester.tap(find.byKey(const ValueKey('server-open-channels')));
-      await tester.pumpAndSettle();
+      await openServerChannelList(tester);
       expect(find.byKey(const ValueKey('server-panel')), findsOneWidget);
       final lounge = find.byKey(const ValueKey('server-channel-lounge'));
       await tester.ensureVisible(lounge);
       await tester.pumpAndSettle();
       await tester.tap(lounge);
       await tester.pumpAndSettle();
-      // A channel is not the board, so the shell's own header entry is back.
-      expect(find.byKey(const ValueKey('server-family-board')), findsNothing);
+      // A channel is not the board; its header carries the list's entry.
+      expect(board, findsNothing);
       expect(find.byKey(const ValueKey('server-tab-chat')), findsOneWidget);
       expect(
         find.byKey(const ValueKey('server-open-channels')),
         findsOneWidget,
       );
+      // And from the list, the panel's header leads back to the page.
+      await openServerChannelList(tester);
+      await tester.tap(find.byKey(const ValueKey('server-panel-page')));
+      await tester.pumpAndSettle();
+      expect(board, findsOneWidget);
     });
 
     testWidgets('the Family Memory channel routes on desktop and phone at '

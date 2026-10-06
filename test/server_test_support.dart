@@ -1709,3 +1709,17 @@ Future<void> pumpServers(
     await tester.pump();
   }
 }
+
+/// Opens the phone's channel list from wherever the workspace is: the server
+/// page's `Wszystkie kanały` row (ADR-240; scrolled into view first, because
+/// it closes the page) or a channel view's `Kanały` pill.
+Future<void> openServerChannelList(WidgetTester tester) async {
+  final entry = find.byKey(const ValueKey('server-open-channels'));
+  final page = find.byKey(const ValueKey('server-page'));
+  if (page.evaluate().isNotEmpty) {
+    await tester.dragUntilVisible(entry, page, const Offset(0, -240));
+    await tester.pumpAndSettle();
+  }
+  await tester.tap(entry);
+  await tester.pumpAndSettle();
+}

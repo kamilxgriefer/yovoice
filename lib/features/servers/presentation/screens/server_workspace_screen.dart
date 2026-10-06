@@ -2,13 +2,16 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/navigation/embedded_back_scope.dart';
 import 'package:yovoice/core/theme/app_finish.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
 import 'package:yovoice/features/clubs/data/services/club_chat_service.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/widgets/navigation/yo_edge_back_gesture.dart';
 import 'package:yovoice/shared/widgets/navigation/yo_server_rail_item.dart';
 import 'package:yovoice/shared/widgets/states/yo_empty_state.dart';
 import 'package:yovoice/shared/widgets/states/yo_error_state.dart';
@@ -18,6 +21,7 @@ import '../../data/models/server_channel.dart';
 import '../../data/models/server_invite_authority.dart';
 import '../../data/models/server_member_role.dart';
 import '../../data/models/server_type.dart';
+import '../../data/server_links.dart';
 import '../../data/services/server_company_file_service.dart';
 import '../../data/services/server_family_check_in_service.dart';
 import '../../data/services/server_family_memory_service.dart';
@@ -32,6 +36,7 @@ import '../../data/services/server_shared_list_service.dart';
 import '../../data/services/server_whiteboard_repository.dart';
 import '../server_action_failure.dart';
 import '../server_localized_copy.dart';
+import '../server_page_copy.dart';
 import '../theme/server_identity.dart';
 import '../widgets/server_channel_scene.dart';
 import '../widgets/server_community_stage.dart';
@@ -42,6 +47,7 @@ import '../widgets/server_create_channel_sheet.dart';
 import '../widgets/server_events_board.dart';
 import '../widgets/server_family_board.dart';
 import '../widgets/server_family_memory_album.dart';
+import '../widgets/server_home_page.dart';
 import '../widgets/server_invite_sheet.dart';
 import '../widgets/server_local_tabs.dart';
 import '../widgets/server_management_sheet.dart';
@@ -70,12 +76,17 @@ const _podcastRecordingAndArchiveEnabled = bool.fromEnvironment(
 
 /// The in-server shell.
 ///
-/// Anatomy at every width: server panel (cover, name, subtitle, `Zaproś`,
-/// grouped channels, `Dodaj kanał`) · centre (channel header + scene) ·
-/// optional context panel · persistent conversation dock. Desktop hosts the
-/// three or four panels side by side inside the shell's content slot, a
-/// tablet two with the context as a local tab, a phone one surface with a
-/// `Kanały` entry, local tabs and a compact dock. The global rail and dock
+/// A server opens on its page (`ServerHomePage`, ADR-240): the cover, the
+/// name, the actions, the template's main thing, then conversations, voice
+/// and events, with the whole channel list behind one row. A channel is a
+/// destination reached from the page or from the channel list.
+///
+/// Anatomy at every width: server panel (name, subtitle, `Zaproś`, grouped
+/// channels, `Dodaj kanał`) · centre (the page, or a channel's header and
+/// scene) · optional context panel · persistent conversation dock. Desktop
+/// hosts the three or four panels side by side inside the shell's content
+/// slot, a tablet two, a phone one surface at a time — the page, or a channel
+/// with a way back to the page — and a compact dock. The global rail and dock
 /// belong to the shell and are never drawn here.
 class ServerWorkspaceScreen extends StatefulWidget {
   const ServerWorkspaceScreen({
@@ -304,13 +315,14 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
     return _defaultFollowRepository ??= ServerFollowService();
   }
 
-  /// The phone's and tablet's local tab: 0 = the scene, 1 = the chat, and
-  /// on the friends board 2 = the events module.
+  /// The phone's and tablet's local tab inside a media channel: 0 = the
+  /// scene, 1 = the conversation beside it.
   int _localTab = 0;
 
-  /// The template's home board (board 03's `Rodzinny pulpit`) as a
-  /// destination of its own. Null means nobody has chosen yet, which the
-  /// first build resolves from the template and the requested channel.
+  /// The server page as a destination of its own (ADR-240): true while the
+  /// page is what the centre shows, false once a channel has been chosen.
+  /// Null means nobody has chosen yet, which the first build resolves from
+  /// the requested channel.
   bool? _home;
 
   /// Board 04's meeting view. It lives here, not in the scene, because the
@@ -498,32 +510,84 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
     _meetingTab = ServerMeetingTab.presentation;
   });
 
-  /// Only the family template has a home board today; the other four open
-  /// on a channel, exactly as they did before.
+  /// Only the family template has a board of its own (`Dom`); it is the
+  /// main thing of that server's page. A held root has no runtime for it.
   static bool _hasHomeBoard(Server server) =>
       server.type == ServerType.family && !server.isHeld;
 
-  /// A family server opens on its board unless a specific channel was asked
-  /// for (a deep link, or the channel just created).
-  bool _homeSelected(Server server) =>
-      _hasHomeBoard(server) && (_home ?? (widget.initialChannelId == null));
+  /// A server opens on its page unless a specific channel was asked for (a
+  /// deep link, a notification). A server that was just created opens on the
+  /// page as well: the page is its face, and it carries the invitation.
+  bool _homeSelected() =>
+      _home ?? (widget.initialChannelId == null || widget.justCreated);
 
   void _selectHome() => setState(() {
     _home = true;
     _localTab = 0;
   });
 
-  ServerChannel? _channelOfKind(
-    List<ServerChannel> channels,
-    ServerChannelKind kind,
-  ) => channels.where((channel) => channel.kind == kind).firstOrNull;
+  /// Leaves the server from its page: back to the directory that hosts this
+  /// workspace inline, or off the route it was pushed as. Null when neither
+  /// exists, so the cover draws no control that would lead nowhere.
+  VoidCallback? _leaveAction(BuildContext context) {
+    final onBack = widget.onBack;
+    if (onBack != null) return onBack;
+    if (!(ModalRoute.of(context)?.canPop ?? false)) return null;
+    return () => Navigator.of(context).maybePop();
+  }
+
+  /// Only a server anyone may join has a link that leads somewhere for the
+  /// person who receives it; every other server is entered by invitation.
+  VoidCallback? _shareAction(Server server) {
+    if (server.isHeld ||
+        !serverAdmitsPublicJoin(server) ||
+        !isSafeServerLinkId(server.id)) {
+      return null;
+    }
+    return () => unawaited(_share(server));
+  }
+
+  Future<void> _share(Server server) async {
+    final link = buildServerLink(server.id);
+    // An iPad presents the share sheet as a popover and refuses to without
+    // an anchor inside the view; the surface itself is always a valid one.
+    final box = context.findRenderObject();
+    final origin = box is RenderBox && box.hasSize && !box.size.isEmpty
+        ? box.localToGlobal(Offset.zero) & box.size
+        : null;
+    try {
+      final override = widget.shareServer;
+      if (override != null) {
+        await override(link);
+      } else {
+        await SharePlus.instance.share(
+          ShareParams(
+            text: '${server.name}\n$link',
+            sharePositionOrigin: origin,
+          ),
+        );
+      }
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(
+          content: Text(
+            serverActionFailureCopy(error, AppLocalizations.of(context)),
+          ),
+        ),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final copy = AppLocalizations.of(context);
     return Scaffold(
       backgroundColor: context.appPalette.background,
-      appBar: widget.isRootTab ? null : AppBar(title: Text(copy.serversTitle)),
+      // No app bar of the scaffold's own: pushed as a route, the status-bar
+      // inset belongs to whatever leads the surface — the route bar of a
+      // state or of the wide workspace ([_routeBar]), the server page's
+      // cover, or a channel's own header on a phone.
       body: SafeArea(
         top: widget.isRootTab,
         child: StreamBuilder<Server?>(
@@ -533,7 +597,7 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
               return _state(context, _error(snapshot.error!));
             }
             if (snapshot.connectionState == ConnectionState.waiting) {
-              return _state(context, _loading(copy));
+              return _loadingState(context, copy);
             }
             final server = snapshot.data;
             if (server == null) {
@@ -558,7 +622,7 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
               stream: _role,
               builder: (context, roleSnapshot) {
                 if (roleSnapshot.connectionState == ConnectionState.waiting) {
-                  return _state(context, _loading(copy));
+                  return _loadingState(context, copy);
                 }
                 // An unreadable or absent role withholds every channel and
                 // affordance. Only the two canonical public templates get an
@@ -578,7 +642,7 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
                     }
                     if (channelsSnapshot.connectionState ==
                         ConnectionState.waiting) {
-                      return _state(context, _loading(copy));
+                      return _loadingState(context, copy);
                     }
                     return StreamBuilder<Set<String>>(
                       stream: _moderators,
@@ -627,14 +691,44 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
         ),
       );
     }
-    return _state(
-      context,
-      _PublicServerAdmission(
-        server: server,
-        joining: _joining,
-        error: _joinError,
-        onJoin: () => _joinPublicServer(server),
-      ),
+    // The server's own page with `Dołącz` as its one action (ADR-240). It
+    // shows nothing a channel would: channels become readable only once the
+    // member row exists.
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final phone =
+            constraints.maxWidth < ServerWorkspaceScreen.tabletBreakpoint;
+        if (phone) {
+          // The cover carries the way out, as it does for a member.
+          return ServerPageAdmission(
+            server: server,
+            joining: _joining,
+            error: _joinError,
+            onJoin: () => _joinPublicServer(server),
+            onBack: _leaveAction(context),
+          );
+        }
+        // Wider, the route bar or the directory's `Serwery` control leads
+        // out, and the page keeps its reading measure under it.
+        return _state(
+          context,
+          Align(
+            alignment: Alignment.topCenter,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(
+                maxWidth: ServerHomePage.maxWidth,
+              ),
+              child: ServerPageAdmission(
+                server: server,
+                joining: _joining,
+                error: _joinError,
+                onJoin: () => _joinPublicServer(server),
+                embedded: true,
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -687,6 +781,7 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
   /// Pushed as a route there is a real `AppBar` with Back, `onBack` is null,
   /// and nothing extra is drawn — the shell owns chrome exactly once.
   Widget _state(BuildContext context, Widget child) {
+    if (!widget.isRootTab) return _withRouteBar(context, child);
     final onBack = widget.onBack;
     if (onBack == null) return child;
     final copy = AppLocalizations.of(context);
@@ -730,6 +825,59 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
     );
   }
 
+  /// The pushed route's own bar: a real `AppBar` with Back, drawn above a
+  /// state and above the tablet and desktop workspace. The phone's server
+  /// page and channel view carry their own way back instead.
+  Widget _withRouteBar(BuildContext context, Widget child) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      AppBar(title: Text(AppLocalizations.of(context).serversTitle)),
+      Expanded(
+        child: MediaQuery.removePadding(
+          context: context,
+          removeTop: true,
+          child: child,
+        ),
+      ),
+    ],
+  );
+
+  /// The wait before the server, the role and the channels answer.
+  ///
+  /// On a phone route it keeps the way out exactly where the page's cover
+  /// will put it, so the surface does not show an app bar for a moment and
+  /// then swap it for a cover. Every other host keeps the state's own bar.
+  Widget _loadingState(BuildContext context, AppLocalizations copy) {
+    if (widget.isRootTab) return _state(context, _loading(copy));
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth >= ServerWorkspaceScreen.tabletBreakpoint) {
+          return _state(context, _loading(copy));
+        }
+        final leave = _leaveAction(context);
+        return Stack(
+          children: [
+            Positioned.fill(child: _loading(copy)),
+            if (leave != null)
+              PositionedDirectional(
+                top:
+                    MediaQuery.paddingOf(context).top +
+                    8 -
+                    ServerPageCoverButton.overhang,
+                start: 12 - ServerPageCoverButton.overhang,
+                child: ServerPageCoverButton(
+                  key: const ValueKey('server-page-back'),
+                  icon: Icons.arrow_back_rounded,
+                  tooltip: copy.serversTitle,
+                  onPressed: leave,
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
   Widget _loading(AppLocalizations copy) => Center(
     child: Semantics(
       label: copy.text('Loading server', 'Wczytywanie serwera'),
@@ -755,7 +903,7 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
     ServerMemberRole? role,
     Set<String> moderators,
   ) {
-    final home = _homeSelected(server);
+    final home = _homeSelected();
     final selected = home ? null : _selected(server, channels);
     // The live role and channel list answer for this server; the directory's
     // guess steps aside while it is open.
@@ -792,6 +940,52 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
               ? () => setState(() => _meetingTab = ServerMeetingTab.whiteboard)
               : null,
         );
+        // The server page (ADR-240): what the server opens on, and where the
+        // phone returns to from a channel.
+        Widget page({required bool embedded}) => ServerHomePage(
+          key: ValueKey('server-page-${server.id}'),
+          server: server,
+          channels: channels,
+          session: _session,
+          repository: _repository,
+          role: role,
+          onOpenChannel: _select,
+          onOpenAllChannels: () =>
+              _openChannels(context, server, role).ignore(),
+          onInvite: _inviteAction(context, server, role),
+          onShare: _shareAction(server),
+          onBack: embedded ? null : _leaveAction(context),
+          onMore: embedded
+              ? null
+              : () => _openPageMenu(context, server, channels, role).ignore(),
+          embedded: embedded,
+          intro: widget.justCreated
+              ? _InviteIntroduction(
+                  server: server,
+                  onInvite: _inviteAction(context, server, role),
+                )
+              : null,
+          // The family's `Dom` is that template's main thing. It is measured
+          // against the column it actually gets, so a narrow centre keeps the
+          // phone's tighter board.
+          board: _hasHomeBoard(server)
+              ? LayoutBuilder(
+                  builder: (context, box) => ServerFamilyBoard(
+                    server: server,
+                    channels: channels,
+                    session: _session,
+                    role: role,
+                    onOpenChannel: _select,
+                    checkIns: _familyCheckIns,
+                    memories: _familyMemories,
+                    currentUserId: _repository.currentUserId,
+                    compact: box.maxWidth < _familyBoardWideWidth,
+                    embedded: true,
+                  ),
+                )
+              : null,
+          questionsWaitingChannelId: waitingQuestions,
+        );
         // Board 02's phone surface keeps the broadcast on screen above the
         // conversation, so the stage owns the whole surface there instead of
         // becoming one of the shell's scene tabs.
@@ -799,19 +993,7 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
             phone && selected != null && _isCommunityStage(server, selected);
         final podcastStage =
             phone && selected != null && _isPodcastStage(server, selected);
-        final centre = home
-            ? ServerFamilyBoard(
-                server: server,
-                channels: channels,
-                session: _session,
-                role: role,
-                onOpenChannel: _select,
-                checkIns: _familyCheckIns,
-                memories: _familyMemories,
-                currentUserId: _repository.currentUserId,
-                compact: phone,
-              )
-            : selected == null
+        final centre = selected == null
             ? _noChannels(context)
             : communityStage
             ? ServerCommunityStage(
@@ -880,10 +1062,22 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
                 moderators,
                 compact: phone,
               );
+        if (phone && home) {
+          // The page is the whole surface: its cover carries the way out and
+          // the menu, and it takes the status-bar inset itself.
+          return Column(
+            children: [
+              Expanded(child: page(embedded: false)),
+              dock,
+            ],
+          );
+        }
         if (phone) {
-          // The family board's own four tabs replace the header entry, so
-          // `Kanały` is offered exactly once on the surface either way.
-          final boardTabs = _boardTabs(context, server, channels, role, home);
+          // A media channel keeps one switch between its scene and the
+          // conversation beside it, which a wider layout shows side by side.
+          // Everything that used to be a destination in this strip — the
+          // channel list, the events, the family's board, calendar and
+          // album — is on the server page now.
           final localTabs =
               communityStage || selected == null || !selected.kind.isMedia
               ? const <ServerLocalTab>[]
@@ -895,81 +1089,91 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
                   phone: true,
                   waitingQuestions: waitingQuestions,
                 );
-          // Board 04's phone strip is `Spotkanie | Czat | Kanały`, so the
-          // meeting's strip owns the entry to the channel list and the
-          // header drops its pill — one entry, exactly as the family board
-          // and board 02 already do it.
-          final tabsOwnChannels =
-              localTabs.isNotEmpty &&
-              localTabs.last.key == const ValueKey('server-open-channels');
-          return Column(
-            children: [
-              Expanded(
-                child: _PhoneSurface(
-                  server: server,
-                  selected: selected,
-                  // Hosted inline the phone tier draws no server panel, so
-                  // the panel's own `Serwery` control has to live here or the
-                  // person is stranded on a narrowed window.
-                  onBack: widget.onBack,
-                  onChannels: () => _openChannels(context, server, role),
-                  showChannelsButton:
-                      boardTabs == null && !communityStage && !tabsOwnChannels,
-                  // The Questions row waits inside the channel list; its way
-                  // in says so, unless the Questions board is already on
-                  // screen or a closer `Pytania` tab carries the dot.
-                  channelsWaiting:
-                      waitingQuestions != null &&
-                      selected?.id != waitingQuestions &&
-                      !localTabs.any((tab) => tab.attentionLabel != null),
-                  tabs:
-                      boardTabs ??
-                      (localTabs.isEmpty
-                          ? null
-                          : _tabStrip(context, server, localTabs, _localTab, (
-                              index,
-                            ) {
-                              // `Kanały` is an action, not a destination: the
-                              // list opens over the surface and the strip
-                              // keeps the view it was on.
-                              if (localTabs[index].key ==
-                                  const ValueKey('server-open-channels')) {
-                                _openChannels(context, server, role).ignore();
-                                return;
-                              }
-                              setState(() => _localTab = index);
-                            })),
-                  centre: localTabs.isEmpty || _localTab == 0
-                      ? centre
-                      : _localTab == 1
-                      ? _contextThread(
-                          context,
-                          server,
-                          channels,
-                          selected,
-                          role,
-                          moderators,
-                          phone: true,
-                        )
-                      : _eventsModule(server, channels, role),
-                  // The stage carries the channel's name and its live state
-                  // itself, directly under the picture; the shell's header
-                  // above it would say the same thing twice.
-                  showChannelHeader:
-                      !communityStage &&
-                      !podcastStage &&
-                      (localTabs.isEmpty || _localTab == 0),
-                  intro: widget.justCreated
-                      ? _InviteIntroduction(
-                          server: server,
-                          onInvite: _inviteAction(context, server, role),
-                        )
-                      : null,
+          final surface = SafeArea(
+            bottom: false,
+            child: Column(
+              children: [
+                Expanded(
+                  child: _PhoneSurface(
+                    server: server,
+                    selected: selected,
+                    onBack: _selectHome,
+                    onChannels: () => _openChannels(context, server, role),
+                    // The community stage's own strip owns the entry to the
+                    // channel list, so it is offered exactly once.
+                    showChannelsButton: !communityStage,
+                    // The Questions row waits inside the channel list; its
+                    // way in says so, unless the Questions board is already
+                    // on screen or a closer `Pytania` tab carries the dot.
+                    channelsWaiting:
+                        waitingQuestions != null &&
+                        selected?.id != waitingQuestions &&
+                        !localTabs.any((tab) => tab.attentionLabel != null),
+                    tabs: localTabs.isEmpty
+                        ? null
+                        : _tabStrip(
+                            context,
+                            server,
+                            localTabs,
+                            _localTab,
+                            (index) => setState(() => _localTab = index),
+                          ),
+                    centre: localTabs.isEmpty || _localTab == 0
+                        ? centre
+                        : _contextThread(
+                            context,
+                            server,
+                            channels,
+                            selected,
+                            role,
+                            moderators,
+                            phone: true,
+                          ),
+                    // The stage carries the channel's name and its live
+                    // state itself, directly under the picture; the shell's
+                    // header above it would say the same thing twice.
+                    showChannelHeader:
+                        !communityStage &&
+                        !podcastStage &&
+                        (localTabs.isEmpty || _localTab == 0),
+                  ),
                 ),
-              ),
-              dock,
-            ],
+                dock,
+              ],
+            ),
           );
+          // One level of Back belongs to the channel view: system Back and
+          // the leading-edge swipe return to the server page first, and from
+          // the page they leave the server, as before.
+          //
+          // The claim is an [EmbeddedBackScope], not a bare `PopScope`: hosted
+          // inline in the shell this view shares the shell's route, where a
+          // refused pop calls every pop entry — a bare scope would return to
+          // the page AND move the shell's tab history on one Back. It is also
+          // dropped while the hosting slot is off screen, so a retained,
+          // hidden workspace never holds the route (or swallows a Back meant
+          // for the tab on screen).
+          //
+          // Holding the route switches Flutter's own Cupertino back swipe
+          // off, so the swipe is given back by the same edge detector the
+          // shell uses for its retained tabs.
+          Widget channelView(bool visible) => EmbeddedBackScope(
+            claimed: visible,
+            onBack: _selectHome,
+            child: YoEdgeBackGesture(
+              enabled: visible,
+              navigationIdentity: selected?.id ?? '',
+              onBack: _selectHome,
+              child: surface,
+            ),
+          );
+          final visibility = widget.isVisible;
+          return visibility == null
+              ? channelView(true)
+              : ValueListenableBuilder<bool>(
+                  valueListenable: visibility,
+                  builder: (context, visible, _) => channelView(visible),
+                );
         }
         final wideDesktop = width >= ServerWorkspaceScreen.wideDesktopWidth;
         final panelWidth = wideDesktop
@@ -978,8 +1182,14 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
             ? ServerWorkspaceScreen.desktopChannelColumnWidth
             : ServerWorkspaceScreen.tabletChannelColumnWidth;
         final contextWidth = wideDesktop ? 360.0 : 320.0;
+        // Beside the page a desktop keeps the server's conversation in view;
+        // beside a media scene, the conversation that belongs to it. A host
+        // that supplies its own scenes (the integration seam) keeps the page
+        // without a conversation the seam never mounted.
         final showContextPanel =
-            desktop && selected != null && selected.kind.isMedia;
+            desktop &&
+            ((home && widget.channelBuilder == null) ||
+                (selected != null && selected.kind.isMedia));
         // The meeting owns its own strip (`Prezentacja | Tablica | Czat`), so
         // the shell does not put a second one above it.
         final wideTabs =
@@ -993,7 +1203,7 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
                 phone: false,
                 waitingQuestions: waitingQuestions,
               );
-        return Column(
+        final workspace = Column(
           children: [
             Expanded(
               child: Row(
@@ -1027,61 +1237,81 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
                         _select(channel);
                         _session.join(server, channel);
                       },
+                      // The family keeps its `Rodzinny pulpit` row, which is
+                      // the page too and carries the selection for it; every
+                      // other template's page is selected on the header.
                       onHome: _hasHomeBoard(server) ? _selectHome : null,
                       homeSelected: home,
+                      onOpenPage: _selectHome,
+                      pageSelected: home && !_hasHomeBoard(server),
                       questionsWaitingChannelId: waitingQuestions,
                     ),
                   ),
                   VerticalDivider(width: 1, color: serverDivider(context)),
                   Expanded(
-                    // The panel and the context column are fixed; the centre
-                    // used to take everything else, so at 1920 the family
-                    // board drew a 1 545-px-wide `Dołącz do rozmowy` and the
-                    // meeting put a 1 230-px tab bar around an 816-px
-                    // presentation slot. The shell (1 136) and the
-                    // configuration screen (1 012) already hold a measure, and
-                    // so does the servers directory, which uses this exact
-                    // token — the workspace was the one surface that did not.
-                    child: ResponsiveContentFrame(
-                      width: ResponsiveContentWidth.dashboard,
-                      child: _Centre(
-                        header: home || selected == null
-                            ? null
-                            : ServerChannelHeader(
-                                server: server,
-                                channel: selected,
+                    child: home
+                        // The page keeps a reading measure of its own and
+                        // sits at the top of the centre column.
+                        ? Align(
+                            alignment: Alignment.topCenter,
+                            child: ConstrainedBox(
+                              constraints: const BoxConstraints(
+                                maxWidth: ServerHomePage.maxWidth,
                               ),
-                        intro: widget.justCreated
-                            ? _InviteIntroduction(
-                                server: server,
-                                onInvite: _inviteAction(context, server, role),
-                              )
-                            : null,
-                        // Tablet: the context is a local tab.
-                        tabs: wideTabs.isEmpty
-                            ? null
-                            : _tabStrip(
-                                context,
-                                server,
-                                wideTabs,
-                                _localTab,
-                                (index) => setState(() => _localTab = index),
-                              ),
-                        body: wideTabs.isEmpty || _localTab == 0
-                            ? centre
-                            : _localTab == 1
-                            ? _contextThread(
-                                context,
-                                server,
-                                channels,
-                                selected,
-                                role,
-                                moderators,
-                                phone: false,
-                              )
-                            : _eventsModule(server, channels, role),
-                      ),
-                    ),
+                              child: page(embedded: true),
+                            ),
+                          )
+                        // The panel and the context column are fixed; the
+                        // centre used to take everything else, so at 1920 the
+                        // meeting put a 1 230-px tab bar around an 816-px
+                        // presentation slot. The shell (1 136) and the
+                        // configuration screen (1 012) already hold a measure,
+                        // and so does the servers directory, which uses this
+                        // exact token — the workspace was the one surface that
+                        // did not.
+                        : ResponsiveContentFrame(
+                            width: ResponsiveContentWidth.dashboard,
+                            child: _Centre(
+                              header: selected == null
+                                  ? null
+                                  : ServerChannelHeader(
+                                      server: server,
+                                      channel: selected,
+                                    ),
+                              intro: widget.justCreated
+                                  ? _InviteIntroduction(
+                                      server: server,
+                                      onInvite: _inviteAction(
+                                        context,
+                                        server,
+                                        role,
+                                      ),
+                                    )
+                                  : null,
+                              // Tablet: the context is a local tab.
+                              tabs: wideTabs.isEmpty
+                                  ? null
+                                  : _tabStrip(
+                                      context,
+                                      server,
+                                      wideTabs,
+                                      _localTab,
+                                      (index) =>
+                                          setState(() => _localTab = index),
+                                    ),
+                              body: wideTabs.isEmpty || _localTab == 0
+                                  ? centre
+                                  : _contextThread(
+                                      context,
+                                      server,
+                                      channels,
+                                      selected,
+                                      role,
+                                      moderators,
+                                      phone: false,
+                                    ),
+                            ),
+                          ),
                   ),
                   if (showContextPanel) ...[
                     VerticalDivider(width: 1, color: serverDivider(context)),
@@ -1115,8 +1345,83 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
             dock,
           ],
         );
+        // Pushed as a route at tablet or desktop width, the workspace keeps
+        // the route's own bar with Back, as it always had.
+        return widget.isRootTab ? workspace : _withRouteBar(context, workspace);
       },
     );
+  }
+
+  /// From this centre width the family's board uses its roomier arrangement.
+  static const _familyBoardWideWidth = 620.0;
+
+  /// The phone page's `⋯`: the server-level actions that are not already a
+  /// button on the page — the channel list, a new channel and the settings —
+  /// each offered only to a role its callable accepts.
+  Future<void> _openPageMenu(
+    BuildContext context,
+    Server server,
+    List<ServerChannel> channels,
+    ServerMemberRole? role,
+  ) async {
+    final copy = AppLocalizations.of(context);
+    final palette = context.appPalette;
+    final addChannel = _addChannelAction(context, server, role);
+    final manage = _manageAction(context, server, channels, role);
+    final picked = await showModalBottomSheet<_PageMenuAction>(
+      context: context,
+      showDragHandle: true,
+      useSafeArea: true,
+      constraints: ResponsiveContentFrame.adaptiveModalConstraints(context),
+      builder: (sheetContext) {
+        Widget item(_PageMenuAction action, IconData icon, String label) =>
+            ListTile(
+              key: ValueKey('server-page-menu-${action.name}'),
+              minTileHeight: 56,
+              leading: Icon(icon, color: palette.textSecondary),
+              title: Text(label),
+              onTap: () => Navigator.of(sheetContext).pop(action),
+            );
+        return SafeArea(
+          top: false,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                item(
+                  _PageMenuAction.channels,
+                  Icons.format_list_bulleted_rounded,
+                  copy.serverChannels,
+                ),
+                if (addChannel != null)
+                  item(
+                    _PageMenuAction.addChannel,
+                    Icons.add_rounded,
+                    copy.serverAddChannel,
+                  ),
+                if (manage != null)
+                  item(
+                    _PageMenuAction.settings,
+                    Icons.settings_outlined,
+                    copy.serverSettings,
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    if (!mounted || !context.mounted) return;
+    switch (picked) {
+      case _PageMenuAction.channels:
+        await _openChannels(context, server, role);
+      case _PageMenuAction.addChannel:
+        addChannel?.call();
+      case _PageMenuAction.settings:
+        manage?.call();
+      case null:
+        break;
+    }
   }
 
   Widget _noChannels(BuildContext context) {
@@ -1303,33 +1608,6 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
         ServerType.company => false,
       };
 
-  /// A template's calendar/program/events tab and, when its backing channel is
-  /// gone, an honest empty state rather than a synthetic module.
-  Widget _eventsModule(
-    Server server,
-    List<ServerChannel> channels,
-    ServerMemberRole? role,
-  ) {
-    final events = _channelOfKind(
-      channels,
-      server.type == ServerType.family
-          ? ServerChannelKind.calendar
-          : ServerChannelKind.events,
-    );
-    if (events == null) return _noChannels(context);
-    if (_isEventsChannel(server, events) &&
-        _repository is ServerEventsRepository) {
-      return ServerEventsBoard(
-        server: server,
-        channel: events,
-        repository: _repository,
-        role: role,
-        currentUserId: _repository.currentUserId,
-      );
-    }
-    return ServerChannelEmptyState(server: server, channel: events);
-  }
-
   /// The conversation beside a media scene: the server's default text
   /// channel, read and written through the same club message path.
   Widget _contextThread(
@@ -1480,9 +1758,10 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
     return copy.serverChat;
   }
 
-  /// The local tabs of a media channel: the scene, the conversation beside
-  /// it, and — on the friends board — the events module (`Salon | Czat |
-  /// Wydarzenia`). A tab is only offered when its destination exists.
+  /// The local tabs of a media channel: the scene and the conversation
+  /// beside it. They are two views of one channel, which a desktop shows side
+  /// by side; everything that used to be a destination in this strip (the
+  /// channel list, the events, the family's board) is on the server page.
   List<ServerLocalTab> _sceneTabs(
     BuildContext context,
     Server server,
@@ -1492,9 +1771,9 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
     String? waitingQuestions,
   }) {
     final copy = AppLocalizations.of(context);
-    // Board 04's phone strip: the meeting, its conversation and the way into
-    // the channel list. The scene itself carries `Prezentacja` and `Tablica`
-    // as cards at this width, so they are not tabs here.
+    // Board 04's phone strip: the meeting and its conversation. The scene
+    // itself carries `Prezentacja` and `Tablica` as cards at this width, so
+    // they are not tabs here.
     if (phone && _isCompanyMeeting(server, channel)) {
       return [
         ServerLocalTab(
@@ -1507,111 +1786,28 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
           label: copy.serverChat,
           icon: Icons.forum_outlined,
         ),
-        ServerLocalTab(
-          key: const ValueKey('server-open-channels'),
-          label: copy.serverChannels,
-          icon: Icons.tag_rounded,
-        ),
       ];
     }
-    final events = _channelOfKind(channels, ServerChannelKind.events);
     // A scene whose conversation is not the server's ordinary chat names the
     // channel it actually reads — board 05's `Pytania` beside the studio.
     final prefer = _contextThreadPreference(server, channel);
     final conversation = prefer == null
         ? null
         : serverContextThreadChannel(server, channels, prefer: prefer);
-    return [
-      ...serverSceneAndChatTabs(
-        context,
-        channel,
-        conversationLabel: conversation?.kind == prefer
-            ? conversation?.name
-            : null,
-        // Board 05's `Pytania` tab carries the host's "new questions" dot.
-        attentionLabel:
-            waitingQuestions != null &&
-                conversation?.kind == prefer &&
-                conversation?.id == waitingQuestions
-            ? copy.serverQuestionsWaitingLabel
-            : null,
-      ),
-      if (server.type == ServerType.friends &&
-          channel.kind == ServerChannelKind.voice &&
-          events != null)
-        ServerLocalTab(
-          key: const ValueKey('server-tab-events'),
-          label: copy.serverChannelKindTitle(ServerChannelKind.events),
-          icon: serverChannelIcon(ServerChannelKind.events),
-        ),
-    ];
-  }
-
-  /// Board 03's phone navigation: `Dom | Kanały | Kalendarz | Wspomnienia`.
-  ///
-  /// These are destinations, not views of one channel, so the strip owns
-  /// `Kanały` (with the surface's own key) and the header drops its pill —
-  /// the entry to the channel list stays exactly one control.
-  /// Returns null whenever the family board is not the current destination,
-  /// which leaves every other surface exactly as the shell had it.
-  Widget? _boardTabs(
-    BuildContext context,
-    Server server,
-    List<ServerChannel> channels,
-    ServerMemberRole? role,
-    bool home,
-  ) {
-    if (!_hasHomeBoard(server)) return null;
-    final copy = AppLocalizations.of(context);
-    final calendar = _channelOfKind(channels, ServerChannelKind.calendar);
-    final memories = _channelOfKind(channels, ServerChannelKind.memories);
-    final selected = _selectedId;
-    final onCalendar = !home && calendar != null && selected == calendar.id;
-    final onMemories = !home && memories != null && selected == memories.id;
-    if (!home && !onCalendar && !onMemories) return null;
-    final tabs = <ServerLocalTab>[
-      ServerLocalTab(
-        key: const ValueKey('server-tab-home'),
-        label: copy.serverFamilyHomeTab,
-        icon: Icons.home_outlined,
-      ),
-      ServerLocalTab(
-        key: const ValueKey('server-open-channels'),
-        label: copy.serverChannels,
-        icon: Icons.tag_rounded,
-      ),
-      if (calendar != null)
-        ServerLocalTab(
-          key: const ValueKey('server-tab-calendar'),
-          label: calendar.name,
-          icon: serverChannelIcon(ServerChannelKind.calendar),
-        ),
-      if (memories != null)
-        ServerLocalTab(
-          key: const ValueKey('server-tab-memories'),
-          label: memories.name,
-          icon: serverChannelIcon(ServerChannelKind.memories),
-        ),
-    ];
-    final index = onCalendar
-        ? 2
-        : onMemories
-        ? (calendar == null ? 2 : 3)
-        : 0;
-    return _tabStrip(context, server, tabs, index, (tapped) {
-      switch (tabs[tapped].key) {
-        case const ValueKey('server-tab-home'):
-          _selectHome();
-        case const ValueKey('server-open-channels'):
-          // Opening the list is an action, not a destination: the strip
-          // keeps its current selection until a channel is picked.
-          _openChannels(context, server, role).ignore();
-        case const ValueKey('server-tab-calendar'):
-          if (calendar != null) _select(calendar);
-        case const ValueKey('server-tab-memories'):
-          if (memories != null) _select(memories);
-      }
-    });
+    return serverSceneAndChatTabs(
+      context,
+      channel,
+      conversationLabel: conversation?.kind == prefer
+          ? conversation?.name
+          : null,
+      // Board 05's `Pytania` tab carries the host's "new questions" dot.
+      attentionLabel:
+          waitingQuestions != null &&
+              conversation?.kind == prefer &&
+              conversation?.id == waitingQuestions
+          ? copy.serverQuestionsWaitingLabel
+          : null,
+    );
   }
 
   Widget _tabStrip(
@@ -1665,6 +1861,8 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
         setState(() {
           _selectedId = created;
           _localTab = 0;
+          // The new channel is where its creator wants to be.
+          _home = false;
         });
       }
     };
@@ -1700,7 +1898,8 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
     };
   }
 
-  /// Phone: the whole server panel as a sheet.
+  /// Phone: the whole server panel as a sheet — the page's
+  /// `Wszystkie kanały` and a channel's own `Kanały`.
   Future<void> _openChannels(
     BuildContext context,
     Server server,
@@ -1759,13 +1958,18 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
                 listenable: _attention,
                 builder: (context, _) {
                   final channels = snapshot.data ?? const <ServerChannel>[];
+                  final onPage = _homeSelected();
                   return ServerPanel(
                     server: server,
                     channels: channels,
-                    selectedId: _selectedId,
+                    // On the page no channel is open, so no row is marked.
+                    selectedId: onPage ? null : _selectedId,
                     role: role,
                     onSelected: (channel) =>
                         Navigator.of(sheetContext).pop(channel),
+                    onOpenPage: () =>
+                        Navigator.of(sheetContext).pop(_SheetAction.page),
+                    pageSelected: onPage,
                     onInvite: invite == null
                         ? null
                         : () => Navigator.of(
@@ -1811,6 +2015,8 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
         invite?.call();
       case _SheetAction.add:
         addChannel?.call();
+      case _SheetAction.page:
+        _selectHome();
       case _ManageRequest request:
         _manageAction(this.context, server, request.channels, role)?.call();
       case _ServerRequest request:
@@ -1821,7 +2027,10 @@ class _ServerWorkspaceScreenState extends State<ServerWorkspaceScreen> {
   }
 }
 
-enum _SheetAction { invite, add }
+enum _SheetAction { invite, add, page }
+
+/// What the phone page's `⋯` menu can open.
+enum _PageMenuAction { channels, addChannel, settings }
 
 class _ManageRequest {
   const _ManageRequest(this.channels);
@@ -2008,22 +2217,21 @@ class _Centre extends StatelessWidget {
   );
 }
 
-/// The phone surface: the server header, an optional intro, the local tab
-/// strip for this destination, and the centre.
+/// The phone's channel view: the way back to the server page, the server's
+/// name, the scene's own view switch when the channel has one, and the centre.
 ///
 /// `Kanały` is offered exactly once: from the header pill, or — on the
-/// family board, whose strip owns that entry — from the strip itself.
+/// community stage, whose strip owns that entry — from the strip itself.
 class _PhoneSurface extends StatelessWidget {
   const _PhoneSurface({
     required this.server,
     required this.selected,
+    required this.onBack,
     required this.onChannels,
     required this.showChannelsButton,
     required this.showChannelHeader,
     required this.centre,
-    this.onBack,
     this.tabs,
-    this.intro,
     this.channelsWaiting = false,
   });
   final Server server;
@@ -2033,15 +2241,14 @@ class _PhoneSurface extends StatelessWidget {
   /// questions), so `Kanały` carries the shared waiting dot.
   final bool channelsWaiting;
 
-  /// Present only when this workspace is hosted over the directory, where
-  /// nothing else on a phone-width surface leads back to it.
-  final VoidCallback? onBack;
+  /// Back to the server page (ADR-240). The page's own cover is what leads
+  /// out of the server.
+  final VoidCallback onBack;
   final VoidCallback onChannels;
   final bool showChannelsButton;
   final bool showChannelHeader;
   final Widget centre;
   final Widget? tabs;
-  final Widget? intro;
 
   /// What the scene under the header keeps no matter how tall the header
   /// wants to be. Enough for a title, a line about it and the one action the
@@ -2091,7 +2298,7 @@ class _PhoneSurface extends StatelessWidget {
               child: Column(
                 children: [
                   Container(
-                    padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
+                    padding: const EdgeInsets.fromLTRB(4, 8, 12, 8),
                     decoration: BoxDecoration(
                       border: Border(
                         bottom: BorderSide(color: serverDivider(context)),
@@ -2099,19 +2306,17 @@ class _PhoneSurface extends StatelessWidget {
                     ),
                     child: Row(
                       children: [
-                        if (onBack != null) ...[
-                          IconButton(
-                            key: const ValueKey('server-phone-back'),
-                            onPressed: onBack,
-                            tooltip: copy.serversTitle,
-                            style: IconButton.styleFrom(
-                              minimumSize: const Size(48, 48),
-                              foregroundColor: palette.textSecondary,
-                            ),
-                            icon: const Icon(Icons.chevron_left_rounded),
+                        IconButton(
+                          key: const ValueKey('server-channel-back'),
+                          onPressed: onBack,
+                          tooltip: copy.serverPageTitle,
+                          style: IconButton.styleFrom(
+                            minimumSize: const Size(48, 48),
+                            foregroundColor: palette.textSecondary,
                           ),
-                          const SizedBox(width: 4),
-                        ],
+                          icon: const Icon(Icons.arrow_back_rounded),
+                        ),
+                        const SizedBox(width: 4),
                         YoServerTile(
                           initial: server.initial,
                           type: server.type,
@@ -2223,11 +2428,6 @@ class _PhoneSurface extends StatelessWidget {
                       ],
                     ),
                   ),
-                  if (intro != null)
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-                      child: intro,
-                    ),
                   ?tabs,
                   if (channel != null && showChannelHeader)
                     ServerChannelHeader(
@@ -2241,132 +2441,6 @@ class _PhoneSurface extends StatelessWidget {
           ),
           Expanded(child: centre),
         ],
-      ),
-    );
-  }
-}
-
-/// The safe public-root state shown before membership exists. It deliberately
-/// contains no channel-derived information: channel names and conversations
-/// become readable only after `joinServerV1` commits the member row.
-class _PublicServerAdmission extends StatelessWidget {
-  const _PublicServerAdmission({
-    required this.server,
-    required this.joining,
-    required this.onJoin,
-    this.error,
-  });
-
-  final Server server;
-  final bool joining;
-  final Object? error;
-  final VoidCallback onJoin;
-
-  @override
-  Widget build(BuildContext context) {
-    final copy = AppLocalizations.of(context);
-    final palette = context.appPalette;
-    final colors = ServerIdentity.of(
-      server.type,
-    ).resolve(Theme.of(context).brightness);
-    return Center(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 520),
-          // Refine-look §8.2: an R2 block at the sheet radius, edged in the
-          // template's own ink at .30.
-          child: Container(
-            key: const ValueKey('server-public-admission'),
-            padding: const EdgeInsets.all(24),
-            decoration: _identityBlock(context, colors, AppRadius.xl),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                YoServerTile(
-                  initial: server.initial,
-                  type: server.type,
-                  size: 64,
-                  bordered: false,
-                  textStyle: AppTypography.headlineSmall.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  server.name,
-                  textAlign: TextAlign.center,
-                  style: AppTypography.titleLarge.copyWith(
-                    color: palette.textPrimary,
-                  ),
-                ),
-                if (server.description.trim().isNotEmpty) ...[
-                  const SizedBox(height: 6),
-                  Text(
-                    server.description.trim(),
-                    textAlign: TextAlign.center,
-                    style: AppTypography.bodyMedium.copyWith(
-                      color: palette.textSecondary,
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 20),
-                Text(
-                  copy.serverPublicJoinTitle,
-                  textAlign: TextAlign.center,
-                  style: AppTypography.titleMedium.copyWith(
-                    color: palette.textPrimary,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  copy.serverPublicJoinBody,
-                  textAlign: TextAlign.center,
-                  style: AppTypography.bodyMedium.copyWith(
-                    color: palette.textSecondary,
-                  ),
-                ),
-                if (error != null) ...[
-                  const SizedBox(height: 12),
-                  Text(
-                    serverActionFailureCopy(
-                      error!,
-                      copy,
-                      fallback: copy.serverJoinFailed,
-                    ),
-                    key: const ValueKey('server-public-join-error'),
-                    textAlign: TextAlign.center,
-                    style: AppTypography.bodySmall.copyWith(
-                      color: Theme.of(context).colorScheme.error,
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 18),
-                // The admission's one action: the server join, in the
-                // template's identity gradient (R5).
-                ServerGradientFilledButton(
-                  buttonKey: const ValueKey('server-public-join'),
-                  onPressed: joining ? null : onJoin,
-                  gradient: colors.ctaGradient,
-                  fill: colors.cta,
-                  foreground: colors.onCta,
-                  minimumSize: const Size.fromHeight(48),
-                  icon: joining
-                      ? const SizedBox.square(
-                          dimension: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.login_rounded),
-                  label: Text(
-                    joining
-                        ? copy.serverPublicJoining
-                        : copy.serverPublicJoinAction,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
       ),
     );
   }

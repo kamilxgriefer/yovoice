@@ -42,6 +42,7 @@ class ServerFamilyBoard extends StatelessWidget {
     required this.currentUserId,
     this.role,
     this.compact = false,
+    this.embedded = false,
     super.key,
   });
 
@@ -56,6 +57,11 @@ class ServerFamilyBoard extends StatelessWidget {
 
   /// Phone width: one column, tighter paddings, smaller stage.
   final bool compact;
+
+  /// The board is the main thing of the server page (ADR-240), which scrolls
+  /// and insets it: the board then brings neither a scroll view nor a padding
+  /// of its own.
+  final bool embedded;
 
   /// Three cards across from here, two from [_twoColumnWidth], one below it.
   static const threeColumnWidth = 980.0;
@@ -117,89 +123,99 @@ class ServerFamilyBoard extends StatelessWidget {
           large: true,
         ),
     ];
+    final board = Column(
+      key: embedded ? const ValueKey('server-family-board') : null,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // On the server page the header's meta line already states the
+        // family's boundary, so the board does not say it a second time.
+        _Hero(
+          server: server,
+          colors: colors,
+          compact: compact,
+          showPrivacy: !compact && !embedded,
+        ),
+        SizedBox(height: compact ? AppSpacing.md : AppSpacing.lg),
+        FamilyCheckInPanel(
+          clubId: server.id,
+          currentUserId: currentUserId,
+          canManage: role?.canModerate ?? false,
+          serverRepository: checkIns,
+        ),
+        SizedBox(height: compact ? AppSpacing.md : AppSpacing.lg),
+        if (lounge != null) ...[
+          _LoungeCard(
+            server: server,
+            channel: lounge,
+            session: session,
+            role: role,
+            colors: colors,
+            compact: compact,
+          ),
+          SizedBox(height: compact ? AppSpacing.md : AppSpacing.lg),
+        ],
+        if (modules.isEmpty)
+          Text(
+            copy.serverNoChannelsBody,
+            style: AppTypography.bodyMedium.copyWith(
+              color: palette.textSecondary,
+            ),
+          )
+        else
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final columns = constraints.maxWidth >= threeColumnWidth
+                  ? 3
+                  : constraints.maxWidth >= _twoColumnWidth
+                  ? 2
+                  : 1;
+              if (columns == 1) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    for (var index = 0; index < modules.length; index++) ...[
+                      if (index > 0) const SizedBox(height: AppSpacing.md),
+                      modules[index],
+                    ],
+                  ],
+                );
+              }
+              const gap = AppSpacing.md;
+              final width =
+                  (constraints.maxWidth - gap * (columns - 1)) / columns;
+              return Wrap(
+                key: const ValueKey('server-family-modules'),
+                spacing: gap,
+                runSpacing: gap,
+                children: [
+                  for (final module in modules)
+                    SizedBox(width: width, child: module),
+                ],
+              );
+            },
+          ),
+        if (memoriesChannel != null) ...[
+          SizedBox(height: compact ? AppSpacing.md : AppSpacing.lg),
+          ServerFamilyMemoryAlbum(
+            serverId: server.id,
+            channelId: memoriesChannel.id,
+            repository: memories,
+            currentUserId: currentUserId,
+            role: role,
+            colors: colors,
+            serverHeld: server.isHeld,
+            compact: compact,
+            embedded: true,
+            onOpenFullAlbum: () => onOpenChannel(memoriesChannel),
+          ),
+        ],
+      ],
+    );
+    if (embedded) return board;
     return SingleChildScrollView(
       key: const ValueKey('server-family-board'),
       padding: EdgeInsets.all(compact ? AppSpacing.md : AppSpacing.lg),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _Hero(server: server, colors: colors, compact: compact),
-          SizedBox(height: compact ? AppSpacing.md : AppSpacing.lg),
-          FamilyCheckInPanel(
-            clubId: server.id,
-            currentUserId: currentUserId,
-            canManage: role?.canModerate ?? false,
-            serverRepository: checkIns,
-          ),
-          SizedBox(height: compact ? AppSpacing.md : AppSpacing.lg),
-          if (lounge != null) ...[
-            _LoungeCard(
-              server: server,
-              channel: lounge,
-              session: session,
-              role: role,
-              colors: colors,
-              compact: compact,
-            ),
-            SizedBox(height: compact ? AppSpacing.md : AppSpacing.lg),
-          ],
-          if (modules.isEmpty)
-            Text(
-              copy.serverNoChannelsBody,
-              style: AppTypography.bodyMedium.copyWith(
-                color: palette.textSecondary,
-              ),
-            )
-          else
-            LayoutBuilder(
-              builder: (context, constraints) {
-                final columns = constraints.maxWidth >= threeColumnWidth
-                    ? 3
-                    : constraints.maxWidth >= _twoColumnWidth
-                    ? 2
-                    : 1;
-                if (columns == 1) {
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      for (var index = 0; index < modules.length; index++) ...[
-                        if (index > 0) const SizedBox(height: AppSpacing.md),
-                        modules[index],
-                      ],
-                    ],
-                  );
-                }
-                const gap = AppSpacing.md;
-                final width =
-                    (constraints.maxWidth - gap * (columns - 1)) / columns;
-                return Wrap(
-                  key: const ValueKey('server-family-modules'),
-                  spacing: gap,
-                  runSpacing: gap,
-                  children: [
-                    for (final module in modules)
-                      SizedBox(width: width, child: module),
-                  ],
-                );
-              },
-            ),
-          if (memoriesChannel != null) ...[
-            SizedBox(height: compact ? AppSpacing.md : AppSpacing.lg),
-            ServerFamilyMemoryAlbum(
-              serverId: server.id,
-              channelId: memoriesChannel.id,
-              repository: memories,
-              currentUserId: currentUserId,
-              role: role,
-              colors: colors,
-              serverHeld: server.isHeld,
-              compact: compact,
-              embedded: true,
-              onOpenFullAlbum: () => onOpenChannel(memoriesChannel),
-            ),
-          ],
-        ],
-      ),
+      child: board,
     );
   }
 }
@@ -210,10 +226,12 @@ class _Hero extends StatelessWidget {
     required this.server,
     required this.colors,
     required this.compact,
+    required this.showPrivacy,
   });
   final Server server;
   final ServerIdentityVisuals colors;
   final bool compact;
+  final bool showPrivacy;
 
   @override
   Widget build(BuildContext context) {
@@ -225,7 +243,7 @@ class _Hero extends StatelessWidget {
       children: [
         // On a phone the surface header carries the lock and the boundary
         // two rows above; repeating it here would say the same thing twice.
-        if (!compact) ...[
+        if (showPrivacy) ...[
           Row(
             children: [
               Icon(Icons.lock_outline, size: 20, color: palette.textSecondary),
