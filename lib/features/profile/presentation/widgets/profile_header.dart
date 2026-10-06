@@ -11,6 +11,7 @@ import 'package:yovoice/features/achievements/data/models/achievement_definition
 import 'package:yovoice/features/achievements/presentation/widgets/title_badge.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
+import 'package:yovoice/features/profile/presentation/my_link_copy.dart';
 import 'package:yovoice/features/profile/presentation/widgets/profile_layout.dart';
 import 'package:yovoice/shared/identity/public_identity_repository.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
@@ -63,12 +64,17 @@ class ProfileHeader extends StatelessWidget {
     this.mediaService,
     this.stats,
     this.actions,
+    this.onMyLink,
     super.key,
   });
 
   final UserProfile profile;
   final AchievementDefinition? title;
   final VoidCallback onEdit;
+
+  /// Opens "Mój link" (ADR-238). When set, the toolbar carries a raised
+  /// 44 px QR control at its end, over the photo like Back.
+  final VoidCallback? onMyLink;
 
   /// Real counters only, in reading order. Null draws no stats row.
   final List<ProfileStat>? stats;
@@ -252,6 +258,21 @@ class ProfileHeader extends StatelessWidget {
         else
           // Keeps the toolbar row at its 44 px target height.
           const SizedBox(height: 44),
+        if (onMyLink != null)
+          Padding(
+            padding: EdgeInsetsDirectional.only(start: actions == null ? 8 : 0),
+            child: IconButton(
+              key: const ValueKey('profile-my-link'),
+              onPressed: onMyLink,
+              icon: const Icon(Icons.qr_code_2_rounded),
+              color: palette.textPrimary,
+              tooltip: MyLinkCopy(copy).title,
+              constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+              style: IconButton.styleFrom(
+                backgroundColor: palette.surfaceRaised.withValues(alpha: .92),
+              ),
+            ),
+          ),
       ],
     );
   }

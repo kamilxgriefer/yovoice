@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/helpers/error_messages.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/navigation/app_entry_link.dart';
 import 'package:yovoice/core/navigation/app_route_observer.dart';
 import 'package:yovoice/core/navigation/embedded_back_scope.dart';
 import 'package:yovoice/core/navigation/mobile_destination_history.dart';
@@ -19,8 +20,10 @@ import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart'
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_home.dart';
 import 'package:yovoice/features/home/presentation/widgets/mobile/mobile_home.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
+import 'package:yovoice/features/moments/data/moment_links.dart';
 import 'package:yovoice/features/moments/presentation/screens/moment_comments_screen.dart';
 import 'package:yovoice/features/moments/presentation/screens/moment_detail_screen.dart';
+import 'package:yovoice/features/moments/presentation/screens/moment_link_destination_screen.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_sidebar.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/premium_desktop_card.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/sponsored_card.dart';
@@ -36,11 +39,15 @@ import 'package:yovoice/features/onboarding/presentation/guided_onboarding_tour.
 import 'package:yovoice/features/pages/data/page_links.dart';
 import 'package:yovoice/features/pages/data/services/pages_availability.dart';
 import 'package:yovoice/features/pages/presentation/page_navigation.dart';
+import 'package:yovoice/shared/identity/public_identity.dart';
+import 'package:yovoice/shared/identity/public_identity_repository.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
 import 'package:yovoice/features/pages/presentation/screens/content_screen.dart';
 import 'package:yovoice/features/pages/presentation/screens/page_profile_screen.dart';
 import 'package:yovoice/features/permissions/data/permission_readiness_service.dart';
 import 'package:yovoice/features/permissions/presentation/permission_setup_sheet.dart';
+import 'package:yovoice/features/profile/data/user_links.dart';
+import 'package:yovoice/features/profile/presentation/my_link_copy.dart';
 import 'package:yovoice/features/premium/data/models/subscription_entitlements.dart';
 import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
 import 'package:yovoice/features/premium/premium_gates.dart';
@@ -107,6 +114,81 @@ ServerLinkTarget? parseInitialServerWorkspaceLink(Uri uri) {
       : ServerLinkTarget(serverId: legacyServerId);
 }
 
+/// The production destination of a `?moment=` link, exposed so the deep-link
+/// contract can be tested without booting Firebase-backed MainShell.
+@visibleForTesting
+MomentLinkDestinationScreen initialMomentLinkDestination(String momentId) =>
+    MomentLinkDestinationScreen(momentId: momentId);
+
+/// What the shell says about an entry link that names a profile or a Voice
+/// Moment but does not satisfy that link's exact contract (a malformed id, an
+/// extra parameter, a path, a fragment). Null for every other URI.
+///
+/// The shell opens nothing for such a link and reads nothing with it; this is
+/// only the sentence it shows instead of silence.
+///
+/// An address with a fragment is refused like any other altered link but
+/// gets no sentence: the web app writes its own route into the fragment
+/// (`…/?user=<id>#/auth-session`), so a tab that was opened from a good link
+/// and reloaded later would otherwise be told that the profile "is not
+/// available".
+@visibleForTesting
+String? unavailableInitialLinkMessage(Uri uri, MyLinkCopy copy) {
+  if (uri.hasFragment) return null;
+  if (carriesUserLinkParameters(uri)) {
+    return parseUserLink(uri) == null ? copy.profileUnavailable : null;
+  }
+  if (carriesMomentLinkParameters(uri)) {
+    return parseMomentLink(uri) == null ? copy.momentUnavailable : null;
+  }
+  return null;
+}
+
+/// How long a `?user=` entry link waits to learn whether the account runs a
+/// Page, and — only for an account that does — for this session's Pages
+/// answer. The second bound is the one a `?page=` link already uses.
+@visibleForTesting
+const Duration initialUserLinkIdentityBudget = Duration(seconds: 4);
+@visibleForTesting
+const Duration initialUserLinkPagesBudget = Duration(seconds: 8);
+
+/// Settles what the registered Page redirect reads before a `?user=` entry
+/// link opens its profile (ADR-238).
+///
+/// An entry link is handled on the shell's first frame — a cold start. The
+/// redirect that turns a Page account into its Page profile ("Obserwuj")
+/// reads two things synchronously or within 600 ms: the cached public badge
+/// of the account and this session's Pages answer. On a cold start neither
+/// has landed yet, so without this wait a Page account's link would open
+/// the personal preview ("Dodaj znajomego") almost every time.
+///
+/// An ordinary account costs one badge lookup and no Pages wait. Nothing
+/// here grants anything: a slow or failed lookup simply leaves the personal
+/// preview, exactly as a tap on that person would.
+@visibleForTesting
+Future<void> settlePagesForInitialUserLink({
+  required String userId,
+  required Future<PublicIdentity> Function(String userId) resolveIdentity,
+  required Future<bool> Function() refreshPages,
+  Duration identityBudget = initialUserLinkIdentityBudget,
+  Duration pagesBudget = initialUserLinkPagesBudget,
+}) async {
+  final PublicIdentity identity;
+  try {
+    identity = await resolveIdentity(userId).timeout(identityBudget);
+  } catch (_) {
+    // Too slow or refused: the lookup still lands in the cache for the next
+    // tap; this visit opens the personal preview.
+    return;
+  }
+  if (!identity.isPage) return;
+  try {
+    await refreshPages().timeout(pagesBudget);
+  } catch (_) {
+    // The last known Pages answer stands.
+  }
+}
+
 /// The production route builder for a direct Server link, exposed so the
 /// deep-link contract can be tested without booting Firebase-backed MainShell.
 @visibleForTesting
@@ -115,6 +197,38 @@ ServerWorkspaceScreen serverWorkspaceForInitialLink(ServerLinkTarget target) =>
       serverId: target.serverId,
       initialChannelId: target.channelId,
     );
+
+/// Lets a profile or Voice Moment entry link (ADR-238) wait until the shell's
+/// own route is the visible one.
+///
+/// The shell also mounts UNDER another route: a new member who registers with
+/// an e-mail address is on the pushed "verify your e-mail" route while the
+/// gate below it has already built the shell. Presenting the profile sheet or
+/// the Voice page at that moment would lay it over the verification screen,
+/// and that screen's `popUntil(isFirst)` would then throw it away unseen.
+/// The shell's `didPopNext` opens the gate.
+///
+/// Public only so the contract can be pinned without booting Firebase-backed
+/// [MainShell].
+final class ShellRouteCurrentGate {
+  Completer<void>? _waiter;
+
+  @visibleForTesting
+  bool get isWaiting => _waiter != null;
+
+  /// Completes at once when [isCurrent] is true, otherwise on the next
+  /// [routeBecameCurrent].
+  Future<void> wait({required bool isCurrent}) {
+    if (isCurrent) return Future<void>.value();
+    return (_waiter ??= Completer<void>()).future;
+  }
+
+  void routeBecameCurrent() {
+    final waiter = _waiter;
+    _waiter = null;
+    if (waiter != null && !waiter.isCompleted) waiter.complete();
+  }
+}
 
 /// Serializes presentation of the More menu without blocking the destination
 /// subsequently opened from it.
@@ -344,6 +458,7 @@ class _MainShellState extends State<MainShell>
   final GuidedOnboardingPresentationGuard _onboardingPresentation =
       GuidedOnboardingPresentationGuard();
   bool _handledInitialServerLink = false;
+  final ShellRouteCurrentGate _entryLinkRouteGate = ShellRouteCurrentGate();
 
   late final GuidedOnboardingProgress _onboardingProgress;
   late final PermissionReadinessService _permissionReadiness;
@@ -785,6 +900,9 @@ class _MainShellState extends State<MainShell>
 
   @override
   void didPopNext() {
+    // An entry link that arrived while the shell sat under another route
+    // (e-mail verification) opens now, before the guide is considered.
+    _entryLinkRouteGate.routeBecameCurrent();
     unawaited(_showPendingGuidedOnboarding());
     unawaited(_showPendingPermissionSetup());
     unawaited(_checkVerification());
@@ -1055,6 +1173,28 @@ class _MainShellState extends State<MainShell>
       return;
     }
 
+    // "Mój link" (ADR-238): a person's public profile link, and a Voice
+    // Moment link. Each parser accepts exactly its own contract. Both are
+    // read from the address the page was LOADED with, once per page load:
+    // by now a named route (`#/verify-email` for a new member,
+    // `#/auth-session` after a sign-out) may have rewritten the current
+    // address, and a later shell in the same tab must not open the link
+    // again. See [AppEntryLink].
+    final entryUri = widget.initialUri ?? AppEntryLink.take();
+    if (entryUri != null) {
+      final userTarget = parseUserLink(entryUri);
+      if (userTarget != null) {
+        await _openInitialUserLink(userTarget);
+        return;
+      }
+
+      final momentTarget = parseMomentLink(entryUri);
+      if (momentTarget != null) {
+        await _openInitialMomentLink(momentTarget);
+        return;
+      }
+    }
+
     // An altered current/legacy Server or Page contract fails closed. In
     // particular, a malformed `server`/`club`/`page` link cannot smuggle in a
     // second `room` destination and revive old routing through fallback
@@ -1064,6 +1204,27 @@ class _MainShellState extends State<MainShell>
         keys.contains('channel') ||
         keys.contains('club') ||
         carriesPageLinkParameters(initialUri)) {
+      return;
+    }
+
+    // An altered profile or Voice Moment link fails closed too: it opens no
+    // destination, reads nothing and never falls through to `room`. The
+    // person is told the truth instead of being left on Home without a word
+    // — once, by the shell that took the entry link; a later shell in the
+    // same tab (whose address still carries the parameter) stays silent.
+    if (carriesUserLinkParameters(initialUri) ||
+        carriesMomentLinkParameters(initialUri)) {
+      final unavailable = entryUri == null
+          ? null
+          : unavailableInitialLinkMessage(
+              entryUri,
+              MyLinkCopy(AppLocalizations.of(context)),
+            );
+      if (unavailable != null) {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(SnackBar(content: Text(unavailable)));
+      }
       return;
     }
 
@@ -1106,6 +1267,46 @@ class _MainShellState extends State<MainShell>
         ),
       );
     }
+  }
+
+  /// A `?user=` link opens the existing public profile preview, with its own
+  /// "Add friend" action; an account that runs a Page opens as that Page
+  /// (Follow) through the registered redirect, exactly as a tap on the same
+  /// person anywhere else in the app. A profile that cannot be shown —
+  /// unknown, private, blocked or suspended — renders the preview's own
+  /// "not available" state.
+  ///
+  /// The redirect needs the account's public badge and this session's Pages
+  /// answer, and a cold start has neither on its first frame: both are
+  /// settled first (bounded), so a Page account's link really opens its Page.
+  Future<void> _openInitialUserLink(String userId) async {
+    await Future.wait<void>([
+      settlePagesForInitialUserLink(
+        userId: userId,
+        resolveIdentity: PublicIdentityRepository.instance.resolve,
+        refreshPages: () => _pagesAvailability.refresh(_currentUserId),
+      ),
+      _whenShellRouteIsCurrent(),
+    ]);
+    if (!mounted) return;
+    await showProfilePreview(context, userId: userId);
+  }
+
+  /// Completes when the shell's own route is the visible one — at once in
+  /// the usual case. A new member confirming their e-mail address is on a
+  /// route pushed over the shell; the entry link waits for that route to
+  /// close instead of opening over it. See [ShellRouteCurrentGate].
+  Future<void> _whenShellRouteIsCurrent() => _entryLinkRouteGate.wait(
+    isCurrent: !mounted || ModalRoute.of(context)?.isCurrent != false,
+  );
+
+  /// A `?moment=` link opens that Voice Moment's detail page, hosted over
+  /// the shell with Moments active like every other Moment detail. An id
+  /// that does not resolve shows the detail page's gone-state.
+  Future<void> _openInitialMomentLink(String momentId) async {
+    await _whenShellRouteIsCurrent();
+    if (!mounted) return;
+    await _hostMomentsBody(initialMomentLinkDestination(momentId));
   }
 
   /// Premium Pages §4.3: an account whose public badge says "Page" opens
@@ -1186,6 +1387,8 @@ class _MainShellState extends State<MainShell>
     _contentReselect.dispose();
     WidgetsBinding.instance.removeObserver(this);
     appRouteObserver.unsubscribe(this);
+    // A link still waiting for the shell's route finds `mounted` false.
+    _entryLinkRouteGate.routeBecameCurrent();
     _homeVisible.dispose();
     _momentsVisible.dispose();
     _serversVisible.dispose();
@@ -1705,10 +1908,13 @@ class _MainShellState extends State<MainShell>
   /// re-hosting contract every More destination already uses. The detail
   /// screen draws its own Back control, which pops this route straight
   /// back to wherever it was opened from.
-  Future<void> _openMomentDetail(VoiceMoment moment) async {
+  Future<void> _openMomentDetail(VoiceMoment moment) =>
+      _hostMomentsBody(MomentDetailScreen(moment: moment));
+
+  Future<void> _hostMomentsBody(Widget body) async {
     final route = MaterialPageRoute<void>(
       builder: (_) => MoreDestinationHost(
-        body: MomentDetailScreen(moment: moment),
+        body: body,
         selectedIndex: _momentsSlot,
         unreadConversationCount: _unreadConversationCount,
         unreadConversationCountListenable: _unreadConversationCountListenable,

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
@@ -5,7 +7,6 @@ import 'package:yovoice/features/creator/data/services/creator_audience_service.
 import 'package:yovoice/features/premium/data/models/subscription_entitlements.dart';
 import 'package:yovoice/features/premium/data/services/entitlement_service.dart';
 import 'package:yovoice/features/premium/presentation/screens/premium_screen.dart';
-import 'package:share_plus/share_plus.dart';
 
 import 'package:yovoice/features/creator/presentation/screens/creator_pinned_posts_screen.dart';
 import 'package:yovoice/features/creator/presentation/widgets/creator_audience_setting.dart';
@@ -18,6 +19,7 @@ import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
 import 'package:yovoice/features/profile/presentation/screens/edit_profile_screen.dart';
 import 'package:yovoice/features/profile/presentation/screens/follow_list_screen.dart';
+import 'package:yovoice/features/profile/presentation/widgets/my_link_sheet.dart';
 import 'package:yovoice/features/rooms/data/models/voice_room.dart';
 import 'package:yovoice/features/servers/data/models/server.dart';
 import 'package:yovoice/features/servers/data/services/server_service.dart';
@@ -804,14 +806,9 @@ class _QuickActionsRow extends StatelessWidget {
       _QuickAction(
         icon: Icons.person_add_rounded,
         label: copy.text('Invite', 'Zaproś'),
-        onTap: () => SharePlus.instance.share(
-          ShareParams(
-            text: copy.text(
-              'Join me on YO Voice — one place for voice, Moments and servers: https://yovoice.app/download',
-              'Dołącz do mnie w YO Voice — jednym miejscu na głos, Momenty i serwery: https://yovoice.app/download',
-            ),
-          ),
-        ),
+        // The creator's own profile link (ADR-238), not a generic download
+        // page.
+        onTap: () => unawaited(shareMyLink(context)),
       ),
     ];
 

@@ -1063,6 +1063,66 @@ renders of the real widgets (Dark; composer text/photos/voice at 390, 320 at
 session scratchpad (`c4/shots`). **Not verified on a device, simulator or
 real browser.**
 
+## "Mój link": the profile link sheet (ADR-238, build 42; source only)
+
+`showMyLink` / `MyLinkPanel`
+(`lib/features/profile/presentation/widgets/my_link_sheet.dart`), option A of
+the 2026-10-03 invites sheet. One panel, two presentations chosen by the
+available width:
+
+- **below 1100** a modal bottom sheet on the root navigator — full width on a
+  phone, `adaptiveModalConstraints(maxWidth: 520)` on a tablet — on
+  `surfaceRaised`, radius 28, a hairline top edge and `YoModalSheetChrome`
+  (drag cue + close);
+- **from 1100** a `Dialog` capped at 420 px, all four corners at
+  `AppRadius.xl`, a hairline edge, the same chrome without the drag cue.
+
+Inside, 20 px gutters: the title (`screenTitle`), one `bodySmall` sentence
+(the Page sentence for an account that runs a Page; for an account whose
+profile visibility is not "Wszyscy", the sentence that says the link will
+not open the profile for everyone — same slot, same style), then ONE `YoCard`
+(16 px padding) holding the identity row (`UserAvatar` radius 32, brand
+finish; name `titleLarge` w700, two lines at most; `@handle`), the QR tile
+and the link; then the two actions.
+
+- **QR tile**: 220 × 220 (it shrinks with a narrower slot, never grows),
+  white, radius 16, a 20 px quiet zone (3.7 modules of a 33-module code),
+  modules in `AppColors.contrastInk`;
+  a `palette.border` hairline on Pearl only, where the card under it is
+  nearly white. `Semantics(image: true)` with a localized label; the modules
+  themselves are excluded.
+- **Link**: 12 px in the platform's monospace face (the app face where the
+  platform has none), `textSecondary`, centred, always left-to-right and
+  never elided — it is the thing being handed over. One invisible break
+  point before the identifier makes it wrap as address / identifier.
+- **Actions**: "Kopiuj link" (`AppFinish.tonalNeutral`, `textPrimary` ink)
+  and "Udostępnij" (`YoGradientFilledButton`, the panel's one violet), both
+  48 px. They share one row only while BOTH labels fit at their own size —
+  the row measures them — and otherwise stack full width with Share first,
+  so a long language or large text never shrinks or cuts a label.
+- **Feedback** is one `bodySmall` line under the actions: "Link skopiowany."
+  and "sharing could not be confirmed" in a polite live region, failures in
+  `dangerForeground` with an assertive announcement. An unavailable share is
+  never turned into a silent clipboard write.
+- The panel scrolls inside 92 % of the viewport height, so 320 px and 200 %
+  text reach every control.
+
+Entry points draw the same glyph (`Icons.qr_code_2_rounded`) and the same
+name: the Friends header's second action (a 48 px `YoIconButton` — beside the
+full-width CTA on a phone, before it on wide), the accent-tonal pill of an
+empty friends list (`friends-empty-share-my-link`, "no friends yet" only),
+the profile hero toolbar's end control (raised 44 px, like Back), the ⋯
+sheet's first row and the account section's row.
+
+Contracts: `test/my_link_sheet_test.dart`,
+`test/my_link_entry_points_test.dart`, `test/my_link_links_test.dart`,
+`test/my_link_localization_test.dart`. Frames:
+`test/w42_invites_capture.dart` (real widgets, real typeface; Dark and
+Pearl, 320 / 390 / 768 / 1440, 200 % text, Greek, German, Hungarian,
+Arabic; the not-public sentence at 390 / 1440, Pearl, 200 % and RTL) in
+`yovoice-evidence/2026-10-03/w42/invites/`. **Not verified on a device,
+simulator or real browser.**
+
 ## The "Coming soon" pattern
 
 When a screen needs a feature with no real backend support yet:

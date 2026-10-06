@@ -10,6 +10,7 @@ import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_immersive_colors.dart';
 import 'package:yovoice/features/auth/data/auth_service.dart';
+import 'package:yovoice/features/auth/presentation/auth_entry_link.dart';
 import 'package:yovoice/features/auth/presentation/auth_error_localizer.dart';
 import 'package:yovoice/features/auth/presentation/screens/forgot_password_screen.dart';
 import 'package:yovoice/features/auth/presentation/screens/totp_challenge_screen.dart';
@@ -38,7 +39,13 @@ class ResponsiveAuthScreen extends StatefulWidget {
     this.popWhenSelectingLogin = false,
     this.replaceWithVerifyEmail = false,
     this.onRegistrationLoadingChanged,
+    this.entryLink,
   });
+
+  /// Set when a signed-out visitor arrived through a profile or Voice Moment
+  /// link (ADR-238): the sign-in form's supporting line then says what
+  /// signing in opens.
+  final AuthEntryLink? entryLink;
 
   final AuthMode initialMode;
   final AuthService? authService;
@@ -942,10 +949,13 @@ class _ResponsiveAuthScreenState extends State<ResponsiveAuthScreen>
       children: [
         _FormHeading(
           title: copy.text('Welcome back', 'Witaj ponownie'),
-          subtitle: copy.text(
-            'Your people and conversations are waiting.',
-            'Znajomi i rozmowy już na Ciebie czekają.',
-          ),
+          subtitle: switch (widget.entryLink) {
+            final entryLink? => authEntryLinkLine(copy, entryLink),
+            null => copy.text(
+              'Your people and conversations are waiting.',
+              'Znajomi i rozmowy już na Ciebie czekają.',
+            ),
+          },
         ),
         const SizedBox(height: 20),
         _ProviderSection(

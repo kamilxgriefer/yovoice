@@ -18,6 +18,7 @@ import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/follow_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
+import 'package:yovoice/features/profile/presentation/my_link_copy.dart';
 import 'package:yovoice/features/profile/presentation/widgets/profile_vibe_headline.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
@@ -1333,6 +1334,19 @@ class _SecondaryButton extends StatelessWidget {
   }
 }
 
+/// True when [error] means the profile cannot be shown to this viewer at
+/// all: the public projection does not exist, or the rules refused the read
+/// (an unknown id, a private or suspended account, a block). A transport
+/// failure is not this — it keeps the "try again" copy.
+@visibleForTesting
+bool profilePreviewIsUnavailable(Object error) {
+  if (error is ProfileUnavailableException) return true;
+  if (error is FirebaseException) {
+    return error.code == 'permission-denied' || error.code == 'not-found';
+  }
+  return false;
+}
+
 class _ErrorBody extends StatelessWidget {
   const _ErrorBody({required this.error});
 
@@ -1346,14 +1360,21 @@ class _ErrorBody extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 24),
       child: Center(
         child: Text(
-          intentionalOrFriendly(
-            error,
-            fallback: copy.text(
-              "Couldn't load this profile. Please try again.",
-              'Nie udało się wczytać profilu. Spróbuj ponownie.',
-            ),
-            copy: copy,
-          ),
+          // A profile that is missing, private, blocked or suspended is one
+          // honest sentence (ADR-238: this is what an unknown `?user=` link
+          // shows) — never "you don't have permission", which the rules'
+          // refusal would otherwise be mapped to.
+          profilePreviewIsUnavailable(error)
+              ? MyLinkCopy(copy).profileUnavailable
+              : intentionalOrFriendly(
+                  error,
+                  fallback: copy.text(
+                    "Couldn't load this profile. Please try again.",
+                    'Nie udało się wczytać profilu. Spróbuj ponownie.',
+                  ),
+                  copy: copy,
+                ),
+          key: const ValueKey('profile-preview-error'),
           textAlign: TextAlign.center,
           style: TextStyle(color: palette.textSecondary, fontSize: 14),
         ),

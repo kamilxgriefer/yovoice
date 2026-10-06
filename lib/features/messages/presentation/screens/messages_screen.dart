@@ -14,7 +14,6 @@ import 'package:yovoice/core/theme/app_motion.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
 import 'package:yovoice/core/theme/app_typography.dart';
-import 'package:share_plus/share_plus.dart';
 
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
@@ -25,6 +24,7 @@ import 'package:yovoice/features/messages/data/models/message.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
 import 'package:yovoice/features/messages/presentation/widgets/delete_conversation_dialog.dart';
+import 'package:yovoice/features/profile/presentation/widgets/my_link_sheet.dart';
 import 'package:yovoice/shared/widgets/badges/yo_count_badge.dart';
 import 'package:yovoice/shared/widgets/branding/yo_logo.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_gradient_disc.dart';
@@ -2191,12 +2191,15 @@ class NewMessageSheetState extends State<NewMessageSheet> {
                                   ),
                               ],
                               const SizedBox(height: 10),
-                              _InviteFriendsTile(
-                                onTap: () => SharePlus.instance.share(
-                                  ShareParams(
-                                    text: copy.text(
-                                      'Join me on YO Voice — the app for voice servers, Moments and real conversations: https://yovoice.app/download',
-                                      'Dołącz do mnie w YO Voice — aplikacji z serwerami głosowymi, Momentami i prawdziwymi rozmowami: https://yovoice.app/download',
+                              // The account's own profile link (ADR-238),
+                              // not a generic download page: whoever opens
+                              // it lands on this person and can add them.
+                              Builder(
+                                builder: (tileContext) => _InviteFriendsTile(
+                                  onTap: () => unawaited(
+                                    shareMyLink(
+                                      tileContext,
+                                      userId: widget.currentUserId,
                                     ),
                                   ),
                                 ),

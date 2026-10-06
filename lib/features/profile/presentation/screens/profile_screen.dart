@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:audioplayers/audioplayers.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -21,10 +23,12 @@ import 'package:yovoice/features/auth/data/auth_service.dart';
 import 'package:yovoice/features/profile/data/models/user_profile.dart';
 import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
 import 'package:yovoice/features/profile/data/services/profile_service.dart';
+import 'package:yovoice/features/profile/presentation/my_link_copy.dart';
 import 'package:yovoice/features/profile/presentation/screens/edit_profile_screen.dart';
 import 'package:yovoice/features/profile/presentation/screens/follow_list_screen.dart';
 import 'package:yovoice/features/profile/presentation/widgets/profile_header.dart';
 import 'package:yovoice/features/profile/presentation/widgets/profile_journey_card.dart';
+import 'package:yovoice/features/profile/presentation/widgets/my_link_sheet.dart';
 import 'package:yovoice/features/profile/presentation/widgets/profile_layout.dart';
 import 'package:yovoice/features/profile/presentation/widgets/profile_vibe_headline.dart';
 import 'package:yovoice/features/servers/data/models/server.dart';
@@ -322,6 +326,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
               currentRole: _currentRole,
               onActivateSuperAdmin: _activateSuperAdmin,
               onLogout: () => _authService.signOut(),
+              onMyLink: () => unawaited(
+                showMyLink(
+                  context,
+                  auth: _firebaseAuth,
+                  profileService: _profileService,
+                  mediaService: widget.mediaService,
+                  seedProfile: profile,
+                ),
+              ),
               identityRepository: widget.identityRepository,
               mediaService: widget.mediaService,
             );
@@ -352,6 +365,7 @@ class ProfileScreenView extends StatelessWidget {
     required this.currentRole,
     required this.onActivateSuperAdmin,
     required this.onLogout,
+    this.onMyLink,
     this.identityRepository,
     this.mediaService,
     this.creatorPinnedPostService,
@@ -371,6 +385,10 @@ class ProfileScreenView extends StatelessWidget {
   final String currentRole;
   final Future<void> Function() onActivateSuperAdmin;
   final Future<void> Function() onLogout;
+
+  /// Opens "Mój link" (ADR-238). Null (a preview without a session) draws
+  /// none of its three entry points.
+  final VoidCallback? onMyLink;
   final PublicIdentityRepository? identityRepository;
   final ProfileMediaService? mediaService;
   final CreatorPinnedPostService? creatorPinnedPostService;
@@ -406,6 +424,7 @@ class ProfileScreenView extends StatelessWidget {
           currentRole: currentRole,
           onActivateSuperAdmin: onActivateSuperAdmin,
           onLogout: onLogout,
+          onMyLink: onMyLink,
           identityRepository: identityRepository,
           mediaService: mediaService,
           creatorPinnedPostService: creatorPinnedPostService,
@@ -430,6 +449,7 @@ class _ProfileContent extends StatelessWidget {
     required this.currentRole,
     required this.onActivateSuperAdmin,
     required this.onLogout,
+    this.onMyLink,
     this.identityRepository,
     this.mediaService,
     this.creatorPinnedPostService,
@@ -448,6 +468,7 @@ class _ProfileContent extends StatelessWidget {
   final String currentRole;
   final Future<void> Function() onActivateSuperAdmin;
   final Future<void> Function() onLogout;
+  final VoidCallback? onMyLink;
   final PublicIdentityRepository? identityRepository;
   final ProfileMediaService? mediaService;
   final CreatorPinnedPostService? creatorPinnedPostService;
@@ -566,6 +587,22 @@ class _ProfileContent extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (onMyLink != null)
+              ListTile(
+                key: const ValueKey('profile-more-my-link'),
+                leading: Icon(
+                  Icons.qr_code_2_rounded,
+                  color: palette.textPrimary,
+                ),
+                title: Text(
+                  MyLinkCopy(copy).title,
+                  style: TextStyle(
+                    color: palette.textPrimary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                onTap: () => Navigator.pop(sheetContext, 'myLink'),
+              ),
             ListTile(
               key: const ValueKey('profile-more-edit'),
               leading: Icon(Icons.edit_outlined, color: palette.textPrimary),
@@ -597,6 +634,8 @@ class _ProfileContent extends StatelessWidget {
     );
     if (!context.mounted) return;
     switch (choice) {
+      case 'myLink':
+        onMyLink?.call();
       case 'edit':
         onEdit();
       case 'logout':
@@ -621,6 +660,7 @@ class _ProfileContent extends StatelessWidget {
             profile: profile,
             title: title,
             onEdit: onEdit,
+            onMyLink: onMyLink,
             identityRepository: identityRepository,
             mediaService: mediaService,
             stats: _stats(context),
@@ -684,6 +724,7 @@ class _ProfileContent extends StatelessWidget {
               ProfileMeasure(
                 child: _AccountCard(
                   onEdit: onEdit,
+                  onMyLink: onMyLink,
                   showSuperAdminActivation: showSuperAdminActivation,
                   isActivatingSuperAdmin: isActivatingSuperAdmin,
                   currentRole: currentRole,
@@ -1115,6 +1156,7 @@ class _AchievementsCard extends StatelessWidget {
 class _AccountCard extends StatelessWidget {
   const _AccountCard({
     required this.onEdit,
+    required this.onMyLink,
     required this.showSuperAdminActivation,
     required this.isActivatingSuperAdmin,
     required this.currentRole,
@@ -1123,6 +1165,7 @@ class _AccountCard extends StatelessWidget {
   });
 
   final VoidCallback onEdit;
+  final VoidCallback? onMyLink;
   final bool showSuperAdminActivation;
   final bool isActivatingSuperAdmin;
   final String currentRole;
@@ -1143,6 +1186,13 @@ class _AccountCard extends StatelessWidget {
             title: copy.text('Edit profile', 'Edytuj profil'),
             onTap: onEdit,
           ),
+          if (onMyLink case final onMyLink?)
+            _Option(
+              key: const ValueKey('profile-account-my-link'),
+              icon: Icons.qr_code_2_rounded,
+              title: MyLinkCopy(copy).title,
+              onTap: onMyLink,
+            ),
           if (showSuperAdminActivation)
             _SuperAdminOption(
               isActivated: _isSuperAdmin,
@@ -1539,6 +1589,7 @@ class _Option extends StatelessWidget {
     required this.onTap,
     this.destructive = false,
     this.showDivider = true,
+    super.key,
   });
   final IconData icon;
   final String title;

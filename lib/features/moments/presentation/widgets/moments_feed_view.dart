@@ -6,7 +6,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:yovoice/shared/widgets/backgrounds/yo_page_background.dart';
-import 'package:share_plus/share_plus.dart';
 
 import 'package:yovoice/core/helpers/callable_failure_reporter.dart';
 import 'package:yovoice/core/helpers/error_messages.dart';
@@ -31,6 +30,7 @@ import 'package:yovoice/features/moments/data/services/moment_discovery_service.
 import 'package:yovoice/features/moments/data/services/moment_expiry_scheduler.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/data/services/moment_views_service.dart';
+import 'package:yovoice/features/moments/presentation/moment_share.dart';
 import 'package:yovoice/features/moments/presentation/screens/moment_comments_screen.dart';
 import 'package:yovoice/features/moments/presentation/screens/moment_detail_screen.dart';
 import 'package:yovoice/features/moments/presentation/screens/record_voice_moment_screen.dart';
@@ -4249,22 +4249,11 @@ bool _voiceAccessWasDenied(Object error) {
       code.contains('not-found');
 }
 
-Future<void> _shareVoiceMoment(
-  VoiceMoment moment,
-  AppLocalizations copy,
-) async {
-  // Preserve the existing public-link mechanism. The destination performs
-  // its own current-identity and availability checks; no media URL is shared.
-  final link = Uri.https('yovoice.app', '/', {'moment': moment.id});
-  await SharePlus.instance.share(
-    ShareParams(
-      text: copy.text(
-        'Listen to ${moment.authorName} on YO Voice: $link',
-        'Posłuchaj ${moment.authorName} w YO Voice: $link',
-      ),
-    ),
-  );
-}
+Future<void> _shareVoiceMoment(VoiceMoment moment, AppLocalizations copy) =>
+    // The one Voice share: the Moment's public link on app.yovoice.app
+    // (ADR-238). The destination performs its own current-identity and
+    // availability checks; no media URL is shared.
+    shareVoiceMoment(copy, moment);
 
 String _clock(int seconds) {
   final safe = seconds < 0 ? 0 : seconds;

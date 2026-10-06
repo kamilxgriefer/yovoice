@@ -80,6 +80,85 @@ access, completed eligibility checks and explicitly enables the audience
 feature. That decision is projected by the server and fails closed when the
 projection is missing or Premium expires.
 
+### "Mój link" — the account's own profile link and QR code (ADR-238, build 42, source only)
+
+Every account has one public link: `https://app.yovoice.app/?user=<uid>`
+(`lib/features/profile/data/user_links.dart`). The identifier is the public
+account id — the document id of `publicProfiles/{uid}`, the same one a Page
+link carries — and the link holds nothing else: no name, no photo, no e-mail
+address, no token. Opening it grants nothing.
+
+"Mój link" (`showMyLink`, `my_link_sheet.dart`) shows the account's avatar,
+name and handle, the link as a QR code on a white tile, the link itself, and
+two actions: **Kopiuj link** (clipboard) and **Udostępnij** (the system share
+sheet, with "Znajdź mnie w YO Voice: <link>"). It is a bottom sheet below
+1100 px (a centred 520 px sheet on a tablet) and a 420 px dialog on desktop.
+It is reachable from:
+
+- **Friends** — the QR control beside "Dodaj znajomego", and the
+  "Udostępnij mój link" action of an empty friends list;
+- **Profile** — the QR control at the end of the hero toolbar, the first row
+  of the ⋯ sheet and the "Mój link" row of the account section.
+
+Every "invite friends" action shares this link (`shareMyLink`): the tile at
+the foot of the New message sheet and Creator Studio's "Zaproś". They used
+to share a sentence ending in `yovoice.app/download`.
+
+**Opening the link.** The shell (`MainShell._openInitialServerLink`) parses
+the browser entry URL with `parseUserLink` — exact contract, fail closed —
+and opens the existing profile preview with its "Dodaj znajomego" action; an
+account that runs a Page opens as that Page ("Obserwuj") through the same
+redirect as a tap on that person anywhere else. An entry link is handled on
+the shell's first frame, when neither the account's public badge nor this
+session's Pages answer has landed, so the shell settles both first
+(`settlePagesForInitialUserLink`: one badge lookup, at most 4 s; only for a
+Page account the Pages answer, at most 8 s — the bound a `?page=` link
+uses). Without that wait a Page account's link opened the personal preview.
+A profile that cannot be shown — unknown id, private, blocked or suspended —
+shows one sentence, "Ten profil jest niedostępny." An altered link
+(`?user=a&room=b`, a malformed id) opens nothing, reads nothing and says the
+same sentence in a snackbar.
+
+**Which address is read, and when.** On the web the Navigator reports every
+named top route to the browser and the hash URL strategy writes it into the
+address: `…/?user=<id>` becomes `…/?user=<id>#/verify-email` while a new
+member confirms their e-mail address, and `…#/auth-session` after a sign-out
+or an account switch. The shell mounts under exactly those routes, so the
+live address is no longer the link — read then, a good link would be refused.
+The app therefore captures the address in its first `initState`
+(`AppEntryLink`, `lib/core/navigation/app_entry_link.dart`) and the shell
+takes it once per page load: the first signed-in shell opens the link, a
+later shell in the same tab neither opens it again nor apologises for it,
+and the sign-in screen's line is shown only while the link is still pending.
+A shell that mounts under the pushed "verify your e-mail" route waits for
+its own route (`ShellRouteCurrentGate`, opened by `didPopNext`) instead of
+laying the profile over that screen. An address that already carries a
+fragment when the page loads (a reload of a tab that navigated) is refused
+silently. `?server=` and `?page=` links still read the live address and are
+not covered by this — see Bugs.
+
+**A profile that is not public.** Profile visibility "Tylko znajomi" or
+"Tylko ja" still applies to the link: whoever that setting does not admit
+reads "Ten profil jest niedostępny." and has no way to add the person from
+it. The sheet therefore does not promise otherwise — for such an account its
+sentence is "Twój profil nie jest publiczny, więc ten link nie otworzy go
+każdemu. Aby każdy mógł Cię dodać, zmień Widoczność profilu w
+Ustawieniach." (An account that runs a Page is paused by the server while
+its profile is not public, so the same sentence applies there.) Letting a
+link recipient send a friend request to a non-public profile is a product
+and privacy decision that has not been taken.
+
+**Signed out.** Public profiles are readable by signed-in accounts only, so
+a signed-out visitor cannot be shown whose link it is. The sign-in screen
+says "Zaloguj się, aby zobaczyć ten profil i dodać tę osobę do znajomych."
+(`AuthEntryLink`), and the link opens after sign-in. Showing the person's
+name and photo before sign-in needs a public preview endpoint — a backend
+decision that is not part of this build.
+
+**Phones.** Native link claiming (iOS Associated Domains, Android intent
+filters) is not configured, so on a phone the link opens the web app in the
+browser, not the installed app.
+
 ## Home
 
 Home is server-first. It keeps the compact strip of friends and their current
@@ -93,7 +172,8 @@ surfaces expose only eligible, opted-in Creators.
 
 `lib/features/friends/`: friend requests (must exist before a friendship
 record can be created — no forcing a friendship via direct write), blocking,
-mutual-friend discovery and friend suggestions. Friendship remains available
+mutual-friend discovery and friend suggestions. The Friends header also
+opens "Mój link" (see Profile), and an empty list offers it as its action. Friendship remains available
 to every active user. Creator following is a separate, server-gated audience
 relationship and is never treated as friendship or Server membership.
 
@@ -166,6 +246,21 @@ retain the established Reel naming for compatibility. It uses an original
 content-stage and conversation design inspired by familiar short-form
 interaction patterns, without copying another product's branding, assets or
 exact layout.
+
+**Voice links (ADR-238, build 42, source only).** Sharing a Voice Moment —
+from the feed, the detail page or Home — hands the system share sheet
+"Posłuchaj <author> w YO Voice: https://app.yovoice.app/?moment=<id>"
+(`shareVoiceMoment`, `moment_links.dart`). Until build 42 the link pointed at
+the marketing apex (`yovoice.app/?moment=`), which never handled it, and the
+app had no handler either. The shell now parses `?moment=` from the address
+the page was loaded with (see "Mój link" above; the apex and
+`www.` are still accepted, so links shared by older builds open once they
+reach the app) and hosts `MomentLinkDestinationScreen` over the navigation
+chrome with Moments active: the Moment's own detail page when the id
+resolves, and the detail page's gone card ("Ten Moment nie jest już
+dostępny") when it is unknown, private, expired or deleted. The link carries
+the id only; the Moment is read through the same privacy-filtered callable
+as everywhere else.
 
 The Voice format contains short (≤60s) recorded audio posts
 (`lib/features/moments/`): likes, text comments and recorded voice replies, a

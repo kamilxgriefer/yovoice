@@ -4,11 +4,9 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
-import 'package:share_plus/share_plus.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/navigation/app_route_observer.dart';
-import 'package:yovoice/core/theme/app_finish.dart';
 import 'package:yovoice/core/theme/app_gradients.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_radius.dart';
@@ -31,9 +29,11 @@ import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/moment_expiry_scheduler.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
 import 'package:yovoice/features/moments/data/services/moment_views_service.dart';
+import 'package:yovoice/features/moments/presentation/moment_share.dart';
 import 'package:yovoice/features/moments/presentation/screens/moment_comments_screen.dart';
 import 'package:yovoice/features/moments/presentation/screens/record_voice_moment_screen.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_conversation_thread.dart';
+import 'package:yovoice/features/moments/presentation/widgets/moment_detail_chrome.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_accessibility.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_expiry_pill.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_mention_composer.dart';
@@ -980,20 +980,7 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
 
   // ------------------------------------------------------------- actions
 
-  Future<void> _share() async {
-    // The same real link mechanism every other Moment surface uses: the
-    // website resolves ?moment= on yovoice.app.
-    await SharePlus.instance.share(
-      ShareParams(
-        text: _copy.text(
-          'Listen to ${_moment.authorName} on YO Voice: '
-              'https://yovoice.app/?moment=${_moment.id}',
-          'Posłuchaj ${_moment.authorName} w YO Voice: '
-              'https://yovoice.app/?moment=${_moment.id}',
-        ),
-      ),
-    );
-  }
+  Future<void> _share() => shareVoiceMoment(_copy, _moment);
 
   Future<void> _report() async {
     final copy = _copy;
@@ -1251,7 +1238,7 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
             if (!threadPanel) {
               return Column(
                 children: [
-                  _Header(
+                  MomentDetailHeader(
                     onBack: () => Navigator.of(context).maybePop(),
                     onShare: () => unawaited(_share()),
                   ),
@@ -1288,7 +1275,7 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
 
             return Column(
               children: [
-                _Header(
+                MomentDetailHeader(
                   onBack: () => Navigator.of(context).maybePop(),
                   onShare: () => unawaited(_share()),
                 ),
@@ -2031,64 +2018,10 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
   /// The gone-state: expired, deleted, or never loaded. A real explanation
   /// and a way back — the thread stays readable underneath it (comments
   /// outlive the recording) and the composer states why it is closed.
-  Widget _goneCard() {
-    final palette = context.appPalette;
-    final copy = _copy;
-    return Container(
-      key: const ValueKey('moment-detail-gone'),
-      decoration: AppFinish.block(
-        palette,
-        highContrast: MediaQuery.highContrastOf(context),
-      ),
-      padding: const EdgeInsets.all(AppRhythm.section),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            copy.text('Voice Moment', 'Voice Moment').toUpperCase(),
-            style: AppTypography.eyebrow.copyWith(color: palette.textSecondary),
-          ),
-          const SizedBox(height: AppRhythm.item),
-          Icon(
-            Icons.timer_off_outlined,
-            size: 34,
-            color: palette.textSecondary,
-          ),
-          const SizedBox(height: AppRhythm.item),
-          Text(
-            copy.text(
-              'This Moment is no longer available',
-              'Ten Moment nie jest już dostępny',
-            ),
-            textAlign: TextAlign.center,
-            style: AppTypography.titleLarge.copyWith(
-              color: palette.textPrimary,
-            ),
-          ),
-          const SizedBox(height: AppRhythm.tight),
-          Text(
-            copy.text(
-              'It reached the end of its availability or was deleted by '
-                  'its author.',
-              'Minął czas jego dostępności lub autor go usunął.',
-            ),
-            textAlign: TextAlign.center,
-            style: AppTypography.bodyMedium.copyWith(
-              color: palette.textSecondary,
-              height: 1.45,
-            ),
-          ),
-          const SizedBox(height: AppRhythm.title),
-          FilledButton(
-            key: const ValueKey('moment-detail-gone-back'),
-            focusNode: _goneBackFocus,
-            onPressed: () => Navigator.of(context).maybePop(),
-            child: Text(copy.text('Back to Moments', 'Wróć do Momentów')),
-          ),
-        ],
-      ),
-    );
-  }
+  Widget _goneCard() => MomentGoneCard(
+    backFocusNode: _goneBackFocus,
+    onBack: () => Navigator.of(context).maybePop(),
+  );
 
   Widget _composerBar() {
     final palette = context.appPalette;
@@ -2228,57 +2161,6 @@ class _MomentDetailScreenState extends State<MomentDetailScreen>
 /// hosting modes (the shell keeps the bottom navigation, a plain push keeps
 /// only this). The route is ONE Moment, so it is titled as one; it carries
 /// no format switch, because a pushed detail cannot switch format.
-class _Header extends StatelessWidget {
-  const _Header({required this.onBack, required this.onShare});
-
-  final VoidCallback onBack;
-  final VoidCallback onShare;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.appPalette;
-    final copy = AppLocalizations.of(context);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(6, 6, 6, 2),
-      child: Row(
-        children: [
-          IconButton(
-            key: const ValueKey('moment-detail-back'),
-            onPressed: onBack,
-            tooltip: copy.text('Back', 'Wstecz'),
-            style: IconButton.styleFrom(
-              minimumSize: const Size.square(AppSizing.standardControlHeight),
-              tapTargetSize: MaterialTapTargetSize.padded,
-            ),
-            icon: Icon(Icons.arrow_back_rounded, color: palette.textPrimary),
-          ),
-          const SizedBox(width: AppRhythm.hairline),
-          Expanded(
-            child: Text(
-              copy.text('Voice Moment', 'Voice Moment'),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: AppTypography.titleLarge.copyWith(
-                color: palette.textPrimary,
-              ),
-            ),
-          ),
-          IconButton(
-            key: const ValueKey('moment-detail-share-top'),
-            onPressed: onShare,
-            tooltip: copy.text('Share this Moment', 'Udostępnij ten Moment'),
-            style: IconButton.styleFrom(
-              minimumSize: const Size.square(AppSizing.standardControlHeight),
-              tapTargetSize: MaterialTapTargetSize.padded,
-            ),
-            icon: Icon(Icons.share_outlined, color: palette.textPrimary),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _ActionChip extends StatelessWidget {
   const _ActionChip({
     required this.icon,

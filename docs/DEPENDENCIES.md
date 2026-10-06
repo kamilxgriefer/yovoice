@@ -142,6 +142,21 @@ delivery channel.
   Web uses the browser's Cache Storage API instead of adding another
   persistence package.
 
+## QR codes
+
+**`barcode_widget`** (pure Dart, with its `barcode` and `qr` encoders) —
+draws a QR code as vector modules with no network call, no asset and no
+platform channel. It was added for the authenticator setup code on
+Settings → Two-factor authentication, and since build 42 it also draws the
+QR code of "Mój link" (`lib/features/profile/presentation/widgets/`
+`my_link_sheet.dart`, [ADR-238](Decisions.md)). **"Mój link" added no
+dependency**: the brief allowed one new QR package (`qr_flutter` or `qr`),
+but the app already shipped one that does the job, and a second encoder
+would only have been a second thing to keep patched. The code is painted
+at error-correction level M in `AppColors.contrastInk` on a white tile with
+a 20 px quiet zone; what it encodes is exactly the link printed under it
+(`buildUserLink`), never a name, an e-mail address or a token.
+
 ## Local preferences and localization
 
 - **`shared_preferences`** — persists the non-sensitive Appearance and app

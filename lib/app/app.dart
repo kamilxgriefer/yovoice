@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
+import 'package:yovoice/core/navigation/app_entry_link.dart';
 import 'package:yovoice/core/localization/document_language.dart';
 import 'package:yovoice/core/localization/firebase_auth_language_sync.dart';
 import 'package:yovoice/core/navigation/app_route_observer.dart';
@@ -14,6 +15,7 @@ import 'package:yovoice/core/preferences/app_preferences.dart';
 import 'package:yovoice/core/presence/presence_service.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
+import 'package:yovoice/features/auth/presentation/auth_entry_link.dart';
 import 'package:yovoice/features/auth/presentation/navigation/auth_epoch_route_resetter.dart';
 import 'package:yovoice/features/bug_reports/data/bug_report_route_tracker.dart';
 import 'package:yovoice/features/bug_reports/presentation/bug_report_capture.dart';
@@ -267,6 +269,10 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
   @override
   void initState() {
     super.initState();
+    // Before any route exists: a named route later rewrites the address
+    // (`#/verify-email`, `#/auth-session`), and a profile or Voice Moment
+    // link must be read as the visitor opened it (ADR-238).
+    AppEntryLink.capture(Uri.base);
     _reelLinkIntent = ReelLinkIntentController(initialUri: Uri.base);
     _authRouteResetter = AuthEpochRouteResetter(
       navigatorKey: notificationNavigatorKey,
@@ -352,6 +358,13 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
           initialAuthError: initialAuthError,
           initialStartupMinimumVisibility: initialStartupMinimumVisibility,
           reelLinkIntent: _reelLinkIntent,
+          // The link this page was loaded with, while no signed-in shell
+          // has opened it yet. Once a shell took it, a later sign-out must
+          // not re-explain a link that will not open again.
+          entryLink: switch (AppEntryLink.pending) {
+            final entryUri? => authEntryLinkOf(entryUri),
+            null => null,
+          },
         ),
       ),
     );

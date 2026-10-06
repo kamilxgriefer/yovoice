@@ -10,7 +10,6 @@ import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_spacing.dart';
-import 'package:share_plus/share_plus.dart';
 
 import 'package:yovoice/features/clubs/data/models/club.dart';
 import 'package:yovoice/features/clubs/presentation/screens/club_overview_screen.dart';
@@ -22,6 +21,7 @@ import 'package:yovoice/features/home/data/services/home_feed_service.dart';
 import 'package:yovoice/features/moments/data/models/moment_chain.dart';
 import 'package:yovoice/features/moments/data/models/voice_moment.dart';
 import 'package:yovoice/features/moments/data/services/moment_service.dart';
+import 'package:yovoice/features/moments/presentation/moment_share.dart';
 import 'package:yovoice/features/moments/presentation/widgets/moment_story_tile.dart';
 import 'package:yovoice/features/moments/presentation/screens/record_voice_moment_screen.dart';
 import 'package:yovoice/features/moments/presentation/screens/moment_comments_screen.dart';
@@ -770,16 +770,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 onReply: () => _recordMoment(replyTo: moment),
                 onComment: () => _openComments(moment),
                 onDelete: () => _deleteMoment(moment),
-                onShare: () => SharePlus.instance.share(
-                  ShareParams(
-                    text: copy.text(
-                      'Listen to ${moment.authorName} on YO Voice: '
-                          'https://yovoice.app/?moment=${moment.id}',
-                      'Posłuchaj ${moment.authorName} w YO Voice: '
-                          'https://yovoice.app/?moment=${moment.id}',
-                    ),
-                  ),
-                ),
+                onShare: () => unawaited(shareVoiceMoment(copy, moment)),
               ),
             );
           }).toList(),

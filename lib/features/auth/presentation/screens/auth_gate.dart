@@ -9,6 +9,7 @@ import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_colors.dart';
 import 'package:yovoice/core/theme/app_immersive_colors.dart';
 import 'package:yovoice/features/auth/data/auth_service.dart';
+import 'package:yovoice/features/auth/presentation/auth_entry_link.dart';
 import 'package:yovoice/features/auth/presentation/auth_error_localizer.dart';
 import 'package:yovoice/features/auth/presentation/screens/login_screen.dart';
 import 'package:yovoice/features/auth/presentation/screens/responsive_auth_screen.dart';
@@ -33,6 +34,7 @@ class AuthGate extends ConsumerStatefulWidget {
     this.initiallySignedOut = false,
     this.initialAuthError,
     this.reelLinkIntent,
+    this.entryLink,
     this.initialStartupMinimumVisibility =
         authGateInitialStartupMinimumVisibility,
   });
@@ -46,6 +48,11 @@ class AuthGate extends ConsumerStatefulWidget {
   /// private screen cannot remain above the boundary during an auth error.
   final Object? initialAuthError;
   final ReelLinkIntentController? reelLinkIntent;
+
+  /// The profile or Voice Moment link the app was opened with (ADR-238). A
+  /// signed-out visitor reads on the sign-in screen what signing in opens;
+  /// the shell opens the link itself after sign-in. Null after a sign-out.
+  final AuthEntryLink? entryLink;
 
   /// Minimum app-owned startup visibility for a normal initial launch.
   ///
@@ -194,6 +201,7 @@ class _AuthGateState extends ConsumerState<AuthGate> {
                 key: const ValueKey('auth-signed-out'),
                 child: LoginScreen(
                   onRegistrationLoadingChanged: setRegistrationLoading,
+                  entryLink: widget.entryLink,
                 ),
               );
             }

@@ -27,6 +27,9 @@ import 'package:yovoice/features/friends/presentation/widgets/friend_suggestions
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
 import 'package:yovoice/features/profile/data/services/profile_media_service.dart';
+import 'package:yovoice/features/profile/data/services/profile_service.dart';
+import 'package:yovoice/features/profile/presentation/my_link_copy.dart';
+import 'package:yovoice/features/profile/presentation/widgets/my_link_sheet.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_gradient_filled_button.dart';
 import 'package:yovoice/shared/widgets/buttons/yo_icon_button.dart';
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
@@ -597,6 +600,44 @@ class _FriendsScreenState extends State<FriendsScreen> {
     }
   }
 
+  /// "Mój link" (ADR-238): the account's own profile link as a QR code,
+  /// with Copy and Share.
+  void _openMyLink() {
+    unawaited(
+      showMyLink(
+        context,
+        auth: _auth,
+        profileService: ProfileService(firestore: _firestore, auth: _auth),
+        mediaService: _profileMediaService,
+      ),
+    );
+  }
+
+  /// The action of "No friends yet": an account with nobody to list can hand
+  /// out its own link instead of only searching for people.
+  Widget _shareMyLinkAction() {
+    final palette = context.appPalette;
+    return FilledButton.icon(
+      key: const ValueKey('friends-empty-share-my-link'),
+      onPressed: _openMyLink,
+      style:
+          AppFinish.tonalAccent(
+            palette,
+            highContrast: MediaQuery.highContrastOf(context),
+          ).copyWith(
+            minimumSize: const WidgetStatePropertyAll(Size(64, 44)),
+            padding: const WidgetStatePropertyAll(
+              EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+            ),
+          ),
+      icon: const Icon(Icons.qr_code_2_rounded, size: 20),
+      label: Text(
+        MyLinkCopy(AppLocalizations.of(context)).shareMyLink,
+        textAlign: TextAlign.center,
+      ),
+    );
+  }
+
   void _showMessage(String message, {bool isError = false}) {
     final palette = context.appPalette;
     ScaffoldMessenger.of(context)
@@ -785,6 +826,9 @@ class _FriendsScreenState extends State<FriendsScreen> {
                     'Find someone and start building your circle.',
                     'Znajdź kogoś i zacznij budować swoje grono.',
                   ),
+            action: !isSearching && _filter == _FriendsFilter.all
+                ? _shareMyLinkAction()
+                : null,
             footer: showSuggestions ? _buildSuggestions(friendIds) : null,
           ),
         ),
@@ -983,6 +1027,16 @@ class _FriendsScreenState extends State<FriendsScreen> {
             ),
           );
 
+          // "Mój link" (ADR-238): the header's second action, a bare glass
+          // disc beside the one filled CTA — the same control as Back.
+          final myLink = YoIconButton(
+            key: const ValueKey('friends-my-link'),
+            icon: Icons.qr_code_2_rounded,
+            tooltip: MyLinkCopy(copy).title,
+            size: 48,
+            onPressed: _openMyLink,
+          );
+
           if (compact) {
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -995,7 +1049,13 @@ class _FriendsScreenState extends State<FriendsScreen> {
                   ],
                 ),
                 const SizedBox(height: 12),
-                action,
+                Row(
+                  children: [
+                    Expanded(child: action),
+                    const SizedBox(width: 8),
+                    myLink,
+                  ],
+                ),
               ],
             );
           }
@@ -1006,6 +1066,8 @@ class _FriendsScreenState extends State<FriendsScreen> {
               ...leading,
               Expanded(child: title),
               const SizedBox(width: 16),
+              myLink,
+              const SizedBox(width: 8),
               action,
             ],
           );
@@ -1212,6 +1274,9 @@ class _FriendsScreenState extends State<FriendsScreen> {
                     'Find someone and start building your circle.',
                     'Znajdź kogoś i zacznij budować swoje grono.',
                   ),
+            action: !isSearching && _filter == _FriendsFilter.all
+                ? _shareMyLinkAction()
+                : null,
             // An account with no friends yet is exactly who the rail helps,
             // so it sits under the empty message instead of being reserved
             // for people who already have a list.
@@ -2096,6 +2161,7 @@ class _EmptyState extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.subtitle,
+    this.action,
     this.footer,
     this.scrollable = true,
   });
@@ -2104,6 +2170,10 @@ class _EmptyState extends StatelessWidget {
   final String title;
   final String subtitle;
   final bool scrollable;
+
+  /// Optional centred action under the message (the "Share my link" pill of
+  /// an empty friends list).
+  final Widget? action;
 
   /// Optional full-width content under the message. It owns its own gutter
   /// so a horizontally scrolling rail is not inset by the 28 px the centred
@@ -2154,6 +2224,7 @@ class _EmptyState extends StatelessWidget {
                     height: 1.45,
                   ),
                 ),
+                if (action != null) ...[const SizedBox(height: 20), action!],
               ],
             ),
           ),
