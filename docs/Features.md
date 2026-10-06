@@ -48,7 +48,9 @@ outside the Servers tab links to these lists. From the top:
   of that server's voice, stage or meeting channels carries the server-owned
   liveness projection (ADR-177); such a server leads the list. There is no
   viewer, listener or participant count anywhere. The lamp watches at most the
-  first eight servers and only while the board is on screen. After five rows
+  first eight servers and only while the board is on screen: not in a slot
+  the shell hides, not under a server hosted in the slot, and not under a
+  full-screen route pushed over it (a phone's opened server). After five rows
   per column the rest sit behind **Pokaż wszystkie**. Delete (owner) and leave
   (member) open from a long press, a secondary click, a screen reader's
   "Zarządzaj serwerem" action, or the `…` button that replaces the chevron

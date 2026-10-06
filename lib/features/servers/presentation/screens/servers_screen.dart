@@ -113,6 +113,12 @@ class _ServersScreenState extends State<ServersScreen> {
   /// Which of the account's servers are live, for the rows' lamps.
   late final ServerDirectoryLiveness _liveness;
 
+  /// The ambient ticker mode: off while a full-screen route covers this
+  /// board (a phone's pushed workspace above all), which is when the lamps'
+  /// listeners have nobody to light a lamp for. See
+  /// [ServerDirectoryLiveness.covered].
+  ValueListenable<TickerModeData>? _ticker;
+
   /// "Pokaż wszystkie" was pressed.
   bool _showAll = false;
 
@@ -175,7 +181,21 @@ class _ServersScreenState extends State<ServersScreen> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final ticker = TickerMode.getValuesNotifier(context);
+    if (!identical(ticker, _ticker)) {
+      _ticker?.removeListener(_onTicker);
+      _ticker = ticker..addListener(_onTicker);
+      _onTicker();
+    }
+  }
+
+  void _onTicker() => _liveness.covered = !(_ticker?.value.enabled ?? true);
+
+  @override
   void dispose() {
+    _ticker?.removeListener(_onTicker);
     _attention
       ..removeListener(_onAttention)
       ..dispose();

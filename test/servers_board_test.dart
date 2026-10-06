@@ -163,6 +163,30 @@ class _FlakyDirectory extends TestServerRepository {
   }
 }
 
+/// Counts the channel listeners that are OPEN per server, not merely how
+/// many were ever asked for: the lamp's cost is the listeners it holds.
+class _CountingChannels extends TestServerRepository {
+  final open = <String, int>{};
+
+  @override
+  Stream<List<ServerChannel>> watchChannels(String serverId) {
+    final source = super.watchChannels(serverId);
+    StreamSubscription<List<ServerChannel>>? inner;
+    late final StreamController<List<ServerChannel>> controller;
+    controller = StreamController<List<ServerChannel>>(
+      onListen: () {
+        open[serverId] = (open[serverId] ?? 0) + 1;
+        inner = source.listen(controller.add, onError: controller.addError);
+      },
+      onCancel: () {
+        open[serverId] = open[serverId]! - 1;
+        return inner?.cancel();
+      },
+    );
+    return controller.stream;
+  }
+}
+
 /// A read-only repository that can list the account's servers and nothing
 /// else: no public listing, no management.
 class _NoPublicListing implements ServerRepository {
@@ -407,6 +431,47 @@ void main() {
       expect(liveness.isLive('s'), isFalse);
     });
 
+    test('a board covered by a full-screen route keeps no listener and no '
+        'lamp, and gets both back', () async {
+      final repository = _repository(channels: [_stage('s')]);
+      final liveness = ServerDirectoryLiveness(repository: repository);
+      addTearDown(liveness.dispose);
+      liveness.track(_mine());
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+      expect(liveness.openWatches, 4);
+      expect(liveness.isLive('s'), isTrue);
+
+      liveness.covered = true;
+      expect(liveness.openWatches, 0);
+      expect(liveness.isLive('s'), isFalse, reason: 'a lamp is a claim of now');
+      // The directory changing under the route opens nothing either.
+      liveness.track([..._mine(), _server('n', 'Nowy', ServerType.friends)]);
+      expect(liveness.openWatches, 0);
+
+      liveness.covered = false;
+      expect(liveness.openWatches, 5);
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+      expect(liveness.isLive('s'), isTrue);
+
+      // Covered AND hidden by the shell: one of them lifting is not enough.
+      final visible = ValueNotifier(true);
+      addTearDown(visible.dispose);
+      final both = ServerDirectoryLiveness(
+        repository: repository,
+        isVisible: visible,
+      );
+      addTearDown(both.dispose);
+      both.track(_mine());
+      both.covered = true;
+      visible.value = false;
+      both.covered = false;
+      expect(both.openWatches, 0);
+      visible.value = true;
+      expect(both.openWatches, 4);
+    });
+
     test('channels that fail to read are a server with no lamp', () async {
       final repository = _repository()
         ..channelStream = Stream<List<ServerChannel>>.error(
@@ -562,6 +627,52 @@ void main() {
 
       visible.value = true;
       await tester.pumpAndSettle();
+      expect(_lamp('s'), findsOneWidget);
+    });
+
+    testWidgets('on a phone the board under an opened server holds no lamp '
+        'listener, and lights its lamps again on the way back', (tester) async {
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final repository = _CountingChannels()
+        ..servers = _mine()
+        ..publicServers = _publicServers()
+        ..channels = [_stage('s')]
+        ..myRole = null;
+      await pumpServers(tester, _board(repository));
+      expect(_lamp('s'), findsOneWidget);
+      const mine = ['s', 'p', 'r', 'f'];
+      expect(
+        {for (final id in mine) id: repository.open[id]},
+        {for (final id in mine) id: 1},
+        reason: 'one channel listener per server while the board is seen',
+      );
+
+      // A sheet over the board is not a route that hides it.
+      await tester.tap(_add);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('servers-add-sheet')), findsOne);
+      expect([for (final id in mine) repository.open[id]], everyElement(1));
+      await tester.tapAt(const Offset(195, 40));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('servers-add-sheet')), findsNothing);
+
+      // A phone opens a server as a pushed route; the board stays built
+      // under it for the whole visit.
+      await tester.ensureVisible(_card('pub-j'));
+      await tester.tap(_card('pub-j'));
+      await tester.pumpAndSettle();
+      expect(find.byType(ServerWorkspaceScreen), findsOneWidget);
+      expect(find.byType(BackButton), findsOneWidget);
+      expect(
+        [for (final id in mine) repository.open[id]],
+        everyElement(0),
+        reason: 'nobody can see a lamp under the opened server',
+      );
+
+      await tester.tap(find.byType(BackButton));
+      await tester.pumpAndSettle();
+      expect(find.byType(ServerWorkspaceScreen), findsNothing);
+      expect([for (final id in mine) repository.open[id]], everyElement(1));
       expect(_lamp('s'), findsOneWidget);
     });
 

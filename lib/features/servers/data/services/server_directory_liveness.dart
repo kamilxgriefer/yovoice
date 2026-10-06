@@ -24,12 +24,14 @@ import 'server_service.dart';
 /// simply has no lamp.
 ///
 /// **Retained slots.** The desktop shell keeps the Servers slot built inside
-/// an `IndexedStack`, and the board stays mounted under a server it hosts
-/// inline. While [isVisible] is false, or the board says it is not on screen
-/// ([track] with `active: false`), every listener is cancelled AND every
-/// answer is dropped: a lamp is a claim about now, so a hidden board never
-/// carries one back from the past. The first snapshot after it returns lights
-/// it again.
+/// an `IndexedStack`, the board stays mounted under a server it hosts
+/// inline, and on a phone it stays mounted under every full-screen route
+/// pushed over it — the workspace of the server a person has just opened
+/// first of all. While [isVisible] is false, the board says it is not on
+/// screen ([track] with `active: false`) or a route covers it ([covered]),
+/// every listener is cancelled AND every answer is dropped: a lamp is a
+/// claim about now, so a hidden board never carries one back from the past.
+/// The first snapshot after it returns lights it again.
 class ServerDirectoryLiveness extends ChangeNotifier {
   ServerDirectoryLiveness({
     required ServerRepository repository,
@@ -47,6 +49,7 @@ class ServerDirectoryLiveness extends ChangeNotifier {
 
   List<String> _tracked = const [];
   bool _boardActive = true;
+  bool _covered = false;
   bool _disposed = false;
 
   final _subscriptions = <String, StreamSubscription<List<ServerChannel>>>{};
@@ -56,7 +59,23 @@ class ServerDirectoryLiveness extends ChangeNotifier {
   /// until the board comes back on screen.
   final _refused = <String>{};
 
-  bool get _active => _boardActive && (_isVisible?.value ?? true);
+  bool get _active => _boardActive && !_covered && (_isVisible?.value ?? true);
+
+  /// Whether a full-screen route covers the board.
+  ///
+  /// On a phone a server opens as a pushed route, and the board stays built
+  /// under it for the whole visit. Without this the board kept up to
+  /// [budget] channel listeners running behind a screen nobody could see,
+  /// next to the ones the open workspace holds itself. The board feeds it
+  /// from the ambient `TickerMode`, which `Overlay` switches off for every
+  /// route below an opaque one — whichever route that is, and through any
+  /// chain of replacements — and never for a sheet or a dialog.
+  bool get covered => _covered;
+  set covered(bool value) {
+    if (_disposed || _covered == value) return;
+    _covered = value;
+    _sync();
+  }
 
   /// Whether [serverId] has a live conversation.
   bool isLive(String serverId) => _liveSince.containsKey(serverId);

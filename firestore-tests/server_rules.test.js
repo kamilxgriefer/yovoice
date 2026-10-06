@@ -598,6 +598,52 @@ async function main() {
       assert.equal(result.docs.some((item) => item.id === HELD), false);
       assert.equal(result.docs.some((item) => item.id === "legacy-public"), true);
     });
+    // The Servers board's "Serwery publiczne" (ADR-239). This is the query
+    // ServerService.watchPublicServers sends: the same three equalities with
+    // publicDirectoryReadLimit (24) instead of 8, because legacy public clubs
+    // and the reader's own servers come back too and the client drops them.
+    await check("Servers board listing: three equalities and limit 24 list public Community and Podcast roots for any active account, never a private or held root, and no other query shape", async () => {
+      await seed({
+        "clubs/board-community": server("board-community", { privacy: "public", serverType: "community", memberCount: 12 }),
+        "clubs/board-podcast": server("board-podcast", { privacy: "public", serverType: "podcast", memberCount: 5 }),
+        "clubs/board-private": server("board-private", { privacy: "private", serverType: "community" }),
+        "clubs/board-invite-only": server("board-invite-only", { serverType: "friends" }),
+        "clubs/board-held": server("board-held", { held: true, privacy: "public", serverType: "community" }),
+        "clubs/board-archived": server("board-archived", { privacy: "public", serverType: "community", status: "archived" }),
+      });
+      const filters = [where("privacy", "==", "public"), where("type", "==", "community"), where("status", "==", "active")];
+      const board = (uid, ...constraints) => getDocs(query(collection(db(uid), "clubs"), ...constraints));
+      // A stranger, a member of other servers and the owner all get the same
+      // listing: the rule proves the query, not the reader's membership.
+      for (const uid of [OUTSIDER, MEMBER, OWNER]) {
+        const ids = (await assertSucceeds(board(uid, ...filters, limit(24)))).docs.map((item) => item.id);
+        for (const listed of ["board-community", "board-podcast", "legacy-public"]) {
+          assert.equal(ids.includes(listed), true, `${listed} is listed for ${uid}`);
+        }
+        for (const hidden of ["board-private", "board-invite-only", "board-held", "board-archived", HELD, ACTIVE, OTHER]) {
+          assert.equal(ids.includes(hidden), false, `${hidden} is not listed for ${uid}`);
+        }
+      }
+      // A card opens the root it lists: the public root is readable before
+      // membership, which is what the workspace's admission is built on.
+      await assertSucceeds(read(OUTSIDER, "clubs/board-podcast"));
+      await assertFails(read(OUTSIDER, "clubs/board-private"));
+      // Not an account in good standing, or not signed in: no listing.
+      await assertFails(board(BANNED, ...filters, limit(24)));
+      await assertFails(getDocs(query(collection(env.unauthenticatedContext().firestore(), "clubs"), ...filters, limit(24))));
+      // Dropping any one equality turns the whole query into a denial; so
+      // does asking for another value.
+      for (let skipped = 0; skipped < filters.length; skipped++) {
+        await assertFails(board(OUTSIDER, ...filters.filter((_, index) => index !== skipped), limit(24)));
+      }
+      await assertFails(board(OUTSIDER, where("privacy", "==", "private"), filters[1], filters[2], limit(24)));
+      await assertFails(board(OUTSIDER, filters[0], where("type", "==", "family"), filters[2], limit(24)));
+      await assertFails(board(OUTSIDER, filters[0], filters[1], where("status", "==", "preparing"), limit(24)));
+      await seed({
+        "clubs/board-community": null, "clubs/board-podcast": null, "clubs/board-private": null,
+        "clubs/board-invite-only": null, "clubs/board-held": null, "clubs/board-archived": null,
+      });
+    });
     await check("legacy host/public room list excludes held anchor by canonical shape", async () => {
       for (const filter of [where("hostId", "==", OWNER), where("visibility", "==", "public")]) {
         const result = await assertSucceeds(getDocs(query(collection(db(OWNER), "rooms"), filter)));
