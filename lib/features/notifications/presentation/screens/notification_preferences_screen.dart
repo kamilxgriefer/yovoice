@@ -18,6 +18,14 @@ class _PreferenceGroup {
 }
 
 const _kPreferenceGroups = [
+  // What you chose to follow (ADR-237). It leads the list because it is the
+  // one group whose notifications you asked for by following: LIVE from
+  // people you follow and new posts from Pages you follow. Each has its own
+  // switch, so turning one off never silences the other.
+  _PreferenceGroup(
+    title: 'Following',
+    types: [NotificationType.liveStarted, NotificationType.pagePostPublished],
+  ),
   _PreferenceGroup(
     title: 'Friends & follows',
     types: [
@@ -33,7 +41,6 @@ const _kPreferenceGroups = [
       NotificationType.clubInviteAccepted,
       NotificationType.roomInvite,
       NotificationType.broadcastInvite,
-      NotificationType.liveStarted,
       NotificationType.serverEventReminder,
       NotificationType.serverRole,
     ],
@@ -64,29 +71,47 @@ const _kPreferenceGroups = [
 /// The push boundary reads one key per type. A row that stands for several
 /// types therefore writes all of them together, and reads as ON only while
 /// every type it covers is on.
-List<NotificationType> _coveredTypes(NotificationType type) =>
-    switch (type) {
-      // A comment on your Page post is a comment too (ADR-233): the server
-      // honours this switch for it through `momentComment` as well.
-      NotificationType.momentComment => const [
-        NotificationType.momentComment,
-        NotificationType.reelComment,
-        NotificationType.commentMention,
-        NotificationType.pagePostComment,
-      ],
-      _ => <NotificationType>[type],
-    };
+List<NotificationType> _coveredTypes(NotificationType type) => switch (type) {
+  // A comment on your Page post is a comment too (ADR-233): the server
+  // honours this switch for it through `momentComment` as well.
+  NotificationType.momentComment => const [
+    NotificationType.momentComment,
+    NotificationType.reelComment,
+    NotificationType.commentMention,
+    NotificationType.pagePostComment,
+  ],
+  _ => <NotificationType>[type],
+};
 
 String _groupTitle(AppLocalizations copy, String title) => switch (title) {
+  // A context key: "Following" already names a follow state elsewhere.
+  'Following' => copy.contextualText(
+    'notifyFollow.groupFollowing',
+    'Following',
+    'Obserwowane',
+  ),
   'Friends' => copy.text('Friends', 'Znajomi'),
   'Friends & follows' => copy.text(
     'Friends & follows',
     'Znajomi i obserwowani',
   ),
-  'Servers' => copy.text('Servers', 'Serwery'),
+  // Context keys: these single words mean other things on other screens.
+  'Servers' => copy.contextualText(
+    'notifyPrefs.groupServers',
+    'Servers',
+    'Serwery',
+  ),
   'Moments & Yeels' => copy.text('Moments & Yeels', 'Momenty i Yeels'),
-  'Calls' => copy.text('Calls', 'Połączenia'),
-  'Messages' => copy.text('Messages', 'Wiadomości'),
+  'Calls' => copy.contextualText(
+    'notifyPrefs.groupCalls',
+    'Calls',
+    'Połączenia',
+  ),
+  'Messages' => copy.contextualText(
+    'notifyPrefs.groupMessages',
+    'Messages',
+    'Wiadomości',
+  ),
   _ => title,
 };
 
@@ -116,9 +141,11 @@ String _labelFor(AppLocalizations copy, NotificationType type) {
     case NotificationType.broadcastInvite:
       return copy.text('Podcast invitations', 'Zaproszenia do podcastów');
     case NotificationType.liveStarted:
+      return copy.text('LIVE from people you follow', 'LIVE obserwowanych');
+    case NotificationType.pagePostPublished:
       return copy.text(
-        'People you follow go live',
-        'Obserwowane osoby rozpoczynają transmisję',
+        'New posts from Pages you follow',
+        'Nowe posty obserwowanych stron',
       );
     case NotificationType.directMessage:
       return copy.text('Direct messages', 'Wiadomości bezpośrednie');
@@ -127,21 +154,26 @@ String _labelFor(AppLocalizations copy, NotificationType type) {
     case NotificationType.missedCall:
       return copy.text('Missed calls', 'Nieodebrane połączenia');
     case NotificationType.mention:
-      return copy.text('Mentions', 'Wzmianki');
+      return copy.contextualText(
+        'notifyPrefs.mentions',
+        'Mentions',
+        'Wzmianki',
+      );
     case NotificationType.momentComment:
     case NotificationType.reelComment:
     case NotificationType.commentMention:
     case NotificationType.pagePostComment:
-      return copy.text(
-        'Comments and mentions',
-        'Komentarze i oznaczenia',
-      );
+      return copy.text('Comments and mentions', 'Komentarze i oznaczenia');
     case NotificationType.serverEventReminder:
       return copy.text('Server events', 'Wydarzenia na serwerach');
     case NotificationType.serverRole:
       return copy.text('Your server role', 'Twoja rola na serwerze');
     case NotificationType.reply:
-      return copy.text('Replies', 'Odpowiedzi');
+      return copy.contextualText(
+        'notifyPrefs.replies',
+        'Replies',
+        'Odpowiedzi',
+      );
     case NotificationType.achievementUnlocked:
       return copy.text('Achievements', 'Osiągnięcia');
     case NotificationType.moderation:
@@ -153,6 +185,18 @@ String _labelFor(AppLocalizations copy, NotificationType type) {
       return copy.text('System announcements', 'Komunikaty systemowe');
   }
 }
+
+/// The one line under a switch that needs explaining, or null.
+String? _helperFor(AppLocalizations copy, NotificationType type) =>
+    switch (type) {
+      // The server sends at most one push per Page per day; later posts of
+      // that day wait in the notification centre.
+      NotificationType.pagePostPublished => copy.text(
+        'At most one notification a day from each Page',
+        'Najwyżej jedno powiadomienie dziennie od jednej strony',
+      ),
+      _ => null,
+    };
 
 class NotificationPreferencesScreen extends StatefulWidget {
   const NotificationPreferencesScreen({
@@ -380,7 +424,15 @@ class _NotificationPreferencesScreenState
                                           indent: 16,
                                         ),
                                       _PreferenceRow(
+                                        key: ValueKey(
+                                          'notification-preference-'
+                                          '${group.types[index].name}',
+                                        ),
                                         label: _labelFor(
+                                          copy,
+                                          group.types[index],
+                                        ),
+                                        helper: _helperFor(
                                           copy,
                                           group.types[index],
                                         ),
@@ -390,12 +442,12 @@ class _NotificationPreferencesScreenState
                                         // functions/notifications/push.js.
                                         // A row covering several types is ON
                                         // only while every one of them is.
-                                        value: _coveredTypes(
-                                          group.types[index],
-                                        ).every(
-                                          (type) =>
-                                              preferences[type.name] != false,
-                                        ),
+                                        value: _coveredTypes(group.types[index])
+                                            .every(
+                                              (type) =>
+                                                  preferences[type.name] !=
+                                                  false,
+                                            ),
                                         isPending: _pending.contains(
                                           group.types[index],
                                         ),
@@ -430,9 +482,15 @@ class _PreferenceRow extends StatelessWidget {
     required this.value,
     required this.isPending,
     required this.onChanged,
+    this.helper,
+    super.key,
   });
 
   final String label;
+
+  /// One quiet line under the label, for a switch whose effect is not
+  /// obvious from its name.
+  final String? helper;
   final bool value;
   final bool isPending;
   final ValueChanged<bool> onChanged;
@@ -446,13 +504,31 @@ class _PreferenceRow extends StatelessWidget {
       child: Row(
         children: [
           Expanded(
-            child: Text(
-              label,
-              style: TextStyle(
-                color: palette.textPrimary,
-                fontSize: 13.5,
-                fontWeight: FontWeight.w600,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: palette.textPrimary,
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                if (helper != null) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    helper!,
+                    style: TextStyle(
+                      color: palette.textSecondary,
+                      fontSize: 12,
+                      height: 1.35,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                ],
+              ],
             ),
           ),
           if (isPending)

@@ -147,6 +147,11 @@ function inspectColdStart() {
 // the capability triggers onPageCapabilityEntitlementChanged and
 // onPageCapabilityGrantChanged (one plain read and an early return for an
 // account without a Page) join it; none is warm or a keep-warm target.
+// 2026-10-03 (ADR-237, 296 + 2 = 298): the followed-Page post notification
+// triggers onPagePostCreated (opens the fan-out outbox for a post that is
+// born published) and onPagePostFanoutOutboxWritten (one page of 200
+// followers per invocation) join it; neither is warm or a keep-warm target
+// and the Pages graph stays lazy inside both.
 // `deliverBugReportV1` is NOT in it: both of its
 // delivery channels are source-gated off in index.js. Extending this list is
 // the deliberate review step the header describes, not a drive-by edit.
@@ -322,6 +327,8 @@ const EXPORT_NAMES = Object.freeze([
   "onPageBadgeSourceChanged",
   "onPageCapabilityEntitlementChanged",
   "onPageCapabilityGrantChanged",
+  "onPagePostCreated",
+  "onPagePostFanoutOutboxWritten",
   "onPinnedCreatorEntitlementChanged",
   "onPinnedCreatorProfileChanged",
   "onPinnedMomentEligibilityChanged",

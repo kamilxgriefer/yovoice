@@ -441,8 +441,28 @@ service cloud.firestore {
               ['available', 'away', 'busy', 'invisible'];
     }
 
+    // The language the owner's app is shown in (ADR-237): one of the 43
+    // selectable locale keys of lib/core/localization/app_language.dart,
+    // owner-written when the language is chosen or the device language
+    // changes. Cloud Functions read it to write a push in the recipient's
+    // language; it grants nothing and is never projected to anybody else.
+    // Any other value — another type, an unknown tag, a long string — is
+    // refused here, so the push boundary can treat the field as a closed
+    // enum and still falls back to English for anything it does not know.
+    function appLanguageValueAllowed() {
+      return !('appLanguage' in request.resource.data) ||
+          request.resource.data.appLanguage in [
+            'en', 'pl', 'de', 'es', 'pt', 'pt_BR', 'fr', 'it', 'uk', 'ru',
+            'cs', 'sk', 'bg', 'nl', 'ro', 'tr', 'el', 'hu', 'hr', 'sr',
+            'sv', 'da', 'nb', 'fi', 'lt', 'lv', 'et', 'id', 'vi', 'zh_CN',
+            'zh_TW', 'ja', 'ko', 'ar', 'hi', 'bn', 'ur', 'th', 'ms', 'fil',
+            'he', 'fa', 'sw'
+          ];
+    }
+
     function userCreateAllowed(userId) {
       return isOwner(userId) && availabilityValueAllowed() &&
+          appLanguageValueAllowed() &&
           request.resource.data.keys().hasOnly([
             'uid', 'email', 'displayName', 'username',
             'bio', 'country', 'nativeLanguage',
@@ -455,7 +475,7 @@ service cloud.firestore {
             'reactionCount', 'hostMinutes', 'activeDays', 'momentCount',
             'friendCount', 'unlockedTitleIds', 'unlockedTitleTimestamps',
             'selectedTitleId', 'achievementsUpdatedAt',
-            'notificationPreferences', 'messagePrivacy'
+            'notificationPreferences', 'messagePrivacy', 'appLanguage'
           ]) &&
           (
             !request.resource.data.keys().hasAny(['uid']) ||
@@ -2443,6 +2463,14 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // The same durable cursor for "a Page you follow published a post"
+    // (ADR-237, functions/notifications/page_posts.js). It names a Page and a
+    // post and counts followers; no client reads, forges, rewinds or deletes
+    // it.
+    match /pagePostFanoutOutbox/{outboxId} {
+      allow read, write: if false;
+    }
+
     // Server-owned profile-media capability state. Clients never need object
     // paths, generations, reservations or receipts; all access is mediated by
     // callable authorization and short-lived V4 grants.
@@ -2569,10 +2597,12 @@ service cloud.firestore {
                     'unlockedTitleTimestamps', 'selectedTitleId',
                     'achievementsUpdatedAt',
                     'notificationPreferences', 'messagePrivacy',
+                    'appLanguage',
                   ]) && accountTypeChangeAllowed())
                   && displayNameChangeAllowed()
                   && messagePrivacyChangeAllowed()
               && availabilityValueAllowed()
+              && appLanguageValueAllowed()
               : false
           );
 

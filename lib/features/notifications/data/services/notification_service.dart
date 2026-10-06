@@ -269,6 +269,7 @@ class NotificationService {
         type == NotificationType.pagePostComment ||
         type == NotificationType.pageModeration ||
         type == NotificationType.pageLapse ||
+        type == NotificationType.pagePostPublished ||
         type == NotificationType.achievementUnlocked ||
         type == NotificationType.liveStarted) {
       throw ArgumentError.value(

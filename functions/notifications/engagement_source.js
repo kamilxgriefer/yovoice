@@ -46,6 +46,8 @@ const ENGAGEMENT_NOTIFICATION_TYPES = Object.freeze([
   "serverRole",
   // Premium Pages (ADR-233 §2.6): a comment on the recipient's Page post.
   "pagePostComment",
+  // A Page the recipient follows published a post (ADR-237).
+  "pagePostPublished",
 ]);
 
 const SAFE_SEGMENT = /^[A-Za-z0-9_-]{1,128}$/u;
@@ -550,6 +552,108 @@ async function pagePostCommentSourceIsCurrent({
   });
 }
 
+function createGeneration(snapshot) {
+  const createdAt = snapshot?.createTime;
+  return createdAt && Number.isSafeInteger(createdAt.seconds) &&
+      Number.isSafeInteger(createdAt.nanoseconds)
+    ? `${createdAt.seconds}:${createdAt.nanoseconds}`
+    : null;
+}
+
+/**
+ * pagePostPublished (ADR-237): "a Page you follow published a post". The
+ * row's actor is the Page (its id is its owner's uid), its target is the post
+ * and its source is `pagePosts/{postId}`. It is current only while ALL of
+ * this still holds for THIS recipient:
+ *
+ *   - the post exists, is canonical, belongs to that Page, is still
+ *     `published` and is the very generation the row was written for;
+ *   - Pages are readable for the recipient (appConfig/pagesV1, so the kill
+ *     switch silences these pushes too);
+ *   - the Page is still running for a reader: canonical, not paused, not
+ *     suspended, read-time status active or readOnly, its owner's account
+ *     active — exactly `pageViewDecision`, the one view predicate of Pages;
+ *   - the follow edge users/{recipient}/following/{page} is still there
+ *     (an unfollow between publish and push stops the push);
+ *   - no block stands in either direction, and neither account is muted.
+ *
+ * The recipient's preference is deliberately NOT here: a preference silences
+ * the push (push.js) and never the bell row, as for every other type.
+ */
+async function pagePostPublishedSourceIsCurrent({
+  recipientId,
+  notification,
+  reader,
+  firestore,
+  nowMs = Date.now(),
+}) {
+  // Lazy: the Pages graph stays out of the push trigger's cold start.
+  const { PAGE_POST_ID_PATTERN, canonicalPageOrNull } = require("../pages/contract");
+  const postId = notification?.targetId;
+  const pageId = notification?.actorId;
+  if (typeof postId !== "string" || !PAGE_POST_ID_PATTERN.test(postId) ||
+      notification?.sourcePath !== `pagePosts/${postId}` ||
+      !isValidOpaqueUid(pageId) || !isValidOpaqueUid(recipientId) ||
+      pageId === recipientId) {
+    return false;
+  }
+  const { canonicalPagesActivation, pagesReadAllowed } = require("../pages/activation");
+  const { canonicalPagePostData } = require("../pages/post_contract");
+  const {
+    followingEdgeExists,
+    pageContextReferences,
+    pageViewDecision,
+  } = require("../pages/audience");
+  const [
+    post,
+    activationSnapshot,
+    recipient,
+    recipientRestriction,
+    pageRestriction,
+    page,
+    pageUser,
+    recipientBlock,
+    pageBlock,
+    followEdge,
+  ] = await readAll(
+    reader,
+    firestore.doc(`pagePosts/${postId}`),
+    firestore.doc("appConfig/pagesV1"),
+    firestore.doc(`users/${recipientId}`),
+    firestore.doc(`restrictions/${recipientId}`),
+    firestore.doc(`restrictions/${pageId}`),
+    ...pageContextReferences(firestore, recipientId, pageId),
+  );
+  const postData = canonicalPagePostData(post);
+  if (!postData || postData.pageId !== pageId || postData.status !== "published") {
+    return false;
+  }
+  const expectedGeneration = notification?.sourceGeneration;
+  if (typeof expectedGeneration !== "string" || expectedGeneration.length === 0 ||
+      createGeneration(post) !== expectedGeneration) {
+    return false;
+  }
+  const activation = canonicalPagesActivation(activationSnapshot);
+  if (!pagesReadAllowed(activation, recipientId)) return false;
+  if (!followingEdgeExists(followEdge, pageId)) return false;
+  const decision = pageViewDecision({
+    viewerId: recipientId,
+    pageId,
+    page: canonicalPageOrNull(page, pageId),
+    pageUser: pageUser.exists ? pageUser.data() ?? null : null,
+    viewerUser: recipient.exists ? recipient.data() ?? null : null,
+    viewerBlocksPage: recipientBlock.exists,
+    pageBlocksViewer: pageBlock.exists,
+    nowMs,
+    lapseEnabled: activation.lapseEnabled,
+  });
+  if (decision.viewable !== true || decision.isOwner === true) return false;
+  return refusal(() => {
+    assertNotRestricted(recipientRestriction, "Recipient", nowMs);
+    assertNotRestricted(pageRestriction, "Page", nowMs);
+  });
+}
+
 async function engagementNotificationSourceIsCurrent(args) {
   switch (args.notification?.type) {
     case "momentComment":
@@ -563,6 +667,8 @@ async function engagementNotificationSourceIsCurrent(args) {
       return serverRoleSourceIsCurrent(args);
     case "pagePostComment":
       return pagePostCommentSourceIsCurrent(args);
+    case "pagePostPublished":
+      return pagePostPublishedSourceIsCurrent(args);
     default:
       return false;
   }
@@ -578,6 +684,7 @@ module.exports = {
   engagementNotificationSourceIsCurrent,
   liveCommentParent,
   pagePostCommentSourceIsCurrent,
+  pagePostPublishedSourceIsCurrent,
   parseCommentSourcePath,
   parseServerEventPath,
   serverEventReminderSourceIsCurrent,

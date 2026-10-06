@@ -151,6 +151,42 @@ locale catalog entries and stable named placeholders. Arbitrary backend errors
 are not rendered as user instructions. Sample previews/captures are development
 fixtures, not evidence of production upload or physical multi-account delivery.
 
+## Notification rows and settings (ADR-237)
+
+`NotificationCopy` (`lib/features/notifications/presentation/notification_copy.dart`)
+is the one place a notification's words are composed: the bell row, the
+foreground banner and — through the export in
+`test/push_copy_export_test.dart` — the push all say the same sentence in the
+reader's language. A screen never builds a title of its own.
+
+- **A followed Page's post** is the only row with a second line. Leading:
+  `PageFace` at the row's 44 px avatar size (the Page squircle, radius 14,
+  kind-tinted letter fallback) with the usual 13 px type badge
+  (`Icons.article_rounded`). Title 13.5 / w700, then the post's first line
+  at 12.5 px `textSecondary` (two lines at most, ellipsis), then the time.
+  No role or VIP badges: those belong to people, and a Page's id is its
+  owner's uid.
+- **A row that opens somewhere unexpected says so.** "Achievement unlocked"
+  carries a 22 px `chevron_right_rounded` in `textSecondary` between the
+  unread dot and the overflow menu. The glyph mirrors itself in RTL — do not
+  swap it by hand.
+- **A destination that is gone** answers with a floating SnackBar,
+  "This content is no longer available." — one line for every reason.
+- **Settings → Notifications** lists **Following** first (LIVE from people
+  you follow; New posts from Pages you follow), then Friends, Servers,
+  Moments & Yeels, Calls, Messages. A switch that needs explaining carries
+  one helper line under its label (12 px `textSecondary`, 2 px below the
+  label): "At most one notification a day from each Page". Rows keep the
+  flat card (radius 12, 1 px border, 16 px indent on the dividers).
+- Widths: 390 and 768 are the pushed route with Back; at 1440 both screens
+  render in the shell's content slot with no app bar of their own (the inbox
+  in its 880 px column, settings in the form column). At 200 % text an inbox
+  row stacks its avatar above the copy; a settings label wraps beside its
+  switch.
+
+Frames: `test/notify_follow_capture.dart` (390 / 768 / 1440, Dark and Pearl,
+200 % text, Arabic RTL, German).
+
 ## Foreground notification banner
 
 `YoTopNotificationHost` owns one top-centered arrival card above the Navigator,

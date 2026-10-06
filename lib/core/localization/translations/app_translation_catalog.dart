@@ -8,6 +8,7 @@ import 'translations_language_names.dart';
 import 'translations_mobile_navigation.dart';
 import 'translations_pages.dart';
 import 'translations_notification_engagement.dart';
+import 'translations_notify_follow.dart';
 import 'translations_moments_creation.dart';
 import 'translations_moments_listen.dart';
 import 'translations_moments_overview.dart';
@@ -238,6 +239,7 @@ const appTranslationKeys = <String>{
   ...profileMediaViewerTranslationKeys,
   ...notificationEngagementTranslationKeys,
   ...vipLikersTranslationKeys,
+  ...notifyFollowTranslationKeys,
   ...pagesTranslationKeys,
 };
 
@@ -297,6 +299,7 @@ final appTranslations = <String, Map<String, String>>{
         ...profileMediaViewerTranslations[entry.key]!,
         ...notificationEngagementTranslations[entry.key]!,
         ...vipLikersTranslations[entry.key]!,
+        ...notifyFollowTranslations[entry.key]!,
         ...pagesTranslations[entry.key]!,
         ...localizedExtendedLanguageNames[entry.key]!,
       }),

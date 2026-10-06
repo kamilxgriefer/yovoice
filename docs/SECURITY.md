@@ -897,6 +897,64 @@ grants) per recipient at write time and at push time; role promotions recheck
 the exact membership authorization revision, so a promotion that was undone
 never rings. Demotions, removals and bans deliberately notify nobody.
 
+### A followed Page's post, the stored app language and the push cap (2026-10-03, ADR-237, source only, NOT deployed)
+
+**Who is told.** Following a Page is the consent; nothing else is. A
+`pagePostPublished` row is written only for an account in the Page's
+follower list that ALSO still holds its own edge
+`users/{recipient}/following/{page}` (so a stale mirror row cannot notify
+somebody who unfollowed), may read Pages at all (`appConfig/pagesV1`, tester
+mode included), passes `pageViewDecision` for that Page, is not blocked and
+not blocking, and is not muted. The same predicate runs again inside the
+push claim transaction, so an unfollow, a block, a pause, a suspension, a
+held or deleted post or the kill switch between the row and the push stops
+the push, and a row whose source is gone is removed. The Page never notifies
+its own owner.
+
+**What is said.** The row's `actorName` is the canonical display name the
+writer reads from `users/{page}` in the same transaction; `targetLabel` is a
+server-authored English sentence with the Page's name capped at 40
+characters AFTER the attribution, so a Page named to read like a YO Voice
+notice cannot pose as one on builds that render the unknown type as
+`system` (the pagePostComment rule). `postPreview` is the post's own first
+line, at most 120 code points, with control, zero-width and bidi characters
+removed. A Page post is public to every signed-in reader, which is the only
+reason its words may appear on a lock screen: `buildPushMessage` honours a
+caller's `body` for the types in `PUSH_BODY_TYPES` and for nothing else, so
+this is not a door for a comment's or a message's text.
+`createNotificationForEvent`'s new `extraFields` are validated before any
+read: short strings only, never a canonical key (`actorId`, `isRead`, …) and
+never a `push*` field.
+
+**How often.** One push per Page per day per follower, enforced by a receipt
+created in the claim transaction; the bell row is always written. A Page is
+already limited to its daily post budget, so the bell cannot be flooded
+either.
+
+**The stored language.** `users/{uid}.appLanguage` is the one new
+client-written field. It is in the owner allowlist because the owner's own
+app is the only thing that knows it, and it is harmless: it selects a
+translation and authorizes nothing. Rules accept exactly the 43 locale keys
+(`appLanguageValueAllowed()`), so a client cannot store an arbitrary string
+for the server to interpolate, and `push_locale.js` checks membership in its
+own list again before using the value as a table key (never a property
+lookup on user input). Nobody but the owner reads the user document. Rules
+cases: `firestore-tests/notify_follow_rules.test.js`.
+
+**The outbox.** `pagePostFanoutOutbox` is denied to every client in both
+directions: rewinding its cursor would replay a page and completing it would
+drop one. It holds the Page's name and the post's first line only while
+rows are still being written; the commit that completes the fan-out blanks
+both, and Firestore TTL removes the row after seven days.
+
+**Residual, written down.** (1) A follower's bell row is not retired when
+the post is later deleted or held: the push is stopped and the post detail
+shows "unavailable", but the row and its first line stay in that follower's
+inbox until they delete it. (2) Builds 40/41 show the row as a `system` row
+with the English sentence and have no switch for it; they can silence it
+only by unfollowing or updating. (3) A push already delivered cannot be
+recalled when the post is removed afterwards.
+
 ## Room and club membership authority (hardened 2026-08-16)
 
 Room deletion has two deliberately separate authorities. A room owner uses

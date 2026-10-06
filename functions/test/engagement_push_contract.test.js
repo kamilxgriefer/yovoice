@@ -54,7 +54,10 @@ const NEW_TYPES = [
 // Flutter lane (C4) adds the client enum, icon and deep link: installed
 // builds render it as `system` with its human-readable targetLabel, so it is
 // deliberately NOT in the client-parity loop below.
-const PAGES_TYPES = ["pagePostComment"];
+// 2026-10-03 (ADR-237): `pagePostPublished`, a followed Page's new post, is
+// registered with its own validator the same way; its contract lives in
+// page_post_notifications.test.js.
+const PAGES_TYPES = ["pagePostComment", "pagePostPublished"];
 
 test("an unregistered notification type is refused, not pushed", async () => {
   const neverRead = {

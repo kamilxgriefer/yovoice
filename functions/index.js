@@ -528,6 +528,19 @@ exports.createPageReportV1 = createPageReportV1;
 exports.onPageCapabilityEntitlementChanged = onPageCapabilityEntitlementChanged;
 exports.onPageCapabilityGrantChanged = onPageCapabilityGrantChanged;
 
+// "A Page you follow published a post" (ADR-237): a trigger on the committed
+// post opens a paged fan-out outbox, and the outbox trigger writes one bell
+// row per follower, 200 followers per invocation. The publish callable is
+// unchanged. The push for those rows (recipient's language, at most one per
+// Page per day) is onNotificationCreated.
+const {
+  onPagePostCreated,
+  onPagePostFanoutOutboxWritten,
+} = require("./notifications/page_posts");
+
+exports.onPagePostCreated = onPagePostCreated;
+exports.onPagePostFanoutOutboxWritten = onPagePostFanoutOutboxWritten;
+
 const { getMyStaffCapabilities } = require("./staff/capabilities");
 
 exports.getMyStaffCapabilities = getMyStaffCapabilities;

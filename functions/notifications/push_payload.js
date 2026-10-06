@@ -43,6 +43,8 @@ function soundProfileForNotification(type) {
     "reelComment",
     // ADR-233 §2.6: a comment on the recipient's Page post.
     "pagePostComment",
+    // ADR-237: a Page the recipient follows published a post.
+    "pagePostPublished",
     "serverRole",
   ].includes(type)) {
     return SOUND_PROFILES.social;
@@ -56,6 +58,33 @@ function soundProfileForNotification(type) {
   return SOUND_PROFILES.alert;
 }
 
+// The generic lock-screen sentences, in English. The push boundary passes
+// the recipient's language over them (push_locale.js); a slot it leaves out
+// keeps the English sentence.
+const DEFAULT_PUSH_SURFACE = Object.freeze({
+  defaultBody: "Tap to open YO Voice",
+  incomingCallTitle: "Incoming YO Voice call",
+  incomingCallBody: "Open YO Voice to answer.",
+  missedCallTitle: "Missed YO Voice call",
+  missedCallBody: "Open YO Voice to view the call.",
+});
+
+// The ONLY types whose push may carry words somebody wrote. A followed
+// Page's post is public to every signed-in reader, so its first line may
+// appear on a lock screen. Every other type keeps the generic body whatever
+// the caller passes: a comment's or a message's words never enter a push.
+const PUSH_BODY_TYPES = Object.freeze(["pagePostPublished"]);
+const PUSH_BODY_MAX = 240;
+
+function pushSurface(surface) {
+  const merged = { ...DEFAULT_PUSH_SURFACE };
+  for (const key of Object.keys(DEFAULT_PUSH_SURFACE)) {
+    const value = surface?.[key];
+    if (typeof value === "string" && value.trim().length > 0) merged[key] = value;
+  }
+  return merged;
+}
+
 function buildPushMessage({
   tokens,
   type,
@@ -65,6 +94,8 @@ function buildPushMessage({
   title,
   collapseId,
   targetSubId = null,
+  body = null,
+  surface = null,
 }) {
   if (typeof collapseId !== "string" || collapseId.length === 0 ||
       collapseId.length > 64) {
@@ -73,16 +104,20 @@ function buildPushMessage({
   const isIncomingCall = type === "directCall";
   const isPrivateCallNotice = isIncomingCall || type === "missedCall";
   const soundProfile = soundProfileForNotification(type);
-  const defaultBody = "Tap to open YO Voice";
+  const copy = pushSurface(surface);
+  const authoredBody = PUSH_BODY_TYPES.includes(type) && typeof body === "string"
+    ? body.trim().slice(0, PUSH_BODY_MAX)
+    : "";
+  const defaultBody = authoredBody.length > 0 ? authoredBody : copy.defaultBody;
   const publicTitle = isIncomingCall
-    ? "Incoming YO Voice call"
+    ? copy.incomingCallTitle
     : type === "missedCall"
-      ? "Missed YO Voice call"
+      ? copy.missedCallTitle
       : title;
   const publicBody = isIncomingCall
-    ? "Open YO Voice to answer."
+    ? copy.incomingCallBody
     : type === "missedCall"
-      ? "Open YO Voice to view the call."
+      ? copy.missedCallBody
       : defaultBody;
   return {
     tokens,
@@ -146,4 +181,10 @@ function buildPushMessage({
   };
 }
 
-module.exports = { SOUND_PROFILES, buildPushMessage, soundProfileForNotification };
+module.exports = {
+  DEFAULT_PUSH_SURFACE,
+  PUSH_BODY_TYPES,
+  SOUND_PROFILES,
+  buildPushMessage,
+  soundProfileForNotification,
+};

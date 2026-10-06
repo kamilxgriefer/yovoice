@@ -173,6 +173,7 @@ NotificationSoundProfile notificationSoundProfileFor(NotificationType type) {
     NotificationType.reelComment ||
     NotificationType.serverRole ||
     NotificationType.pagePostComment ||
+    NotificationType.pagePostPublished ||
     NotificationType.liveStarted => NotificationSoundProfile.social,
     NotificationType.achievementUnlocked =>
       NotificationSoundProfile.achievement,

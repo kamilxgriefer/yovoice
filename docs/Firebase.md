@@ -75,12 +75,48 @@ Top-level collections (from `firestore.rules`):
 | `directCalls/{callId}` (server-owned; two participants get only) | — |
 | `directCallLocks/{userId}` / `directCallControlOutbox/{callId}` (server-only) | — |
 | `appConfig/{configId}` (server-only runtime configuration; every client read/write denied) | — |
+| `pagePostFanoutOutbox/{outboxId}` (server-only cursor of "a Page you follow published a post"; ADR-237, **not deployed**; `allow read, write: if false`; TTL on `expiresAt`, 7 days) | — |
 | `accountDeletionOutbox/{outboxId}` (server-only deletion queue; `allow read, write: if false`, `firestore.rules:2504`) | — |
 | `deletedAccountDigests/{digestId}` (server-only ban-survival digests; `allow read, write: if false`, `firestore.rules:2508`) | — |
 | `serverMessageMediaUploadReservations/{messageId}`, `serverMessageMediaUploadLeases/{uid}`, `serverMessageMediaUploadBudgets/{digest}`, `serverMessageMediaDeletionJobs/{jobId}` (server channel media, ADR-216, **not deployed**; `allow read, write: if false`) | — |
 | `serverMessageMediaObjects/{messageId}` (server-only owner index for account deletion: `schemaVersion`, `ownerId`, `serverId`, `channelId`, `messageId`, `storagePath`, `generation`, `createdAt`; ADR-216, **not deployed**; `allow read, write: if false`) | — |
 
 Notable fields:
+
+- **Notifications that follow what you follow (ADR-237, source only, NOT
+  deployed)** — three additive changes, nothing renamed or removed:
+  - `users/{uid}.appLanguage` — the language the owner's app is shown in:
+    one of the 43 locale keys of `lib/core/localization/app_language.dart`
+    (`en`, `pl`, `pt_BR`, `zh_CN`, `zh_TW`, …). **Client-written** by
+    `AppLanguageSync` with a merge set, only when the (account, language)
+    pair changes. Rules allow the owner to create, merge and update it with
+    one of those 43 values and nothing else (`appLanguageValueAllowed()`);
+    nobody else reads or writes it. `onNotificationCreated` reads it from
+    the user document it already loads for the preferences. Absent or
+    unknown means English.
+  - `users/{uid}/notifications/{pagePost_<postId>}` — type
+    `pagePostPublished`: `actorId` the Page (its owner's uid), `actorName`
+    the Page's name, `targetId` the post, `targetLabel` the English sentence
+    "New post from a Page you follow: {name}" for builds that do not know
+    the type, `sourcePath` `pagePosts/{postId}`, `sourceGeneration` the
+    post's create time, and two optional fields a newer client reads:
+    `postPreview` (the post's first line, at most 120 characters) and
+    `pageKind` (`business` | `community`). Server-written; the owner's
+    update allowlist is unchanged.
+  - `pagePostFanoutOutbox/{page_post_<digest>}` — `schemaVersion`, `postId`,
+    `pageId`, `sourcePath`, `sourceGeneration`, `targetLabel`,
+    `postPreview`, `pageKind`, `afterId` (the follower cursor), `status`
+    (`pending` | `complete`), `stoppedReason`, `followers`, `pages`,
+    `written`, `createdAt`, `updatedAt`, `expiresAt` (7 days; the TTL field
+    override is in `firestore.indexes.json`). `targetLabel` and
+    `postPreview` are blanked the moment the fan-out completes, so a
+    finished row holds ids and counters only. No index: followers are read
+    by document id.
+  - The per-Page daily push cap is a receipt in the existing TTL-managed
+    `notificationDeliveryEvents` collection (`kind: "pagePostPushCap"`,
+    keyed by recipient, Page and UTC day, kept three days).
+  - `notificationPreferences.pagePostPublished` — the new switch's key,
+    written like every other preference; absent means on.
 
 - **Account deletion (ADR-206, deployed 2026-09-19)** — `accountDeletionOutbox`
   is the queue `deleteAccountSelfV1` writes and the outbox worker leases:

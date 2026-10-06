@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
+import 'package:yovoice/core/localization/app_language_sync.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/localization/document_language.dart';
 import 'package:yovoice/core/localization/firebase_auth_language_sync.dart';
@@ -27,6 +28,7 @@ import 'package:yovoice/features/notifications/data/services/push_notification_s
 import 'package:yovoice/features/notifications/data/models/app_notification.dart';
 import 'package:yovoice/features/friends/data/services/friend_service.dart';
 import 'package:yovoice/features/notifications/presentation/friend_request_banner_decision.dart';
+import 'package:yovoice/features/notifications/presentation/notification_copy.dart';
 import 'package:yovoice/features/notifications/presentation/notification_router.dart';
 import 'package:yovoice/features/notifications/presentation/widgets/yo_top_notification_host.dart';
 import 'package:yovoice/features/reels/presentation/navigation/reel_link_coordinator.dart';
@@ -301,9 +303,16 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
       authStates: FirebaseAuth.instance.authStateChanges(),
       watchNotifications: () => NotificationService().watchNotifications(),
       showBanner: (notification) {
+        // The banner says what the bell row says, in the app's language: the
+        // same copy helper composes both. Before a localized context exists
+        // (the first frame) the model's English title stands in.
+        final context = notificationNavigatorKey.currentContext;
+        final copy = context == null
+            ? null
+            : NotificationCopy(AppLocalizations.of(context));
         return _showForegroundBanner(
-          title: notification.title,
-          body: null,
+          title: copy?.title(notification) ?? notification.title,
+          body: copy?.body(notification),
           type: notification.type,
           targetId: notification.targetId,
           actorId: notification.actorId,
@@ -509,6 +518,10 @@ class _YoVoiceAppState extends State<YoVoiceApp> {
           builder: (context, child) {
             final locale = Localizations.localeOf(context);
             unawaited(FirebaseAuthLanguageSync.instance.synchronize(locale));
+            // The same resolved locale, for the server: pushes are written
+            // in the language the app is shown in (ADR-237). One write when
+            // it changes, none when it has not.
+            unawaited(AppLanguageSync.instance.synchronize(locale));
             updateDocumentLanguage(locale);
             final theme = Theme.of(context);
             final palette = context.appPalette;

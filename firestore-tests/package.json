@@ -3,7 +3,8 @@
   "private": true,
   "type": "commonjs",
   "scripts": {
-    "test": "node rules.test.js && node premium_messaging_privacy_rules.test.js && node account_takeover_rules.test.js && node pages_rules.test.js",
+    "test": "node rules.test.js && node premium_messaging_privacy_rules.test.js && node account_takeover_rules.test.js && node pages_rules.test.js && node notify_follow_rules.test.js",
+    "test:notify-follow": "node notify_follow_rules.test.js",
     "test:pages": "node pages_rules.test.js",
     "test:storage": "node storage.test.js && node account_takeover_storage.test.js && node pages_storage_rules.test.js",
     "test:family-media": "node family-media.test.js",

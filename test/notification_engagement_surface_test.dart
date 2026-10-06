@@ -23,7 +23,7 @@ List<String> _placeholders(String value) =>
 
 void main() {
   group('comment, mention, event and role notifications', () {
-    test('every new type has a destination, and none of them is "none"', () {
+    test('every new type has a screen of its own to open', () {
       const engagement = <NotificationType>[
         NotificationType.momentComment,
         NotificationType.reelComment,
@@ -52,10 +52,13 @@ void main() {
         NotificationDestination.club,
       );
       for (final type in engagement) {
+        // ADR-237 removed `none`: no tap does nothing any more. `inbox` is
+        // what remains for a row that IS its whole message, and an
+        // engagement row must open something more specific than that.
         expect(
           NotificationRouter.destinationFor(type),
-          isNot(NotificationDestination.none),
-          reason: '${type.name} must be tappable',
+          isNot(NotificationDestination.inbox),
+          reason: '${type.name} must open its own destination',
         );
       }
       // Every enum value still resolves — the switch stays exhaustive.

@@ -175,6 +175,73 @@ registered type. `buildPushMessage`
 carries an optional `data.targetSubId` (the comment, the channel); the
 lock-screen body stays generic and no comment text ever enters a payload.
 
+### A followed Page's post, push language and the daily cap (ADR-237, source only, NOT deployed)
+
+- `onPagePostCreated` (`functions/notifications/page_posts.js`) — a Firestore
+  trigger on `pagePosts/{postId}`, not a change to `publishPagePostV1`. For a
+  canonical post that is **born published** it creates
+  `pagePostFanoutOutbox/{id}` once (identity checked; a different identity
+  under the same post is refused) and does nothing else. A held, malformed
+  or six-hour-old event opens no outbox.
+- `onPagePostFanoutOutboxWritten` — the room-live outbox pattern, one page
+  per invocation: while the outbox is `pending` it reads **200 followers**
+  of the Page after the durable cursor (`users/{page}/followers`, by
+  document id), writes one `pagePostPublished` bell row per follower through
+  `createNotificationForEvent` (event ledger keyed by post and follower, so
+  a redelivered page writes nothing twice and never resurrects a row the
+  follower deleted), then commits the cursor in a transaction that refuses a
+  cursor somebody else already moved. That commit re-fires the trigger for
+  the next page. A worker that dies mid-page is retried from the committed
+  cursor. Before each page one read pair stops the whole fan-out when the
+  post is gone or held (`source-gone`), Pages are switched off for everybody
+  (`pages-disabled`) or the outbox is older than six hours (`expired`). A
+  malformed outbox is logged and left alone rather than retried for a week.
+- `pagePostPublishedSourceIsCurrent`
+  (`functions/notifications/engagement_source.js`) is the registered
+  validator, run in the writer's transaction and again in the push claim:
+  the post exists, is canonical, belongs to the Page, is `published` and is
+  the generation the row was written for; `appConfig/pagesV1` lets the
+  recipient read; the Page passes `pageViewDecision` (canonical, not paused,
+  not suspended, active or read-only, owner account active); the follow edge
+  `users/{recipient}/following/{page}` is there; no block either way;
+  neither account is muted. The recipient's **preference is not part of
+  it**: a switched-off preference silences the push (below) and never the
+  bell row, which is what the settings screen promises.
+- **Cost per post:** per follower one transaction of 18 document reads (8 in
+  the canonical writer, 10 in the validator) and two writes (the bell row
+  and its 30-day delivery receipt), plus the push path's reads for the
+  followers who are pushed. A thousand followers is about 18 000 reads and
+  2 000 writes — about one US cent. The outbox row drops the Page's name
+  and the post's first line the moment its fan-out completes and expires
+  after 7 days (Firestore TTL on `expiresAt`).
+- **Daily push cap.** `onNotificationCreated` pushes a follower **at most
+  once per Page per day** (the UTC day of the Page's own post budget). The
+  cap is a receipt in `notificationDeliveryEvents`
+  (`kind: "pagePostPushCap"`), created **inside the push claim
+  transaction** through `claimPushDelivery`'s new `gate` hook, so two posts
+  racing each other cannot both ring. A capped row is marked
+  `pushDeliveryStatus: "skipped"`, `pushSkipReason: "daily-cap"` and stays
+  in the bell. The order is preference → tokens → source → cap, so a muted
+  switch or a token-less account spends no cap.
+- **Push language.** `functions/notifications/push_locale.js` reads
+  `users/{uid}.appLanguage` from the user document the push already loads
+  and picks the title and the generic lock-screen sentences from
+  `functions/notifications/push_copy.json`: every push type, 42 languages.
+  English is `PUSH_TITLES` and the defaults in `push_payload.js`, used only
+  when the language is English or unknown. The JSON is **generated** from
+  the app's own catalog — never edit it by hand:
+  `flutter test test/push_copy_export_test.dart --dart-define=UPDATE_PUSH_COPY=true`
+  rewrites it, and the same test fails without the define when the file and
+  the catalog disagree. A `system` row and a labelled `moderation` row carry
+  server-authored text and are passed through as written. Substitution of
+  `{actor}` and `{label}` is single pass.
+- **What a push may say.** `buildPushMessage` takes an optional `body`, and
+  honours it only for the types in `PUSH_BODY_TYPES` — today
+  `pagePostPublished`, whose post is public to every signed-in reader. Every
+  other type keeps the generic body whatever the caller passes: a comment's
+  or a message's words never enter a push. Call notices stay private on
+  APNs and Web Push in every language.
+
 ## Friends
 
 > **The ADR-114 friend/follow lifecycle below is DEPLOYED (2026-08-25).**

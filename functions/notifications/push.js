@@ -8,6 +8,11 @@ const { logger } = require("firebase-functions/v2");
 const { db } = require("../utils/firestore");
 const { eventLedgerReference } = require("./canonical");
 const { buildPushMessage } = require("./push_payload");
+const {
+  localizedPushSurface,
+  localizedPushTitle,
+  recipientPushLocale,
+} = require("./push_locale");
 const { isCurrentNotificationGeneration } = require("./push_generation");
 const {
   isLegacySocialNotificationId,
@@ -46,6 +51,59 @@ function pushDecisionLedgerReference(userId, notificationId, firestore = db) {
     `pushDecision\u0000${userId}\u0000${notificationId}`,
     firestore,
   );
+}
+
+// A followed Page pushes each follower AT MOST ONCE per day (ADR-237). The
+// day is the Page's own budget day (UTC, pages/media_contract.js), so "one
+// push a day" and "N posts a day" share one boundary. Every further post of
+// that day still writes its bell row; only the push is withheld. The receipt
+// lives in the TTL-managed delivery ledger and is created inside the push
+// claim transaction, so two posts racing each other cannot both ring.
+const PAGE_POST_PUSH_TYPE = "pagePostPublished";
+const PAGE_POST_PUSH_CAP_RETENTION_MS = 3 * 24 * 60 * 60 * 1000;
+const PAGE_POST_PUSH_CAP_SKIP_REASON = "daily-cap";
+
+function pagePostPushCapDay(nowMs) {
+  return new Date(nowMs).toISOString().slice(0, 10).replace(/-/gu, "");
+}
+
+function pagePostPushCapReference(recipientId, pageId, day, firestore = db) {
+  return eventLedgerReference(
+    `pagePostPushCap\u0000${recipientId}\u0000${pageId}\u0000${day}`,
+    firestore,
+  );
+}
+
+/**
+ * The claim gate of a followed Page's post: refuses the push when this
+ * recipient was already pushed by this Page today, otherwise queues today's
+ * receipt to commit WITH the claim. Returns null for every other type.
+ */
+function pagePostPushCapGate({ type, recipientId, notificationId, now, firestore = db }) {
+  if (type !== PAGE_POST_PUSH_TYPE) return null;
+  return async (transaction, data) => {
+    const pageId = data?.actorId;
+    if (typeof pageId !== "string" || pageId.length === 0 || pageId.includes("/")) {
+      return { skipReason: "invalid-source" };
+    }
+    const day = pagePostPushCapDay(now.toMillis());
+    const reference = pagePostPushCapReference(recipientId, pageId, day, firestore);
+    const receipt = await transaction.get(reference);
+    if (receipt.exists) return { skipReason: PAGE_POST_PUSH_CAP_SKIP_REASON };
+    return {
+      commit: () => transaction.create(reference, {
+        kind: "pagePostPushCap",
+        recipientId,
+        pageId,
+        day,
+        notificationId: String(notificationId).slice(0, 320),
+        createdAt: now,
+        expiresAt: Timestamp.fromMillis(
+          now.toMillis() + PAGE_POST_PUSH_CAP_RETENTION_MS,
+        ),
+      }),
+    };
+  };
 }
 
 function notificationDigest(userId, notificationId) {
@@ -138,6 +196,11 @@ function pushDeliveryAttemptId({
 async function claimPushDelivery(args, {
   now = Timestamp.now(),
   validate = null,
+  // An optional second decision made inside the same transaction, after the
+  // source proved current: `(transaction, data) => null | { skipReason } |
+  // { commit }`. A skip keeps the bell row (unlike an invalid source); a
+  // commit writes with the claim. It must finish its reads before returning.
+  gate = null,
   firestore = db,
 } = {}) {
   const claimId = pushDeliveryAttemptId(args);
@@ -167,6 +230,16 @@ async function claimPushDelivery(args, {
       });
       return { state: "terminal", reason: "invalid-source" };
     }
+    const gated = gate ? await gate(transaction, data) : null;
+    if (typeof gated?.skipReason === "string") {
+      transaction.update(reference, {
+        pushDeliveryStatus: "skipped",
+        pushSkipReason: gated.skipReason.slice(0, 120),
+        pushCompletedAt: now,
+      });
+      return { state: "terminal", reason: gated.skipReason };
+    }
+    if (typeof gated?.commit === "function") gated.commit();
     transaction.update(reference, {
       pushDeliveryStatus: "dispatching",
       pushClaimEventId: claimId,
@@ -272,6 +345,9 @@ const PUSH_TITLES = {
     label ? `Starting soon: ${label}` : "An event is starting soon",
   serverRole: (actor, label) =>
     label ? `${actor} promoted you in ${label}` : `${actor} promoted you in a server`,
+  // A Page the recipient follows published a post (ADR-237). The body is the
+  // post's own first line: a Page post is public, unlike a comment.
+  pagePostPublished: (actor) => `${actor} published a post`,
   achievementUnlocked: (_actor, label) =>
     label ? `Achievement unlocked: ${label}` : "Achievement unlocked",
   moderation: (_actor, label) => label || "A moderator took action on your account",
@@ -354,6 +430,9 @@ async function handleNotificationCreated(event, {
   // be reached with real data. A test injects the registry to prove the
   // branch keeps the recipient's row instead of deleting it.
   isRegisteredType = isRegisteredNotificationType,
+  // Seam: the instant the claim is made, which is also the instant the
+  // followed-Page daily cap is evaluated at.
+  claimClock = () => Timestamp.now(),
 } = {}) {
   const snapshot = event.data;
   if (!snapshot) return;
@@ -453,8 +532,17 @@ async function handleNotificationCreated(event, {
     currentNotification = await snapshot.ref.get();
     if (!isCurrentNotificationGeneration(snapshot, currentNotification)) return;
     currentData = currentNotification.data();
-    const actorName = currentData.actorName || "YoVoice user";
-    const title = buildTitle(actorName, currentData.targetLabel || null);
+    // The recipient's language (users/{uid}.appLanguage, written by build
+    // 42+). Unknown means English: exactly the pre-localisation push.
+    const locale = recipientPushLocale(userDoc.data());
+    const targetLabel = currentData.targetLabel || null;
+    const title = localizedPushTitle({
+      type,
+      locale,
+      actorName: currentData.actorName,
+      targetLabel,
+    }) ?? buildTitle(currentData.actorName || "YoVoice user", targetLabel);
+    const surface = localizedPushSurface(locale);
     const plan = planTokenDocuments(registrationsNotBeforeEpoch(
       tokensSnap.docs,
       userDoc.data()?.authSessionEpoch,
@@ -468,12 +556,20 @@ async function handleNotificationCreated(event, {
     // then writes the irreversible claim. Firestore retries the transaction if
     // the message/conversation/room changes before commit.
     if (beforeDispatchClaim) await beforeDispatchClaim();
+    const claimedAt = claimClock();
     const acquisition = await claimPushDelivery(deliveryArgs, {
+      now: claimedAt,
       validate: (transaction, data) => notificationSourceIsCurrent({
         recipientId: userId,
         notificationId,
         notification: data,
         reader: transaction,
+      }),
+      gate: pagePostPushCapGate({
+        type,
+        recipientId: userId,
+        notificationId,
+        now: claimedAt,
       }),
     });
     if (acquisition.state !== "claimed") {
@@ -517,6 +613,10 @@ async function handleNotificationCreated(event, {
         title,
         collapseId: claim.collapseId,
         targetSubId: currentData.targetSubId ?? null,
+        // Ignored by the payload builder for every type outside its
+        // PUSH_BODY_TYPES allowlist.
+        body: currentData.postPreview ?? null,
+        surface,
       }),
     });
     if (afterExternalSend) await afterExternalSend(delivery);
@@ -593,6 +693,8 @@ exports.onNotificationCreated = onDocumentCreated(
 
 module.exports = {
   onNotificationCreated: exports.onNotificationCreated,
+  PAGE_POST_PUSH_CAP_RETENTION_MS,
+  PAGE_POST_PUSH_CAP_SKIP_REASON,
   PUSH_DECISION_LEDGER_TYPES,
   PUSH_DECISION_RETENTION_MS,
   PUSH_PREFERENCE_KEYS,
@@ -604,6 +706,9 @@ module.exports = {
   isCurrentNotificationGeneration,
   isLegacySocialNotificationId,
   notificationSourceIsCurrent,
+  pagePostPushCapDay,
+  pagePostPushCapGate,
+  pagePostPushCapReference,
   pushDecisionLedgerReference,
   pushDeliveryAttemptId,
   pushPreferenceDisabled,

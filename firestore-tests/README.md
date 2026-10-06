@@ -57,6 +57,15 @@ read at all). It runs as the last file of `test:storage` (so CI runs it with
 the other Storage suites) and alone as `test:pages-storage`, with
 `--only firestore,storage --project demo-yovoice`.
 
+## Notifications that follow what you follow (ADR-237)
+
+`notify_follow_rules.test.js` is the Firestore boundary of the two things
+ADR-237 adds: `users/{uid}.appLanguage` (the owner may create, merge and
+update it with one of the 43 selectable locale keys and nothing else; nobody
+else writes or reads it; holding it never blocks another update) and
+`pagePostFanoutOutbox` (server-only for every client). It runs as part of
+`npm test` and alone as `npm --prefix firestore-tests run test:notify-follow`.
+
 ## Storage rules
 
 `storage.test.js` is the regression suite for `../storage.rules` — profile,

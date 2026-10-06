@@ -709,7 +709,8 @@ class _NotificationCard extends StatelessWidget {
     NotificationType.serverEventReminder => Icons.event_available_outlined,
     NotificationType.moderation ||
     NotificationType.pageModeration => Icons.shield_outlined,
-    NotificationType.pageLapse => Icons.article_outlined,
+    NotificationType.pageLapse ||
+    NotificationType.pagePostPublished => Icons.article_outlined,
     _ => Icons.notifications_none_rounded,
   };
 

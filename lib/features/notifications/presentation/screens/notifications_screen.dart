@@ -21,12 +21,14 @@ import 'package:yovoice/features/messages/data/models/conversation.dart';
 import 'package:yovoice/features/messages/data/services/message_service.dart';
 import 'package:yovoice/features/messages/presentation/screens/chat_screen.dart';
 import 'package:yovoice/features/notifications/data/models/app_notification.dart';
-import 'package:yovoice/features/pages/presentation/page_notice_copy.dart';
+import 'package:yovoice/features/notifications/presentation/notification_copy.dart';
+import 'package:yovoice/features/pages/presentation/widgets/page_face.dart';
 import 'package:yovoice/features/notifications/data/services/notification_service.dart';
 import 'package:yovoice/features/notifications/presentation/notification_router.dart';
 import 'package:yovoice/features/notifications/presentation/widgets/yo_top_notification_host.dart';
 import 'package:yovoice/shared/widgets/layout/home_section_header.dart';
 import 'package:yovoice/shared/widgets/layout/responsive_content_frame.dart';
+import 'package:yovoice/shared/identity/public_identity.dart' show PageKind;
 import 'package:yovoice/shared/widgets/identity/user_identity_badges.dart';
 import 'package:yovoice/shared/widgets/interactions/accessible_tap_region.dart';
 import 'package:yovoice/shared/widgets/profile/profile_preview_sheet.dart';
@@ -289,6 +291,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       notificationId: notification.id,
       targetSubId: notification.targetSubId,
       sourcePath: notification.sourcePath,
+      // A YO Voice or moderator notice has no further screen: this list is
+      // already where it lives.
+      fromInbox: true,
     );
   }
 
@@ -1157,6 +1162,7 @@ class _NotificationCard extends StatelessWidget {
     NotificationType.pagePostComment: Icons.mode_comment_rounded,
     NotificationType.pageModeration: Icons.shield_rounded,
     NotificationType.pageLapse: Icons.article_rounded,
+    NotificationType.pagePostPublished: Icons.article_rounded,
     NotificationType.achievementUnlocked: Icons.emoji_events_rounded,
     NotificationType.moderation: Icons.shield_rounded,
     NotificationType.system: Icons.info_rounded,
@@ -1167,195 +1173,6 @@ class _NotificationCard extends StatelessWidget {
     return AppLocalizations.of(context).relativeCompactTime(time);
   }
 
-  String _localizedTitle(BuildContext context) {
-    final copy = AppLocalizations.of(context);
-    final actor = notification.actorName.trim().isEmpty
-        ? copy.text('YO Voice user', 'Użytkownik YO Voice')
-        : notification.actorName.trim();
-    final label = notification.targetLabel?.trim();
-    final hasLabel = label != null && label.isNotEmpty;
-
-    return switch (notification.type) {
-      NotificationType.friendRequest => copy.template(
-        '{actor} sent you a friend request',
-        '{actor} wysyła Ci zaproszenie do znajomych',
-        values: {'actor': actor},
-      ),
-      NotificationType.friendAccepted => copy.template(
-        '{actor} accepted your friend request',
-        '{actor} przyjmuje Twoje zaproszenie do znajomych',
-        values: {'actor': actor},
-      ),
-      NotificationType.follow => copy.template(
-        '{actor} started following you',
-        '{actor} zaczyna Cię obserwować',
-        values: {'actor': actor},
-      ),
-      NotificationType.clubInvite =>
-        hasLabel
-            ? copy.template(
-                '{actor} invited you to {label}',
-                '{actor} zaprasza Cię do serwera {label}',
-                values: {'actor': actor, 'label': label},
-              )
-            : copy.template(
-                '{actor} invited you to a server',
-                '{actor} zaprasza Cię do serwera',
-                values: {'actor': actor},
-              ),
-      NotificationType.clubInviteAccepted =>
-        hasLabel
-            ? copy.template(
-                '{actor} joined {label}',
-                '{actor} dołącza do serwera {label}',
-                values: {'actor': actor, 'label': label},
-              )
-            : copy.template(
-                '{actor} accepted your server invitation',
-                '{actor} przyjmuje Twoje zaproszenie do serwera',
-                values: {'actor': actor},
-              ),
-      NotificationType.roomInvite =>
-        hasLabel
-            ? copy.template(
-                '{actor} invited you to {label}',
-                '{actor} zaprasza Cię do kanału głosowego {label}',
-                values: {'actor': actor, 'label': label},
-              )
-            : copy.template(
-                '{actor} invited you to a voice channel',
-                '{actor} zaprasza Cię do kanału głosowego',
-                values: {'actor': actor},
-              ),
-      NotificationType.broadcastInvite =>
-        hasLabel
-            ? copy.template(
-                '{actor} invited you to {label}',
-                '{actor} zaprasza Cię do transmisji {label}',
-                values: {'actor': actor, 'label': label},
-              )
-            : copy.template(
-                '{actor} invited you to a broadcast',
-                '{actor} zaprasza Cię do transmisji',
-                values: {'actor': actor},
-              ),
-      NotificationType.liveStarted =>
-        hasLabel
-            ? copy.template(
-                '{actor} is live: {label}',
-                '{actor} prowadzi teraz: {label}',
-                values: {'actor': actor, 'label': label},
-              )
-            : copy.template(
-                '{actor} is live now',
-                '{actor} jest teraz na żywo',
-                values: {'actor': actor},
-              ),
-      NotificationType.directMessage => copy.template(
-        '{actor} sent you a message request',
-        '{actor} wysyła Ci prośbę o wiadomość',
-        values: {'actor': actor},
-      ),
-      NotificationType.directCall => copy.template(
-        '{actor} is calling you',
-        '{actor} dzwoni do Ciebie',
-        values: {'actor': actor},
-      ),
-      NotificationType.missedCall => copy.template(
-        'Missed call from {actor}',
-        'Nieodebrane połączenie od {actor}',
-        values: {'actor': actor},
-      ),
-      NotificationType.mention =>
-        hasLabel
-            ? copy.template(
-                '{actor} mentioned you in {label}',
-                '{actor} wspomina o Tobie w {label}',
-                values: {'actor': actor, 'label': label},
-              )
-            : copy.template(
-                '{actor} mentioned you',
-                '{actor} wspomina o Tobie',
-                values: {'actor': actor},
-              ),
-      NotificationType.reply =>
-        hasLabel
-            ? copy.template(
-                '{actor} replied to you in {label}',
-                '{actor} odpowiada Ci w {label}',
-                values: {'actor': actor, 'label': label},
-              )
-            : copy.template(
-                '{actor} replied to you',
-                '{actor} odpowiada Ci',
-                values: {'actor': actor},
-              ),
-      NotificationType.momentComment => copy.template(
-        '{actor} commented on your Moment',
-        '{actor} komentuje Twój Moment',
-        values: {'actor': actor},
-      ),
-      NotificationType.reelComment => copy.template(
-        '{actor} commented on your Yeel',
-        '{actor} komentuje Twojego Yeela',
-        values: {'actor': actor},
-      ),
-      NotificationType.commentMention => copy.template(
-        '{actor} mentioned you in a comment',
-        '{actor} oznacza Cię w komentarzu',
-        values: {'actor': actor},
-      ),
-      NotificationType.serverEventReminder =>
-        hasLabel
-            ? copy.template(
-                'Starting soon: {label}',
-                'Niedługo start: {label}',
-                values: {'label': label},
-              )
-            : copy.text(
-                'An event is starting soon',
-                'Wydarzenie niedługo się zacznie',
-              ),
-      NotificationType.serverRole =>
-        hasLabel
-            ? copy.template(
-                '{actor} promoted you in {label}',
-                '{actor} awansuje Cię na serwerze {label}',
-                values: {'actor': actor, 'label': label},
-              )
-            : copy.template(
-                '{actor} promoted you in a server',
-                '{actor} awansuje Cię na serwerze',
-                values: {'actor': actor},
-              ),
-      NotificationType.pagePostComment => copy.template(
-        '{actor} commented on your Page post',
-        '{actor} komentuje Twój post na stronie',
-        values: {'actor': actor},
-      ),
-      NotificationType.pageModeration => PageNoticeCopy(
-        copy,
-      ).moderation(notification),
-      NotificationType.pageLapse => PageNoticeCopy(copy).lapse(notification),
-      NotificationType.achievementUnlocked =>
-        hasLabel
-            ? copy.template(
-                'Achievement unlocked: {label}',
-                'Odblokowano osiągnięcie: {label}',
-                values: {'label': label},
-              )
-            : copy.text('Achievement unlocked', 'Odblokowano osiągnięcie'),
-      NotificationType.moderation =>
-        hasLabel
-            ? label
-            : copy.text(
-                'A moderator took action on your account',
-                'Moderator wykonał działanie na Twoim koncie',
-              ),
-      NotificationType.system => hasLabel ? label : 'YO Voice',
-    };
-  }
-
   @override
   Widget build(BuildContext context) {
     final localizations = AppLocalizations.of(context);
@@ -1363,7 +1180,14 @@ class _NotificationCard extends StatelessWidget {
     final colors = Theme.of(context).colorScheme;
     final scaledBodySize = MediaQuery.textScalerOf(context).scale(14);
     final usesLargeText = scaledBodySize >= 21;
-    final localizedTitle = _localizedTitle(context);
+    final notificationCopyText = NotificationCopy(localizations);
+    final localizedTitle = notificationCopyText.title(notification);
+    // The first words of a followed Page's post; null for every other row.
+    final bodyLine = notificationCopyText.body(notification);
+    // A row whose tap opens somewhere says so with a chevron when nothing
+    // else on it does: an unlocked achievement opens Awards.
+    final opensDestination =
+        notification.type == NotificationType.achievementUnlocked;
 
     // Only a notice with no actor is YO Voice itself; a system row that
     // names a person keeps that person's avatar.
@@ -1383,12 +1207,24 @@ class _NotificationCard extends StatelessWidget {
             systemSender: true,
           )
         : Stack(
+            clipBehavior: Clip.none,
             children: [
-              _Avatar(
-                userId: notification.actorId,
-                name: notification.actorName,
-                photoUrl: notification.actorPhotoUrl ?? '',
-              ),
+              if (notification.actorIsPage)
+                // A Page is not a person: its face is the Page squircle, the
+                // same one its profile, the feed and the Find list draw.
+                PageFace(
+                  key: ValueKey('notification-page-face-${notification.id}'),
+                  pageId: notification.actorId,
+                  name: notification.actorName,
+                  size: _Avatar.diameter,
+                  kind: PageKind.fromWire(notification.pageKind),
+                )
+              else
+                _Avatar(
+                  userId: notification.actorId,
+                  name: notification.actorName,
+                  photoUrl: notification.actorPhotoUrl ?? '',
+                ),
               Positioned(
                 right: -2,
                 bottom: -2,
@@ -1442,10 +1278,26 @@ class _NotificationCard extends StatelessWidget {
                 ),
               ),
             ),
-            if (notification.actorId.isNotEmpty)
+            // Role and VIP badges belong to a person. A Page's id is its
+            // owner's uid, and the owner's badges are not the Page's.
+            if (notification.actorId.isNotEmpty && !notification.actorIsPage)
               UserIdentityBadges(uid: notification.actorId),
           ],
         ),
+        if (bodyLine != null) ...[
+          const SizedBox(height: 2),
+          Text(
+            bodyLine,
+            key: ValueKey('notification-body-${notification.id}'),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: palette.textSecondary,
+              fontSize: 12.5,
+              height: 1.35,
+            ),
+          ),
+        ],
         const SizedBox(height: 4),
         Text(
           _relativeTime(context, notification.createdAt),
@@ -1453,6 +1305,17 @@ class _NotificationCard extends StatelessWidget {
         ),
       ],
     );
+    final destinationChevron = opensDestination
+        ? ExcludeSemantics(
+            child: Icon(
+              // The glyph mirrors itself in RTL (matchTextDirection).
+              Icons.chevron_right_rounded,
+              key: ValueKey('notification-chevron-${notification.id}'),
+              color: palette.textSecondary,
+              size: 22,
+            ),
+          )
+        : const SizedBox.shrink();
     final unreadIndicator = notification.isRead
         ? const SizedBox.shrink()
         : ExcludeSemantics(
@@ -1585,6 +1448,7 @@ class _NotificationCard extends StatelessWidget {
                             avatar,
                             const Spacer(),
                             unreadIndicator,
+                            destinationChevron,
                             const SizedBox(width: 4),
                             actions,
                           ],
@@ -1603,6 +1467,7 @@ class _NotificationCard extends StatelessWidget {
                       Expanded(child: notificationCopy),
                       const SizedBox(width: 4),
                       unreadIndicator,
+                      destinationChevron,
                       actions,
                     ],
                   );

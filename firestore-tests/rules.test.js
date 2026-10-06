@@ -13963,6 +13963,8 @@ async function main() {
         "privateRoomVoiceStartGuards/start-guard-probe",
         "privateRoomVoiceStartAttempts/start-attempt-probe",
         "roomLiveFanoutOutbox/fanout-probe",
+        // ADR-237: the same cursor for a followed Page's post.
+        "pagePostFanoutOutbox/fanout-probe",
       ]) {
         const reference = doc(db, path);
         await assertFails(getDoc(reference));

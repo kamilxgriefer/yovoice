@@ -25,6 +25,9 @@ void main() {
       NotificationType.pagePostComment: NotificationSoundProfile.social,
       NotificationType.pageModeration: NotificationSoundProfile.alert,
       NotificationType.pageLapse: NotificationSoundProfile.alert,
+      // ADR-237: a post from a Page you follow is social, like LIVE from
+      // somebody you follow.
+      NotificationType.pagePostPublished: NotificationSoundProfile.social,
       NotificationType.friendRequest: NotificationSoundProfile.social,
       NotificationType.friendAccepted: NotificationSoundProfile.social,
       NotificationType.follow: NotificationSoundProfile.social,

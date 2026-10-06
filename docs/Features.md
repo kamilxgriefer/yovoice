@@ -567,6 +567,16 @@ deep link is reachable. The spec and the owner-approved renders live in
 - **Notifications.** "{actor} commented on your Page post" opens the post;
   Page moderation and lapse notices come from YO Voice (not a person) and
   open your Page. The comment push follows the existing "Comments" switch.
+- **A Page you follow published a post (ADR-237, source only, NOT
+  deployed).** Every follower who may read the post gets a bell row with the
+  Page's face, "{Page} published a post" and the post's first line; tapping
+  it opens the post. The push carries the same title and first line, in the
+  follower's language, **at most once per Page per day** — later posts of
+  that day wait in the bell. It has its own switch (Settings →
+  Notifications → Following → "New posts from Pages you follow", on by
+  default) that silences the push and never the bell row. Unfollowing,
+  blocking, a paused or suspended Page, a deleted or held post and the Pages
+  kill switch each stop it.
 - **Languages.** Every string is translated in all 43 app languages
   (`translations_pages.dart`, `test/pages_localization_test.dart`), and every
   count uses each language's plural forms.
@@ -665,3 +675,22 @@ compact floating banner with an Open action. Android, iOS and the focused web
 app use the same original YO Voice notification motif rather than a generic
 system beep; Android uses a versioned notification channel because installed
 channel sound settings are immutable.
+
+Since ADR-237 (source only, **not deployed**):
+
+- **Pushes are written in the recipient's language.** The app stores the
+  language it is shown in on the account (`users/{uid}.appLanguage`, one
+  write when it changes) and the server picks the push title and body from
+  the same translations the bell uses, in all 43 languages. An account that
+  has not opened build 42 yet keeps receiving English, exactly as before.
+- **Every tap leads somewhere.** "Achievement unlocked" opens Awards (it
+  used to do nothing). A YO Voice or moderator notice opens the notification
+  centre when tapped from a push. A notification whose destination is gone —
+  a retired standalone room, a deleted Server, an ended call — answers with
+  one line, "This content is no longer available.", instead of doing nothing
+  or dropping the reader on the Servers list.
+- **Settings → Notifications** opens with a **Following** group (LIVE from
+  people you follow, new posts from Pages you follow), and the whole screen
+  is translated in all 43 languages. Bell titles for friend requests,
+  invitations, calls, mentions and achievements are translated too; before,
+  only English and Polish existed for them.

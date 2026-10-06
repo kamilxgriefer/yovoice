@@ -29,6 +29,9 @@ enum NotificationType {
   pagePostComment,
   pageModeration,
   pageLapse,
+  // A Page the recipient follows published a post (ADR-237). The actor is
+  // the Page (its id is its owner's uid), the target is the post.
+  pagePostPublished,
   // Server-only: never in firestore.rules' client-creatable type list, so
   // only the Admin SDK (Cloud Functions) can ever produce one of these.
   achievementUnlocked,
@@ -61,6 +64,8 @@ class AppNotification {
     this.moderationAction,
     this.moderationReason,
     this.lapsePhase,
+    this.postPreview,
+    this.pageKind,
   });
 
   final String id;
@@ -113,6 +118,17 @@ class AppNotification {
 
   /// `pageLapse` rows: `readOnly` (Day 0) or `hidingSoon` (Day 23).
   final String? lapsePhase;
+
+  /// `pagePostPublished` rows: the post's first line (at most 120
+  /// characters, absent for a photo or voice post without a caption) and the
+  /// Page's kind (`business` or `community`) for its face. Additive; a row
+  /// without them still shows its title.
+  final String? postPreview;
+  final String? pageKind;
+
+  /// True when the actor is a Page rather than a person: the row draws the
+  /// Page's face and no personal identity badges.
+  bool get actorIsPage => type == NotificationType.pagePostPublished;
 
   /// Rows YO Voice itself sends (no person behind them).
   bool get isSystemNotice =>
@@ -189,6 +205,10 @@ class AppNotification {
         return targetLabel ?? 'A moderator took action on your Page';
       case NotificationType.pageLapse:
         return targetLabel ?? 'Your Page changed while YO Voice VIP is off';
+      case NotificationType.pagePostPublished:
+        // `targetLabel` is the sentence for builds that do not know this
+        // type; the title here names the Page itself.
+        return '$actorName published a post';
       case NotificationType.achievementUnlocked:
         return targetLabel == null
             ? 'Achievement unlocked'
@@ -224,6 +244,8 @@ class AppNotification {
       moderationAction: _optionalString(data['moderationAction']),
       moderationReason: _optionalString(data['moderationReason']),
       lapsePhase: _optionalString(data['lapsePhase']),
+      postPreview: _optionalString(data['postPreview']),
+      pageKind: _optionalString(data['pageKind']),
     );
   }
 

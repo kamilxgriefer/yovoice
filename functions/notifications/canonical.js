@@ -55,6 +55,46 @@ function canonicalNotificationData({
   return data;
 }
 
+// Every key the canonical writer itself owns. `extraFields` may only add
+// keys outside this set, so a caller can never forge the actor, the routing
+// or the read state through the additive door.
+const CANONICAL_NOTIFICATION_KEYS = Object.freeze([
+  "type",
+  "actorId",
+  "actorName",
+  "actorPhotoUrl",
+  "targetId",
+  "targetLabel",
+  "isRead",
+  "readAt",
+  "createdAt",
+  "dedupeKey",
+  "bellSuppressed",
+  "targetSubId",
+  "sourcePath",
+  "sourceGeneration",
+]);
+
+function canonicalExtraFields(extraFields) {
+  if (extraFields === null || extraFields === undefined) return {};
+  if (typeof extraFields !== "object" || Array.isArray(extraFields)) {
+    throw new TypeError("extraFields must be a plain object.");
+  }
+  const fields = {};
+  for (const [key, value] of Object.entries(extraFields)) {
+    if (CANONICAL_NOTIFICATION_KEYS.includes(key) ||
+        !/^[a-z][A-Za-z0-9]{0,39}$/u.test(key) || key.startsWith("push")) {
+      throw new TypeError(`extraFields cannot carry ${key}.`);
+    }
+    if (value === undefined || value === null) continue;
+    if (typeof value !== "string" || value.length === 0 || value.length > 240) {
+      throw new TypeError(`extraFields.${key} must be a short string.`);
+    }
+    fields[key] = value;
+  }
+  return fields;
+}
+
 function notificationReference(recipientId, notificationId, firestore = db) {
   return firestore.doc(`users/${recipientId}/notifications/${notificationId}`);
 }
@@ -100,12 +140,17 @@ async function createNotificationForEvent({
   // party. Only such a writer opts in; every social writer keeps the
   // self-notification refusal.
   allowSelf = false,
+  // Additive, optional row fields a newer client reads beside the canonical
+  // ones (a followed Page post's kind and preview). The writer owns their
+  // validation; a canonical key can never be overridden through here.
+  extraFields = null,
   firestore = db,
 }) {
   if (!eventId || !recipientId || !actorId ||
       (recipientId === actorId && allowSelf !== true)) {
     return "skipped:invalid-parties";
   }
+  const additiveFields = canonicalExtraFields(extraFields);
 
   const actorReference = firestore.doc(`users/${actorId}`);
   const recipientReference = firestore.doc(`users/${recipientId}`);
@@ -193,6 +238,7 @@ async function createNotificationForEvent({
     if (typeof sourceGeneration === "string" && sourceGeneration) {
       notificationData.sourceGeneration = sourceGeneration.slice(0, 128);
     }
+    Object.assign(notificationData, additiveFields);
     transaction.set(
       notification,
       notificationData,
@@ -202,6 +248,7 @@ async function createNotificationForEvent({
 }
 
 module.exports = {
+  CANONICAL_NOTIFICATION_KEYS,
   EVENT_LEDGER_RETENTION_MS,
   activeProfile,
   canonicalNotificationData,
