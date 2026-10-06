@@ -1096,6 +1096,22 @@ the built screens: `yovoice-evidence/2026-10-03/w42/page-delete/`
   top with a gradient "Przywróć stronę", the pill in the identity card,
   every edit row disabled, WIDOCZNOŚĆ STRONY = "Przywróć stronę", and the
   danger zone = "Usuń teraz, nie czekaj" (confirmed by a dialog).
+- **"Przywróć stronę", two answers.** The deletion is always cancelled.
+  When the Page is back on air the snack says "Strona przywrócona"; when it
+  could not be resumed (no live Premium or VIP, a private profile, paused
+  before the request) it says "Usuwanie anulowane. Strona pozostaje
+  wstrzymana." and the screen is the ordinary paused state with "Wznów
+  stronę" (`PageDeletionState.pagePaused`).
+- **"Usuń teraz, nie czekaj", the fresh sign-in.** The server asks for a
+  sign-in no older than 5 minutes for this one step. When it refuses, the
+  owner confirms it is them the way the account deletion screen does
+  (`page_delete_reauth.dart`): Google or Apple open their own sheet; a
+  password account gets an `AlertDialog` "Potwierdź, że to Ty" (body, one
+  obscured field labelled "Hasło", "Anuluj" and a destructive "Usuń" that is
+  disabled while the field is empty; scrollable, max width 480, so it fits
+  200 % text and centres on tablet and desktop). Then the purge is sent
+  once more. Closing the dialog is silent; anything that could not be
+  confirmed is one snack saying nothing was deleted.
 - **Purging.** "Trwa usuwanie strony" notice, no actions; the open profile
   asks every 20 s (as it does while posts are being cleared).
 - **Deleted.** "Usuń teraz" on a small Page finishes inside the call: Page

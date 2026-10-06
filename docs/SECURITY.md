@@ -1748,24 +1748,65 @@ worker slice `pageDeletion` of `pagesMaintenance`). It amends ADR-233, which
 had no deletion.
 
 - **Ownership is the uid.** Every op acts on `pages/{auth.uid}` only; the
-  input is exactly `{op}` and carries no page id, so there is nothing to
-  point at somebody else's Page.
+  input is exactly `{op}` (`{op, requestedAtMs}` for `purgeNow`) and carries
+  no page id, so there is nothing to point at somebody else's Page.
 - **Safety actions.** `request` (pause + the 30-day record, ONE
   transaction, reusing `applyPagePauseInTransaction`), `purgeNow` and
   `clearPosts` read no switch, no capability, no mute and no e-mail
   verification, and tolerate a malformed Page (logged): the kill switch or a
-  lapse must never trap an owner who wants their content gone. `purgeNow`
-  only ever follows a `request` (the typed-name confirmation), so it cannot
-  be the first step. They are idempotent; the first request's date stands.
-- **Restore is a gated write.** Activation (write), `pages.deletionRestore`
-  (10/h), active account, no mute, verified e-mail, live capability. It
-  removes the record and un-pauses only a Page that was running before the
-  request and still passes the resume rules (public profile, allowed name);
-  a suspended Page is left exactly as the moderator put it. `managePageV1
-  resume` cancels a PENDING deletion in its own transaction (builds 40/41
-  show such a Page as paused), and `update` / `resume` answer
-  `pageNotFound` once the purge started, so a Page can never be resumed
-  into a purge.
+  lapse must never trap an owner who wants their content gone. They are
+  idempotent; the first request's date stands. Each has its own per-uid
+  budget, charged before the op (`pages.deletionRequest` 20/h,
+  `pages.deletionPurge` 10/h, `pages.deletionClear` 10/h): they do
+  worker-scale work per call, so a script cannot loop them. A repeated
+  `purgeNow` on a purge that is already running only answers the state; it
+  starts no second runner.
+- **The undo is never harder than the deletion (review 2026-10-06).** The
+  purge reads no gate, so the CANCEL reads none either. `restore` removes a
+  pending record in its own transaction as a safety action: no switch, no
+  capability, no mute, no verified e-mail, no budget, whatever state the
+  Page document is in. Only then, as a separate gated write (switch,
+  `pages.deletionRestore` 10/h, verified, active, not muted, live Premium or
+  VIP, the resume rules: public profile, allowed name), a Page that was
+  running before the request goes back on air; any refusal there, a broken
+  visibility index included, leaves an ordinary paused Page and never a
+  record. A suspended Page is left exactly as the moderator put it. The
+  answer's `pagePaused` says which happened, and the client words it
+  ("Strona przywrócona" / "Usuwanie anulowane. Strona pozostaje
+  wstrzymana."). `managePageV1 resume` (what builds 40/41 offer for a
+  pending Page) does the same: `cancelPendingDeletion` runs in its own
+  transaction BEFORE the verified e-mail, the switch, the budget, the
+  capability, the suspension, the profile and the name are looked at, so a
+  REFUSED resume still stops the timer. `update` / `resume` answer
+  `pageNotFound` once the purge started, so a Page can never be resumed into
+  a purge. Before this fix every gate that stayed closed for the rest of the
+  30 days (the kill switch during an incident, a lapsed subscription, a
+  mute) turned a deletion its owner tried to take back into a permanent one.
+- **"Delete now" needs more than a valid session.** `purgeNow` is the one
+  irreversible op, so it calls `requireRecentPrivilegedAuthentication`
+  (`utils/auth.js`, the account-deletion rule): `auth_time` no older than 5
+  minutes, else `failed-precondition` / `recent-authentication-required`. A
+  stolen long-lived token, a shared or unlocked device or a script can start
+  a deletion, which the owner can take back for 30 days, but cannot skip the
+  wait. It is also bound to the request it confirms: the input carries the
+  `requestedAtMs` the owner was shown, and anything else is
+  `pageDeletionChanged`, so a delayed or duplicated call never purges a
+  NEWER request. The typed Page name is a client-side guard against a stray
+  tap only; the server never sees it and it is not a security control. The
+  client (`page_delete_reauth.dart`) re-challenges with Google, Apple or the
+  password, forces a new ID token and sends the op once more.
+- **The operator's brake.** A pending deletion whose date passed is NOT
+  claimed while its owner could not use Pages at all
+  (`pagesWriteAllowed(appConfig/pagesV1, uid)` false: the kill switch,
+  testers mode for a non-tester, a missing or malformed switch). It is
+  looked at again 6 hours later and stays restorable meanwhile
+  (`pages deletion deadline held`, a count only). With Pages hidden an owner
+  may not even reach "Przywróć stronę", and an incident that outlasts the
+  rest of a window must not make deletions permanent by itself. "Delete now"
+  and a purge already under way are never held.
+- **No lapse notice beside a deletion.** The Day 0 and Day 23 `pageLapse`
+  rows both say "nothing is deleted"; `lapse_service.js` does not write them
+  while `pageDeletions/{P}` exists (the transition itself is still written).
 - **Order is the safety argument.** posts → follower edges → storage →
   records → Page. `pages/{uid}` exists (paused) until the last follower
   edge is gone, so every "is this account a Page?" check stays closed while
@@ -1799,7 +1840,27 @@ had no deletion.
   null, the owner gets the `pageSuspended` statement of reasons), and
   `liftPageSuspension` clears a remembered one. So "delete now" on a
   reported Page is not a way around the decision. A deleted account leaves
-  nothing (no row is written when `users/{uid}` is gone).
+  nothing: no row is written when `users/{uid}` is gone OR carries an
+  `accountDeletion` mark (during account deletion that document outlives the
+  Page and the uid-keyed records step, and a row with a suspension never
+  expires), and the `finalize` stage deletes `pageMemory/{uid}` once more. A
+  banned account (disabled, no deletion mark) is still remembered: a ban can
+  be lifted.
+- **A remembered suspension also keeps the Creator audience closed.** While
+  the suspended Page existed, `setCreatorAudienceEnabled` refused
+  (`pages/{uid}` exists). After the Page is deleted it reads
+  `pageMemory/{uid}` in the same transaction and refuses while the row's
+  `suspension` is anything but an explicit null (a malformed row fails
+  closed), with the generic "unavailable" refusal, so the suspension is not
+  disclosed. Otherwise deleting a suspended Page would make the account
+  followable again within minutes (publicly listable Creator edges, the
+  "People you follow" DM exemption, the LIVE fan-out).
+- **A new Page never inherits an old record.** `managePageV1 create` reads
+  `pageDeletions/{uid}` and `pagePostClearJobs/{uid}` in its transaction and
+  deletes what it finds (with an error line): no Page existed, so such a
+  record outlived an earlier one (a hand repair, a re-enabled account) and
+  would purge the new Page, followers included, on the old date. `request`
+  on a record found over a RUNNING Page pauses it again.
 - **The last step is authorised inside its own transaction.** Removing
   `pages/{uid}` re-reads `pageDeletions/{uid}` in the same transaction and
   writes only while it is still `purging`. A second runner (`purgeNow`'s
@@ -1809,10 +1870,13 @@ had no deletion.
   remembered suspension) nor delete a Page it holds no record for. An
   existing memory's suspension is carried over; a malformed memory is never
   replaced.
-- **Bounded work.** Per run: 5 deletions x 6 rounds, 5 clear jobs x 5
-  rounds, 20 reminders, 50 memory rows, and a 120 s budget after which the
-  slice stops picking up further records (they are due again in 10
-  minutes), so large Pages cannot starve the slices behind it.
+- **Bounded work.** Per run: 20 reminders, 5 clear jobs x 20 rounds (10
+  posts a round), 5 deletions x 6 rounds, 50 memory rows. The clear jobs run
+  BEFORE the purges (their posts are still public while they wait; a purged
+  Page is already hidden) and each of the two parts stops picking up work
+  45 s after IT started (a clear job also stops between rounds), so a purge
+  cannot starve a clear job and large Pages cannot starve the slices behind
+  the whole slice. The rest is due again in 10 minutes.
 - **Server-only stores.** `pageDeletions`, `pagePostClearJobs` and
   `pageMemory` are `allow read, write: if false` (explicit, with the other
   Pages stores; `firestore-tests/pages_rules.test.js` covers owner, stranger
@@ -1825,13 +1889,40 @@ had no deletion.
   (60/min). The reminder is a `pageLapse` bell row (`lapsePhase:
   "deletionSoon"`) with an English label for old builds, no push.
 
-**Residual (accepted in ADR-236):** for up to one worker interval (10
-minutes) after "delete all posts" on a large Page, other viewers can still
-read posts the owner no longer sees. During the 30 days the Page's contact
-details and posts still exist (non-public): the screen says so and offers
-"Usuń teraz, nie czekaj". A remembered suspension keeps a `pageMemory` row
-(uid, dates, reason key) for as long as the account exists and the
-suspension stands; account deletion removes it.
+**Residuals (accepted in ADR-236):**
+
+- **"Delete all posts" is not instant on a large Page.** The call itself
+  removes up to 50 posts; the worker then removes up to 200 per job per
+  10-minute run (less when its 45 s part budget is used). Until a post is
+  reached it stays readable to followers, link holders, the feed and
+  `getPagePostMediaAccessV1`, while the owner's own wall already hides it:
+  about `ceil((posts - 50) / 200) x 10` minutes, i.e. nothing for a Page of
+  up to 50 posts, one run for up to 250, about 50 minutes for 1,000. No read
+  path consults `pagePostClearJobs` (a read-time boundary in the wall, feed,
+  post and media-access paths would close this; not built). The owner is
+  told "Znikają w tle, zwykle w kilkanaście minut".
+- **A Page-level report holds no evidence.** Only a post or comment report
+  puts a post under `evidenceHold`. An owner with an open report on the PAGE
+  can still clear its posts or delete the Page: unreported posts are
+  hard-deleted with their media, and the contact details go with the Page
+  (the report keeps the description and the text of up to 5 recent posts).
+  This gap predates ADR-236 (single-post delete and `update` already allowed
+  it); it is now one call. Closing it means holding every post of a Page
+  with an open Page-level report (up to 90 days even if the report is
+  dismissed the next day), which is a Trust & Safety decision, not made.
+- During the 30 days the Page's contact details and posts still exist
+  (non-public): the screen says so and offers "Usuń teraz, nie czekaj".
+- A remembered suspension keeps a `pageMemory` row (uid, dates, reason key)
+  for as long as the account exists and the suspension stands; account
+  deletion removes it.
+- App Check is off on `managePageDeletionV1`, like every Pages callable. The
+  three safety actions and the cancel run for disabled, banned and
+  unverified accounts for the life of an ID token (by design: a ban must not
+  trap somebody's content). A purged Page can no longer be reported
+  (`pageReportTargetMissing`); account-level reports are the fallback.
+- Purge speed is one page of 25 follower edges per round, about 150 per Page
+  per run: a large audience stays `purging` (hidden, contact details stored)
+  for hours.
 
 ## Private media rollout status (Build 19 tester deployment complete)
 

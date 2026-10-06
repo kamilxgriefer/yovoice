@@ -40,7 +40,7 @@ class PageDeletionInfo {
 /// `managePageDeletionV1` → the caller's own deletion state, the one result
 /// shape of every op:
 ///
-///     {schemaVersion, pageId, pageExists,
+///     {schemaVersion, pageId, pageExists, pagePaused: null | bool,
 ///      deletion: null | {state, requestedAtMs, deleteAtMs},
 ///      postsClearing: null | {requestedAtMs},
 ///      recreateAllowedAtMs: null | int}
@@ -54,6 +54,7 @@ class PageDeletionState {
   const PageDeletionState({
     required this.pageId,
     required this.pageExists,
+    this.pagePaused,
     this.deletion,
     this.postsClearingSince,
     this.recreateAllowedAt,
@@ -61,6 +62,13 @@ class PageDeletionState {
 
   final String pageId;
   final bool pageExists;
+
+  /// Whether the owner's Page is paused right now; null when there is no
+  /// Page. After "Przywróć stronę" it tells the two outcomes apart: the
+  /// deletion is always cancelled, but the Page only goes back on air when
+  /// it was running before and today's rules allow it (live Premium or
+  /// VIP, a public profile); otherwise it stays an ordinary paused Page.
+  final bool? pagePaused;
   final PageDeletionInfo? deletion;
 
   /// "Delete all posts" is still running for posts created at or before
@@ -85,6 +93,7 @@ class PageDeletionState {
     for (final key in const [
       'pageId',
       'pageExists',
+      'pagePaused',
       'deletion',
       'postsClearing',
       'recreateAllowedAtMs',
@@ -93,8 +102,12 @@ class PageDeletionState {
     }
     final pageId = raw['pageId'];
     final pageExists = raw['pageExists'];
+    final pagePaused = raw['pagePaused'];
     if (pageId is! String || pageId.isEmpty || pageExists is! bool) {
       throw const FormatException('$what: identity');
+    }
+    if (pagePaused != null && pagePaused is! bool) {
+      throw const FormatException('$what: pagePaused');
     }
     PageDeletionInfo? deletion;
     final deletionRaw = raw['deletion'];
@@ -120,6 +133,7 @@ class PageDeletionState {
     return PageDeletionState(
       pageId: pageId,
       pageExists: pageExists,
+      pagePaused: pagePaused as bool?,
       deletion: deletion,
       postsClearingSince: clearing,
       recreateAllowedAt: recreate == null ? null : _instant(recreate, what),
@@ -130,6 +144,7 @@ class PageDeletionState {
   Map<String, Object?> toStored() => <String, Object?>{
     'pageId': pageId,
     'pageExists': pageExists,
+    'pagePaused': pagePaused,
     'deletion': deletion == null
         ? null
         : <String, Object?>{
@@ -158,6 +173,7 @@ class PageDeletionState {
       other is PageDeletionState &&
       other.pageId == pageId &&
       other.pageExists == pageExists &&
+      other.pagePaused == pagePaused &&
       other.deletion == deletion &&
       other.postsClearingSince == postsClearingSince &&
       other.recreateAllowedAt == recreateAllowedAt;
@@ -166,6 +182,7 @@ class PageDeletionState {
   int get hashCode => Object.hash(
     pageId,
     pageExists,
+    pagePaused,
     deletion,
     postsClearingSince,
     recreateAllowedAt,

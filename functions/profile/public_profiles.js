@@ -1065,20 +1065,30 @@ async function setCreatorAudienceEnabledHandler(
   // a Creator audience would make every one of their edges publicly listable
   // (firestore.rules canReadCreatorAudienceEdges). Enabling is refused while
   // pages/{uid} exists, in any state; disabling is never affected.
+  //
+  // ADR-236: a Page its owner deleted leaves pageMemory/{uid}. While that
+  // row remembers a SUSPENSION, enabling stays refused exactly as it was
+  // while the suspended Page existed: otherwise "delete the suspended Page"
+  // would make the account followable again within minutes (new, publicly
+  // listable Creator edges, the "People you follow" DM exemption, the LIVE
+  // fan-out), which the suspension had closed. A staff lift or the next
+  // (suspended) Page clears the row. A row without a suspension (the 7-day
+  // cooldown only) does not refuse anything here.
   const pageRef = database.collection("pages").doc(auth.uid);
+  const pageMemoryRef = database.collection("pageMemory").doc(auth.uid);
   const nowMs = timestampMillis(now, null);
   if (!Number.isSafeInteger(nowMs) || nowMs < 0) {
     throw new TypeError("now must be a Firestore Timestamp.");
   }
   return database.runTransaction(async (transaction) => {
     const [userSnapshot, entitlementSnapshot, profileSnapshot, ledgerSnapshot,
-      rateSnapshot, pageSnapshot] = await transaction.getAll(
+      rateSnapshot, pageSnapshot, pageMemorySnapshot] = await transaction.getAll(
       userRef,
       entitlementRef,
       profileRef,
       ledgerRef,
       rateRef,
-      ...(enabled ? [pageRef] : []),
+      ...(enabled ? [pageRef, pageMemoryRef] : []),
     );
     const source = userSnapshot.exists ? (userSnapshot.data() ?? {}) : null;
     if (!isActiveAccountProfile(source)) {
@@ -1097,6 +1107,17 @@ async function setCreatorAudienceEnabledHandler(
     }
     if (enabled && pageSnapshot?.exists) {
       throw PAGE_ERRORS.creatorAudienceBlocked();
+    }
+    // Fail closed: anything but an explicit `suspension: null` on an
+    // existing row (a malformed row included) keeps the audience closed.
+    // The same generic refusal as ineligibility: a suspension is not
+    // disclosed through this callable.
+    if (enabled && pageMemorySnapshot?.exists &&
+        (pageMemorySnapshot.data() ?? {}).suspension !== null) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Creator audience is unavailable for this account.",
+      );
     }
     const prior = assertLedgerReplay(ledgerSnapshot, {
       kind: "profile.creator.audience.v1",

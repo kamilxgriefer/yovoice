@@ -251,7 +251,16 @@ async function applyPageReportModeration(transaction, {
       // The decision is kept in pageMemory/{pageId}: the next Page this
       // account creates starts suspended (managePageV1 create), and a lift
       // clears a remembered suspension. Loaded lazily, like the Page arm.
-      const memory = ownerSnapshot.exists ? require("./deletion") : null;
+      //
+      // "Still here" means a users/{uid} document that is NOT being deleted.
+      // During account deletion that document outlives the Page and the
+      // uid-keyed records step (it goes last, in `finalize`), so a decision
+      // taken in that window would write a never-expiring uid-keyed row for
+      // an account that is being erased. A banned account (disabled, no
+      // accountDeletion mark) is still remembered: a ban can be lifted.
+      const owner = dataOf(ownerSnapshot);
+      const accountStays = owner !== null && (owner.accountDeletion ?? null) === null;
+      const memory = accountStays ? require("./deletion") : null;
       if (lifting) {
         const lifted = memory !== null && memory.liftRememberedPageSuspensionInTransaction(
           transaction,

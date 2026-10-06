@@ -423,23 +423,38 @@ A VIP account can turn itself into a Page of type Business or Community
 - **Deleting a Page (ADR-236, `managePageDeletionV1`, source only).** Page
   settings end with a "Strefa zagrożenia" of two actions. **Delete all
   posts** removes every post with its comments and likes; the Page and its
-  followers stay (small Pages are cleared before the call returns, larger
-  ones by `pagesMaintenance`, and the owner sees "Trwa usuwanie postów").
-  **Delete Page** (the Page's name typed as confirmation) hides the Page for
-  everyone at once and removes it **30 days later**; until then the owner
-  sees the date and "Przywróć stronę", which brings back posts and followers
-  and needs live Premium or VIP. "Usuń teraz, nie czekaj" skips the wait and
-  cannot be undone. The purge removes posts, then follower edges, storage
+  followers stay (up to 50 posts are cleared before the call returns, the
+  rest by `pagesMaintenance`, up to 200 per run, and the owner sees "Trwa
+  usuwanie postów"; until a post is reached other viewers can still read
+  it). **Delete Page** (the Page's name typed as confirmation) hides the
+  Page for everyone at once and removes it **30 days later**; until then
+  the owner sees the date and "Przywróć stronę". Restoring ALWAYS cancels
+  the deletion (kill switch, lapsed, muted, unverified: it never fails,
+  because the purge has no such gate either); the Page then goes back on
+  air with its posts and followers when it was running before and the owner
+  has live Premium or VIP and a public profile, and otherwise stays an
+  ordinary paused Page ("Usuwanie anulowane. Strona pozostaje wstrzymana.").
+  "Wznów stronę" on builds 40/41 cancels the deletion the same way, even
+  when the resume itself is refused. "Usuń teraz, nie czekaj" skips the
+  wait and cannot be undone, so it asks for a sign-in no older than 5
+  minutes (Google, Apple or the password, like deleting the account). A
+  deletion whose date passed while Pages are switched off for its owner is
+  held until they are back. The purge removes posts, then follower edges, storage
   and records, then the Page; the account, its name, photo and cover,
   friends, chats, servers, Voice Moments and Yeels stay. Reported, held or
   removed posts are kept non-publicly for at most 90 days. A new Page can be
   created **7 days** after the old one is gone, and a suspension survives
   delete + re-create, also one a moderator applies to a report after the
-  Page was already deleted. The owner gets one bell row 3 days before the
-  purge, and "Strona usunięta" when it is done.
+  Page was already deleted; while a suspension is remembered the account
+  cannot open a Creator audience either. The owner gets one bell row 3 days
+  before the purge (no push). There is no server notice when the purge is
+  done: the app says "Strona usunięta" on the screen that is open. While a
+  deletion is on record the VIP-lapse notices ("nothing is deleted") are not
+  sent.
   Followers see what they see for a paused Page ("Ta strona jest
-  niedostępna"). `request`, `purgeNow` and `clearPosts` are safety actions
-  (they work with Pages switched off, lapsed, muted, unverified).
+  niedostępna"). `request`, `purgeNow`, `clearPosts` and the cancel are
+  safety actions (they work with Pages switched off, lapsed, muted,
+  unverified), each with a generous hourly budget.
 - **Existing settings.** Renaming checks the same name rules while you have a
   Page; making your profile friends-only or private pauses your Page; Creator
   audience cannot be turned on while you have a Page.
@@ -496,8 +511,9 @@ A VIP account can turn itself into a Page of type Business or Community
   are removed after 15 minutes, deleted posts' files and their likes and
   comments are cleared, and once a day unreferenced files older than an hour
   are swept. The `pageDeletion` slice (ADR-236) sends the 3-day reminder,
-  purges Pages whose 30 days passed, finishes "delete all posts" jobs and
-  removes expired re-create memory rows.
+  finishes "delete all posts" jobs, purges Pages whose 30 days passed (not
+  while Pages are switched off for the owner) and removes expired re-create
+  memory rows.
 - **Likes (B4, `pagePostEngagementV1`).** Anyone who can see a published
   post may like it, also while the Page is read-only (VIP lapsed); unlike
   always works, even after a block. 60 a minute.

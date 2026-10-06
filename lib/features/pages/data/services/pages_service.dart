@@ -79,6 +79,12 @@ enum PagesFailure {
   /// is nothing left to restore.
   deletionInProgress,
 
+  /// `recent-authentication-required`: "Usuń teraz, nie czekaj" is the one
+  /// irreversible op, so the server asks for a sign-in no older than five
+  /// minutes (the account-deletion rule). The owner confirms it is them and
+  /// the op is sent again.
+  recentSignInRequired,
+
   /// Offline, a timeout or a transient server error: retryable.
   network,
 
@@ -94,10 +100,12 @@ enum PageDeletionOp {
   /// Hide the Page now and delete it in 30 days; a safety action.
   request('request'),
 
-  /// Take a pending deletion back; needs live Premium or VIP.
+  /// Take a pending deletion back. The cancel always works; the Page goes
+  /// back on air only with live Premium or VIP (else it stays paused).
   restore('restore'),
 
-  /// Skip the rest of the 30 days; cannot be undone.
+  /// Skip the rest of the 30 days; cannot be undone. Needs a recent
+  /// sign-in and names the request it confirms (`requestedAtMs`).
   purgeNow('purgeNow'),
 
   /// Delete every post; the Page and its followers stay.
@@ -295,7 +303,11 @@ class PagesService {
       case 'pageDeletionInProgress':
         return PagesFailure.deletionInProgress;
       case 'pageDeletionNotRequested':
+      // "Delete now" confirmed a request that is no longer the pending one.
+      case 'pageDeletionChanged':
         return PagesFailure.unavailable;
+      case 'recent-authentication-required':
+        return PagesFailure.recentSignInRequired;
     }
     return switch (error.code) {
       'resource-exhausted' => PagesFailure.rateLimited,
@@ -444,11 +456,31 @@ class PagesService {
   }
 
   /// `managePageDeletionV1 {op}` (ADR-236): the caller's own deletion state
-  /// after [op]. `request`, `purgeNow` and `clearPosts` are safety actions
-  /// (they work with the kill switch on, lapsed, muted and unverified);
-  /// `restore` needs live Premium or VIP.
-  Future<PageDeletionState> managePageDeletion(PageDeletionOp op) async {
-    final raw = await _call(deletionCallable, <String, Object?>{'op': op.wire});
+  /// after [op]. Every op is a safety action (it works with the kill switch
+  /// on, lapsed, muted and unverified); `restore` always cancels the
+  /// deletion and puts the Page back on air only when today's rules allow
+  /// it ([PageDeletionState.pagePaused] says which).
+  ///
+  /// [PageDeletionOp.purgeNow] alone takes [requestedAt], the
+  /// [PageDeletionInfo.requestedAt] of the pending deletion the owner is
+  /// confirming (`{op, requestedAtMs}`), and is refused with
+  /// [PagesFailure.recentSignInRequired] unless the sign-in is recent.
+  Future<PageDeletionState> managePageDeletion(
+    PageDeletionOp op, {
+    DateTime? requestedAt,
+  }) async {
+    if ((op == PageDeletionOp.purgeNow) != (requestedAt != null)) {
+      throw ArgumentError.value(
+        requestedAt,
+        'requestedAt',
+        'purgeNow, and only purgeNow, names the request it confirms.',
+      );
+    }
+    final raw = await _call(deletionCallable, <String, Object?>{
+      'op': op.wire,
+      if (requestedAt != null)
+        'requestedAtMs': requestedAt.millisecondsSinceEpoch,
+    });
     return _parse(() => PageDeletionState.fromWire(raw));
   }
 

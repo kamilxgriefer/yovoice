@@ -14,7 +14,9 @@ import 'package:yovoice/features/pages/data/page_catalog.dart';
 import 'package:yovoice/features/pages/data/services/page_access_service.dart';
 import 'package:yovoice/features/pages/data/services/page_deletion_center.dart';
 import 'package:yovoice/features/pages/data/services/pages_service.dart';
+import 'package:yovoice/features/auth/data/reauthentication_service.dart';
 import 'package:yovoice/features/pages/presentation/page_delete_copy.dart';
+import 'package:yovoice/features/pages/presentation/page_delete_reauth.dart';
 import 'package:yovoice/features/pages/presentation/page_profile_copy.dart';
 import 'package:yovoice/features/pages/presentation/pages_copy.dart';
 import 'package:yovoice/features/pages/presentation/screens/page_delete_screen.dart';
@@ -77,11 +79,18 @@ class PageSettingsScreen extends StatefulWidget {
     this.userId,
     this.clock,
     this.deletion,
+    this.reauthentication,
+    this.refreshIdToken,
     super.key,
   });
 
   /// Test seams; the app uses the shared instances.
   final PageDeletionCenter? deletion;
+
+  /// The fresh sign-in "Usuń teraz, nie czekaj" needs (test seams; the app
+  /// re-challenges the signed-in account and forces a new ID token).
+  final ReauthenticationClient? reauthentication;
+  final PageDeleteTokenRefresher? refreshIdToken;
   final PagesService? service;
   final Stream<PageAccessState> Function()? accessStream;
   final Stream<UserProfile> Function()? profileStream;
@@ -290,10 +299,23 @@ class _PageSettingsScreenState extends State<PageSettingsScreen> {
   Future<void> _restore() async {
     final copy = _copy;
     final state = await _deletionOp(_deletion.restore);
-    if (state != null && mounted) _snack(copy.pageRestored);
+    if (state == null || !mounted) return;
+    // The deletion is always cancelled. The Page itself goes back on air
+    // only when it was running before and today's rules allow it; else it
+    // is an ordinary paused Page now, and the tile below says what resuming
+    // needs.
+    _snack(
+      state.pagePaused == true
+          ? copy.deletionCancelledPaused
+          : copy.pageRestored,
+    );
   }
 
-  Future<void> _deleteNow() async {
+  /// "Usuń teraz, nie czekaj": the confirmation, then the purge. The server
+  /// asks for a sign-in no older than five minutes for this one op; when it
+  /// does, the owner confirms it is them (Google, Apple or the password) and
+  /// the op is sent once more.
+  Future<void> _deleteNow(PageDeletionInfo deletion) async {
     final copy = _copy;
     final confirmed = await confirmPageAction(
       context,
@@ -303,8 +325,41 @@ class _PageSettingsScreenState extends State<PageSettingsScreen> {
       cancel: copy.cancel,
     );
     if (!confirmed || !mounted) return;
-    final state = await _deletionOp(_deletion.purgeNow);
-    if (state == null || !mounted || state.pageExists) return;
+    setState(() => _busy = true);
+    PageDeletionState? state;
+    try {
+      try {
+        state = await _deletion.purgeNow(deletion);
+      } on PagesException catch (error) {
+        if (error.failure != PagesFailure.recentSignInRequired) rethrow;
+        if (!mounted) return;
+        final outcome = await confirmIdentityForPageDeletion(
+          context,
+          client: widget.reauthentication,
+          refreshIdToken: widget.refreshIdToken,
+        );
+        if (!mounted) return;
+        if (outcome == PageReauthOutcome.cancelled) return;
+        if (outcome == PageReauthOutcome.failed) {
+          _snack(copy.confirmIdentityFailed);
+          return;
+        }
+        state = await _deletion.purgeNow(deletion);
+      }
+    } on PagesException catch (error) {
+      if (!mounted) return;
+      _snack(
+        error.failure == PagesFailure.recentSignInRequired
+            ? copy.confirmIdentityFailed
+            : copy.manageError(error.failure),
+      );
+      // The request this row confirmed may no longer be the pending one.
+      unawaited(_deletion.refresh());
+      return;
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+    if (!mounted || state.pageExists) return;
     // A small Page is gone before the call answers: say so and leave, there
     // is nothing left to set. (A larger one shows the purging notice; the
     // worker finishes it.)
@@ -1007,8 +1062,8 @@ class _PageSettingsScreenState extends State<PageSettingsScreen> {
               subtitle: copy.deleteNowSubtitle(deletion.deleteAt),
               danger: true,
               chevron: true,
-              enabled: !_busy,
-              onTap: () => unawaited(_deleteNow()),
+              enabled: !_busy && deletion.phase == PageDeletionPhase.pending,
+              onTap: () => unawaited(_deleteNow(deletion)),
             )
           else ...[
             _SettingsTile(

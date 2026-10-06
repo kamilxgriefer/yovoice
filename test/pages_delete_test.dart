@@ -7,6 +7,7 @@
 import 'dart:async';
 
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_auth/firebase_auth.dart' show FirebaseAuthException;
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -14,6 +15,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
+import 'package:yovoice/features/auth/data/reauthentication_service.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/pages/data/models/page_deletion_state.dart';
 import 'package:yovoice/features/pages/data/models/page_views.dart';
@@ -46,11 +48,14 @@ Map<String, Object?> _state({
   String? deletion,
   bool clearing = false,
   bool pageExists = true,
+  bool? pagePaused,
   DateTime? recreateAt,
 }) => {
   'schemaVersion': 1,
   'pageId': 'me',
   'pageExists': pageExists,
+  // A Page that is to be deleted is always paused (the server's invariant).
+  'pagePaused': pageExists ? (pagePaused ?? deletion != null) : null,
   'deletion': deletion == null
       ? null
       : {
@@ -84,6 +89,7 @@ class _Backend {
   /// What `getPageV1` answers.
   Object? page;
   final List<String> ops = [];
+  final List<Map<String, Object?>> payloads = [];
   Object? Function(String op)? onOp;
 
   Future<Object?> call(String name, Map<String, Object?> payload) async {
@@ -93,9 +99,15 @@ class _Backend {
       return answer;
     }
     if (name != PagesService.deletionCallable) return {'ok': true};
-    expect(payload.keys, ['op'], reason: 'the input is exactly {op}');
     final op = payload['op']! as String;
+    // "Delete now" alone names the request it confirms.
+    expect(
+      payload.keys,
+      op == 'purgeNow' ? ['op', 'requestedAtMs'] : ['op'],
+      reason: 'the input is exactly {op} ({op, requestedAtMs} for purgeNow)',
+    );
     ops.add(op);
+    payloads.add(Map<String, Object?>.of(payload));
     final scripted = onOp?.call(op);
     if (scripted is Exception) throw scripted;
     if (scripted is Map<String, Object?>) current = scripted;
@@ -300,24 +312,64 @@ Future<void> _pump(
   await tester.pumpAndSettle();
 }
 
-Widget _settings(_Backend backend, PageDeletionCenter center, {OwnPage? own}) =>
-    _pushed(
-      PageSettingsScreen(
-        service: _service(backend),
-        deletion: center,
-        accessStream: () => Stream.value(
-          PageAccessState(
-            resolved: true,
-            hasVipGrant: true,
-            ownPage: own ?? _own(),
-          ),
-        ),
-        profileStream: () => Stream.value(_me()),
-        serverStream: () => Stream.value(const []),
-        userId: 'me',
-        clock: () => _now,
+/// A scripted fresh sign-in: which route the account has, what the owner
+/// typed, and whether the provider accepts it.
+class _Reauth implements ReauthenticationClient {
+  _Reauth({this.providers = const ['password'], this.fail = false});
+
+  final List<String> providers;
+  bool fail;
+  final List<String> calls = [];
+  int refreshes = 0;
+
+  Future<bool> refresh() async {
+    refreshes += 1;
+    return true;
+  }
+
+  @override
+  List<String> get providerIds => providers;
+
+  Future<void> _answer(String call) async {
+    calls.add(call);
+    if (fail) throw FirebaseAuthException(code: 'wrong-password');
+  }
+
+  @override
+  Future<void> reauthenticateWithPassword(String password) =>
+      _answer('password:$password');
+
+  @override
+  Future<void> reauthenticateWithGoogle() => _answer('google');
+
+  @override
+  Future<void> reauthenticateWithApple() => _answer('apple');
+}
+
+Widget _settings(
+  _Backend backend,
+  PageDeletionCenter center, {
+  OwnPage? own,
+  _Reauth? reauth,
+}) => _pushed(
+  PageSettingsScreen(
+    service: _service(backend),
+    deletion: center,
+    reauthentication: reauth,
+    refreshIdToken: reauth?.refresh,
+    accessStream: () => Stream.value(
+      PageAccessState(
+        resolved: true,
+        hasVipGrant: true,
+        ownPage: own ?? _own(),
       ),
-    );
+    ),
+    profileStream: () => Stream.value(_me()),
+    serverStream: () => Stream.value(const []),
+    userId: 'me',
+    clock: () => _now,
+  ),
+);
 
 Widget _profile(_Backend backend, PageDeletionCenter center, {OwnPage? own}) =>
     _pushed(
@@ -385,6 +437,26 @@ void main() {
       final missing = _state()..remove('postsClearing');
       expect(() => PageDeletionState.fromWire(missing), throwsFormatException);
       expect(() => PageDeletionState.fromWire('x'), throwsFormatException);
+      // Whether the Page is paused: true while a deletion is pending, the
+      // server's answer after a restore, null without a Page.
+      expect(parsed.pagePaused, isTrue);
+      expect(PageDeletionState.fromWire(_state()).pagePaused, isFalse);
+      expect(
+        PageDeletionState.fromWire(_state(pagePaused: true)).pagePaused,
+        isTrue,
+      );
+      expect(
+        PageDeletionState.fromWire(_state(pageExists: false)).pagePaused,
+        isNull,
+      );
+      expect(
+        () => PageDeletionState.fromWire(_state()..remove('pagePaused')),
+        throwsFormatException,
+      );
+      expect(
+        () => PageDeletionState.fromWire({..._state(), 'pagePaused': 'yes'}),
+        throwsFormatException,
+      );
       // The stored form round-trips.
       expect(PageDeletionState.fromWire(parsed.toStored()), parsed);
     });
@@ -393,7 +465,10 @@ void main() {
       final backend = _Backend(current: _state(deletion: 'pending'));
       final service = _service(backend);
       for (final op in PageDeletionOp.values) {
-        await service.managePageDeletion(op);
+        await service.managePageDeletion(
+          op,
+          requestedAt: op == PageDeletionOp.purgeNow ? _now : null,
+        );
       }
       expect(backend.ops, [
         'status',
@@ -402,6 +477,48 @@ void main() {
         'purgeNow',
         'clearPosts',
       ]);
+      // "Delete now" names the request it confirms, and nothing else does.
+      expect(backend.payloads[3], {
+        'op': 'purgeNow',
+        'requestedAtMs': _now.millisecondsSinceEpoch,
+      });
+      expect(
+        () => service.managePageDeletion(PageDeletionOp.purgeNow),
+        throwsArgumentError,
+      );
+      expect(
+        () => service.managePageDeletion(
+          PageDeletionOp.request,
+          requestedAt: _now,
+        ),
+        throwsArgumentError,
+      );
+      // The server's "sign in again" for the one irreversible op, and a
+      // confirmation that no longer matches the pending request.
+      backend.onOp = (_) =>
+          _refusal('failed-precondition', 'recent-authentication-required');
+      await expectLater(
+        service.managePageDeletion(PageDeletionOp.purgeNow, requestedAt: _now),
+        throwsA(
+          isA<PagesException>().having(
+            (e) => e.failure,
+            'failure',
+            PagesFailure.recentSignInRequired,
+          ),
+        ),
+      );
+      backend.onOp = (_) =>
+          _refusal('failed-precondition', 'pageDeletionChanged');
+      await expectLater(
+        service.managePageDeletion(PageDeletionOp.purgeNow, requestedAt: _now),
+        throwsA(
+          isA<PagesException>().having(
+            (e) => e.failure,
+            'failure',
+            PagesFailure.unavailable,
+          ),
+        ),
+      );
       final retryAt = _now.add(const Duration(days: 7));
       backend.onOp = (_) => _refusal(
         'failed-precondition',
@@ -689,12 +806,49 @@ void main() {
       );
     });
 
+    testWidgets(
+      'restore without live Premium or VIP: the deletion is cancelled and '
+      'the Page stays paused, said in words',
+      (tester) async {
+        // The server always cancels; it resumes the Page only when today's
+        // rules allow it and answers which of the two happened.
+        final backend = _Backend(current: _state(deletion: 'pending'))
+          ..onOp = (op) => op == 'restore' ? _state(pagePaused: true) : null;
+        await _pump(
+          tester,
+          _settings(backend, _center(backend), own: _own(paused: true)),
+        );
+        await tester.tap(find.byKey(const ValueKey('settings-notice-restore')));
+        await tester.pumpAndSettle();
+        expect(backend.ops, ['status', 'restore']);
+        expect(
+          find.text('Usuwanie anulowane. Strona pozostaje wstrzymana.'),
+          findsOneWidget,
+        );
+        expect(find.text('Strona przywrócona'), findsNothing);
+        // No deletion is left: the banner and the pill are gone, and the
+        // ordinary "Wznów stronę" row is back.
+        expect(
+          find.byKey(const ValueKey('settings-notice-pending')),
+          findsNothing,
+        );
+        expect(find.text('DO USUNIĘCIA'), findsNothing);
+        await _toBottom(tester);
+        expect(find.byKey(const ValueKey('settings-resume')), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('settings-delete-page')),
+          findsOneWidget,
+        );
+      },
+    );
+
     testWidgets('a refused restore says why and changes nothing', (
       tester,
     ) async {
+      // The one refusal left: the purge has already started.
       final backend = _Backend(current: _state(deletion: 'pending'))
         ..onOp = (op) => op == 'restore'
-            ? _refusal('failed-precondition', 'pageAccessRequired')
+            ? _refusal('failed-precondition', 'pageDeletionInProgress')
             : null;
       await _pump(
         tester,
@@ -702,15 +856,199 @@ void main() {
       );
       await tester.tap(find.byKey(const ValueKey('settings-notice-restore')));
       await tester.pumpAndSettle();
-      expect(
-        find.text('Do prowadzenia strony potrzebny jest YO Voice VIP.'),
-        findsOneWidget,
-      );
+      expect(find.text('Trwa usuwanie strony'), findsOneWidget);
       expect(
         find.byKey(const ValueKey('settings-notice-pending')),
         findsOneWidget,
       );
     });
+
+    testWidgets(
+      '"Usuń teraz" with an old sign-in: the password, then the purge',
+      (tester) async {
+        final backend = _Backend(current: _state(deletion: 'pending'));
+        final reauth = _Reauth();
+        await _pump(
+          tester,
+          _settings(
+            backend,
+            _center(backend),
+            own: _own(paused: true),
+            reauth: reauth,
+          ),
+        );
+        await _toBottom(tester);
+        // The server refuses the first call: the sign-in is not recent.
+        var refusals = 0;
+        backend.onOp = (op) {
+          if (op != 'purgeNow') return null;
+          if (refusals == 0) {
+            refusals += 1;
+            return _refusal(
+              'failed-precondition',
+              'recent-authentication-required',
+            );
+          }
+          return _state(deletion: 'purging');
+        };
+        await tester.tap(find.byKey(const ValueKey('settings-delete-now')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey('page-confirm-action')));
+        await tester.pumpAndSettle();
+        expect(backend.ops, ['status', 'purgeNow']);
+        expect(
+          find.byKey(const ValueKey('page-delete-password-dialog')),
+          findsOneWidget,
+        );
+        expect(find.text('Potwierdź, że to Ty'), findsOneWidget);
+        expect(
+          find.text(
+            'Usunięcie strony od razu wymaga świeżego logowania. Wpisz hasło.',
+          ),
+          findsOneWidget,
+        );
+        // Nothing to send while the field is empty.
+        expect(
+          tester
+              .widget<FilledButton>(
+                find.byKey(const ValueKey('page-delete-password-submit')),
+              )
+              .onPressed,
+          isNull,
+        );
+        await tester.enterText(
+          find.byKey(const ValueKey('page-delete-password-field')),
+          'tajne-haslo',
+        );
+        await tester.pump();
+        await tester.tap(
+          find.byKey(const ValueKey('page-delete-password-submit')),
+        );
+        await tester.pumpAndSettle();
+        // Re-authenticated, a NEW token minted, and only then sent again,
+        // for the same request.
+        expect(reauth.calls, ['password:tajne-haslo']);
+        expect(reauth.refreshes, 1);
+        expect(backend.ops, ['status', 'purgeNow', 'purgeNow']);
+        expect(backend.payloads[1], backend.payloads[2]);
+        expect(
+          backend.payloads[2]['requestedAtMs'],
+          _now.millisecondsSinceEpoch,
+        );
+        expect(
+          find.byKey(const ValueKey('settings-notice-purging')),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
+      '"Usuń teraz": a closed password dialog is silent; a wrong password '
+      'and an account without a route say nothing was deleted',
+      (tester) async {
+        final backend = _Backend(current: _state(deletion: 'pending'))
+          ..onOp = (op) => op == 'purgeNow'
+              ? _refusal(
+                  'failed-precondition',
+                  'recent-authentication-required',
+                )
+              : null;
+        final reauth = _Reauth(fail: true);
+        await _pump(
+          tester,
+          _settings(
+            backend,
+            _center(backend),
+            own: _own(paused: true),
+            reauth: reauth,
+          ),
+        );
+        await _toBottom(tester);
+        const failed =
+            'Nie udało się potwierdzić, że to Ty, więc nic nie zostało '
+            'usunięte. Spróbuj ponownie albo wyloguj się i zaloguj od nowa.';
+
+        // Cancelled: no message, nothing sent again, the row is usable.
+        await tester.tap(find.byKey(const ValueKey('settings-delete-now')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey('page-confirm-action')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Anuluj'));
+        await tester.pumpAndSettle();
+        expect(backend.ops, ['status', 'purgeNow']);
+        expect(find.text(failed), findsNothing);
+        expect(reauth.calls, isEmpty);
+        expect(
+          find.byKey(const ValueKey('settings-notice-pending')),
+          findsOneWidget,
+        );
+
+        // A wrong password: said so, and the purge is not sent again.
+        await _toBottom(tester);
+        await tester.tap(find.byKey(const ValueKey('settings-delete-now')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey('page-confirm-action')));
+        await tester.pumpAndSettle();
+        await tester.enterText(
+          find.byKey(const ValueKey('page-delete-password-field')),
+          'zle',
+        );
+        await tester.pump();
+        await tester.tap(
+          find.byKey(const ValueKey('page-delete-password-submit')),
+        );
+        await tester.pumpAndSettle();
+        expect(reauth.calls, ['password:zle']);
+        expect(reauth.refreshes, 0);
+        expect(backend.ops, ['status', 'purgeNow', 'purgeNow']);
+        expect(find.text(failed), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('settings-notice-pending')),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
+      '"Usuń teraz" with Google: the provider confirms, no password dialog; '
+      'a second refusal ends in words, not in a loop',
+      (tester) async {
+        final backend = _Backend(current: _state(deletion: 'pending'))
+          ..onOp = (op) => op == 'purgeNow'
+              ? _refusal(
+                  'failed-precondition',
+                  'recent-authentication-required',
+                )
+              : null;
+        final reauth = _Reauth(providers: const ['google.com', 'password']);
+        await _pump(
+          tester,
+          _settings(
+            backend,
+            _center(backend),
+            own: _own(paused: true),
+            reauth: reauth,
+          ),
+        );
+        await _toBottom(tester);
+        await tester.tap(find.byKey(const ValueKey('settings-delete-now')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey('page-confirm-action')));
+        await tester.pumpAndSettle();
+        expect(
+          find.byKey(const ValueKey('page-delete-password-dialog')),
+          findsNothing,
+        );
+        expect(reauth.calls, ['google']);
+        expect(reauth.refreshes, 1);
+        // Sent once more, refused again: one message, no third call.
+        expect(backend.ops, ['status', 'purgeNow', 'purgeNow', 'status']);
+        expect(
+          find.textContaining('Nie udało się potwierdzić, że to Ty'),
+          findsOneWidget,
+        );
+      },
+    );
 
     testWidgets(
       '"Usuń teraz" confirmed starts the purge; nothing is left to do',

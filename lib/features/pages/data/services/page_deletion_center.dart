@@ -196,10 +196,16 @@ class PageDeletionCenter extends ChangeNotifier {
     return until.isAfter((clock ?? DateTime.now)()) ? until : null;
   }
 
-  Future<PageDeletionState> _run(PageDeletionOp op) async {
+  Future<PageDeletionState> _run(
+    PageDeletionOp op, {
+    DateTime? requestedAt,
+  }) async {
     _syncOwner();
     final uid = _owner;
-    final state = await _service.managePageDeletion(op);
+    final state = await _service.managePageDeletion(
+      op,
+      requestedAt: requestedAt,
+    );
     if (uid == _owner && state.pageId == uid) {
       _publish(state, fromServer: true);
       unawaited(_store.write(uid, state));
@@ -210,12 +216,20 @@ class PageDeletionCenter extends ChangeNotifier {
   /// Hides the Page now and schedules its deletion in 30 days.
   Future<PageDeletionState> requestDeletion() => _run(PageDeletionOp.request);
 
-  /// Takes a pending deletion back. Throws [PagesException]
-  /// ([PagesFailure.accessRequired] without live Premium or VIP).
+  /// Takes a pending deletion back. The deletion is always cancelled; the
+  /// Page goes back on air only when it was running before and today's
+  /// rules allow it (live Premium or VIP, a public profile), otherwise it
+  /// stays paused: [PageDeletionState.pagePaused] says which. Throws
+  /// [PagesException] ([PagesFailure.deletionInProgress] once the purge has
+  /// started).
   Future<PageDeletionState> restore() => _run(PageDeletionOp.restore);
 
-  /// Deletes the Page now instead of waiting; cannot be undone.
-  Future<PageDeletionState> purgeNow() => _run(PageDeletionOp.purgeNow);
+  /// Deletes the Page now instead of waiting; cannot be undone. [deletion]
+  /// is the pending deletion the owner confirmed: the server refuses to
+  /// purge any other. Throws [PagesFailure.recentSignInRequired] when the
+  /// sign-in is older than five minutes.
+  Future<PageDeletionState> purgeNow(PageDeletionInfo deletion) =>
+      _run(PageDeletionOp.purgeNow, requestedAt: deletion.requestedAt);
 
   /// Deletes every post; the Page and its followers stay.
   Future<PageDeletionState> clearPosts() => _run(PageDeletionOp.clearPosts);

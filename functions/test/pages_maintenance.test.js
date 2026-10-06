@@ -316,8 +316,10 @@ test("run: every slice reports, and one failing slice never stops the next", asy
   ]);
   // ADR-236: an owner's Page deletion runs BEFORE the job slices (the media
   // and cleanup jobs it queues go in the same run); its four parts report.
+  // "Delete all posts" jobs come before the purges: their posts are still
+  // public while they wait, a purged Page is already hidden.
   assert.deepEqual(Object.keys(results.pageDeletion),
-    ["reminders", "deletions", "clearJobs", "memory"]);
+    ["reminders", "clearJobs", "deletions", "memory"]);
   assert.equal(typeof results.pageDeletion.deletions.processed, "number");
   // Package B5: the lapse slice runs hourly; with no activation document the
   // brake is on (downgrades frozen) and the slice still reports.

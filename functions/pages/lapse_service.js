@@ -25,7 +25,11 @@
 // still run.
 //
 // The owner is told twice (R12): a `pageLapse` row at Day 0 (read-only) and
-// at Day 23 (hidden in 7 days). The badge follows by itself: a status change
+// at Day 23 (hidden in 7 days). Neither is written while the owner's own
+// deletion of the Page is on record (pageDeletions/{P}, ADR-236): both say
+// "nothing is deleted", which is not true of a Page on a deletion timer, and
+// that owner already has the date and "Przywróć stronę" in front of them.
+// The badge follows by itself: a status change
 // fires onPageBadgeSourceChanged, whose derivation also re-checks the
 // canonical grant for the rosette bit.
 
@@ -121,12 +125,14 @@ function createPagesLapseService({
     const pageRef = firestore.doc(`pages/${pageId}`);
     return firestore.runTransaction(async (transaction) => {
       const [userSnapshot, entitlementSnapshot, grantSnapshot, pageSnapshot,
-        visibilitySnapshot, activationSnapshot] = await transactionGetAll(
+        visibilitySnapshot, activationSnapshot, deletionSnapshot] = await transactionGetAll(
         transaction,
         ...pagesCapabilityReferences(firestore, pageId),
         pageRef,
         pageVisibilityReference(firestore),
         firestore.doc(PAGES_ACTIVATION_PATH),
+        // ADR-236: the owner's own deletion of this Page, pending or running.
+        firestore.doc(`pageDeletions/${pageId}`),
       );
       if (!pageSnapshot.exists) return { outcome: "noPage" };
       const reason = pageMalformedReason(pageSnapshot.data(), pageId);
@@ -159,11 +165,13 @@ function createPagesLapseService({
         nowMs,
         warned: warningSnapshot?.exists === true,
       });
-      // The owner's notices land only on a live account document.
-      const ownerExists = userSnapshot.exists;
+      // The owner's notices land only on a live account document, and never
+      // beside the owner's own deletion of the Page: "nothing is deleted"
+      // would be untrue (the transition itself is still written).
+      const notifyOwner = userSnapshot.exists && !deletionSnapshot.exists;
       if (decision === "none" || decision === "frozen") return { outcome: decision };
       if (decision === "warn") {
-        if (ownerExists) {
+        if (notifyOwner) {
           const notice = pageLapseNotice({ phase: "hidingSoon", pageId, lapsedAtMs, now });
           transaction.set(firestore.doc(`users/${pageId}/notifications/${notice.id}`), notice.data);
         }
@@ -188,7 +196,7 @@ function createPagesLapseService({
         // reader re-checks the Page document per item.
         safetyAction: decision !== "restore",
       });
-      if (decision === "readOnly" && ownerExists) {
+      if (decision === "readOnly" && notifyOwner) {
         const notice = pageLapseNotice({ phase: "readOnly", pageId, lapsedAtMs: nowMs, now });
         transaction.set(firestore.doc(`users/${pageId}/notifications/${notice.id}`), notice.data);
       }

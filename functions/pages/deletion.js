@@ -5,28 +5,49 @@
 //
 //   op          kind     activation  rate                    gate  notes
 //   status      read     NONE        pages.deletionStatus    no    the caller's own state only
-//   request     safety   NONE        none                    NO    pauses the Page in the same transaction,
+//   request     safety   NONE        pages.deletionRequest   NO    pauses the Page in the same transaction,
 //                                                                  writes the 30-day record; unverified,
 //                                                                  muted and lapsed owners allowed
-//   restore     write    write       pages.deletionRestore   yes   active, !muted, verified; removes the
-//                                                                  record and resumes the Page when it can
-//   purgeNow    safety   NONE        none                    NO    only a PENDING deletion; irreversible
-//   clearPosts  safety   NONE        none                    NO    deletes every post, keeps the Page
+//   restore     safety   NONE        none for the cancel     NO    CANCELS a pending deletion, always: no
+//                                                                  switch, no capability, no mute, no
+//                                                                  verified e-mail, no budget. Then, as a
+//                                                                  separate gated write (switch,
+//                                                                  pages.deletionRestore, verified, active,
+//                                                                  !muted, live Premium/VIP, the resume
+//                                                                  rules), the Page is resumed when it was
+//                                                                  running before; a refusal there leaves
+//                                                                  an ordinary paused Page, never a record
+//   purgeNow    safety   NONE        pages.deletionPurge     NO    only a PENDING deletion; irreversible:
+//                                                                  needs a sign-in no older than 5 minutes
+//                                                                  (utils/auth.js, as account deletion) and
+//                                                                  the requestedAtMs of the request it
+//                                                                  confirms
+//   clearPosts  safety   NONE        pages.deletionClear     NO    deletes every post, keeps the Page
 //                                                                  and its followers
+//
+// The undo is never harder than the deletion: every state in which the
+// 30-day timer runs is a state in which `restore` (and managePageV1 resume,
+// what builds 40/41 offer) removes the record. The gates only decide whether
+// the Page also goes back on air.
 //
 // Every op answers the same exact shape, the caller's deletion state:
 //
 //   { schemaVersion: 1, pageId, pageExists,
 //     deletion:      null | { state: "pending" | "purging", requestedAtMs, deleteAtMs },
 //     postsClearing: null | { requestedAtMs },
-//     recreateAllowedAtMs: null | <epoch ms> }
+//     recreateAllowedAtMs: null | <epoch ms>,
+//     pagePaused: null | bool }          (null when there is no Page)
+//
+// Input is exactly {op}; purgeNow is exactly {op, requestedAtMs}.
 //
 // managePageV1 keeps its four ops and its exact 4-key result. Two of its
 // paths read this module's records (lifecycle.js): `create` refuses during
 // the 7-day cooldown and re-applies a remembered suspension, and `resume`
-// cancels a PENDING deletion (an installed build 40/41 shows a Page that is
-// pending deletion as "paused", and its "Resume" must mean "I want it back");
-// while a deletion is PURGING, update and resume answer `pageNotFound`.
+// cancels a PENDING deletion BEFORE any of its own gates, in its own
+// transaction (an installed build 40/41 shows a Page that is pending deletion
+// as "paused", and its "Resume" must mean "I want it back", whether or not
+// the resume itself is then allowed); while a deletion is PURGING, update
+// and resume answer `pageNotFound`.
 //
 // Server-only records (firestore.rules denies every client read and write):
 //
@@ -95,6 +116,7 @@ const {
   transactionGetAll,
 } = require("../integrity/guards");
 const { isValidOpaqueUid } = require("../achievements/identity");
+const { requireRecentPrivilegedAuthentication } = require("../utils/auth");
 const { likersAccountIsActive } = require("../utils/likers_access");
 const { normalizeProfileVisibility } = require("../profile/profile_visibility");
 const { pageNameViolation } = require("../profile/name_safety");
@@ -103,7 +125,7 @@ const {
   pageAccessRequiredError,
   pagesCapabilityReferences,
 } = require("./access");
-const { assertPagesWriteEnabled } = require("./activation");
+const { pagesWriteAllowed, readPagesActivation } = require("./activation");
 const {
   PAGE_ERRORS,
   canonicalPageOrNull,
@@ -129,6 +151,9 @@ const DAY_MS = 24 * HOUR_MS;
 const PAGE_DELETION_WINDOW_MS = 30 * DAY_MS;
 const PAGE_DELETION_REMINDER_BEFORE_MS = 3 * DAY_MS;
 const PAGE_RECREATE_COOLDOWN_MS = 7 * DAY_MS;
+// How long a due deletion waits before it is looked at again while the
+// deadline purge is held (the owner cannot use Pages: see deadlineHeld).
+const PAGE_DELETION_HOLD_RETRY_MS = 6 * HOUR_MS;
 
 const PAGE_DELETIONS = "pageDeletions";
 const PAGE_POST_CLEAR_JOBS = "pagePostClearJobs";
@@ -145,29 +170,42 @@ const PAGE_DELETION_REMINDER_PHASE = "deletionSoon";
 const PAGE_DELETION_REMINDER_LABEL =
   "Your Page will be deleted in 3 days. Restore it in Page settings to keep it.";
 
+// request, purgeNow and clearPosts are safety actions, so their budgets are
+// generous: no owner reaches them by hand, a script does. Each is charged in
+// its own transaction before the op, so a refused call still costs. The
+// cancel half of `restore` charges nothing (it must never be refused); only
+// the resume that may follow it is budgeted.
 const PAGES_DELETION_RATE_LIMITS = Object.freeze({
   "pages.deletionStatus": Object.freeze({ maxEvents: 60, windowMs: MINUTE_MS }),
   "pages.deletionRestore": Object.freeze({ maxEvents: 10, windowMs: HOUR_MS }),
+  "pages.deletionRequest": Object.freeze({ maxEvents: 20, windowMs: HOUR_MS }),
+  "pages.deletionPurge": Object.freeze({ maxEvents: 10, windowMs: HOUR_MS }),
+  "pages.deletionClear": Object.freeze({ maxEvents: 10, windowMs: HOUR_MS }),
 });
 
 const PAGES_DELETION_WORK_LIMITS = Object.freeze({
   // Records a maintenance run picks up, and bounded rounds on each.
   deletions: 5,
   deletionRounds: 6,
+  // "Delete all posts": 10 posts a round (account_deletion.js limits.posts),
+  // so one job clears up to 200 posts a run, stopping early when the part's
+  // time budget is used.
   clearJobs: 5,
-  clearRounds: 5,
+  clearRounds: 20,
   reminders: 20,
   memory: 50,
   // One follower page (account/stages.js DEFAULT_LIMITS.edgePage).
   edgePage: 25,
   // What a callable does itself right after its commit, so a small Page is
   // done before the owner looks again; the worker finishes larger ones.
-  inlineClearRounds: 3,
+  inlineClearRounds: 5,
   inlineDeletionRounds: 3,
-  // The slice stops picking up further records once it has run this long
-  // (the rest is due again in 10 minutes), so a few very large Pages can
-  // never push pagesMaintenance (300 s) past the slices that follow.
-  sweepBudgetMs: 120 * 1000,
+  // The clear jobs and the purges each stop picking up further work once
+  // THEIR part has run this long (the rest is due again in 10 minutes), so
+  // a few very large Pages can never push pagesMaintenance (300 s) past the
+  // slices that follow, and a purge can never starve a "delete all posts"
+  // job, whose posts are still public while it waits.
+  sweepBudgetMs: 45 * 1000,
 });
 
 const PAGE_DELETION_KEYS = Object.freeze([
@@ -184,8 +222,8 @@ const PAGE_MEMORY_KEYS = Object.freeze([
 ]);
 const PAGE_MEMORY_SUSPENSION_KEYS = Object.freeze(["suspendedAt", "suspensionReason"]);
 const PAGE_DELETION_STATE_KEYS = Object.freeze([
-  "deletion", "pageExists", "pageId", "postsClearing", "recreateAllowedAtMs",
-  "schemaVersion",
+  "deletion", "pageExists", "pageId", "pagePaused", "postsClearing",
+  "recreateAllowedAtMs", "schemaVersion",
 ]);
 const SUSPENSION_REASON_PATTERN = /^[A-Za-z][A-Za-z0-9_]{0,63}$/u;
 
@@ -214,6 +252,10 @@ const PAGE_DELETION_ERRORS = Object.freeze({
     "This Page is being deleted.", { reason: "pageDeletionInProgress" }),
   notRequested: () => new HttpsError("failed-precondition",
     "Page deletion was not requested.", { reason: "pageDeletionNotRequested" }),
+  // "Delete now" confirms ONE request: the one the owner was looking at. A
+  // delayed or repeated call that meets a newer request is refused.
+  changed: () => new HttpsError("failed-precondition",
+    "This deletion request has changed.", { reason: "pageDeletionChanged" }),
   recreateCooldown: (retryAtMs) => new HttpsError("failed-precondition",
     "A new Page can be created 7 days after the previous one was deleted.",
     { reason: "pageRecreateCooldown", retryAtMs }),
@@ -524,11 +566,16 @@ function rememberedPageSuspension(memory) {
 
 // ------------------------------------------------------------------ views
 
-function pageDeletionState({ pageId, pageExists, deletion, clearJob, memory, nowMs }) {
+function pageDeletionState({
+  pageId, pageExists, deletion, clearJob, memory, nowMs, pagePaused = null,
+}) {
   return {
     schemaVersion: 1,
     pageId,
     pageExists,
+    // Whether the caller's own Page is paused by its owner right now: after
+    // a restore this says if the Page came back on air or stayed paused.
+    pagePaused: pageExists ? pagePaused === true : null,
     deletion: deletion
       ? {
           state: deletion.state,
@@ -563,11 +610,20 @@ function pageDeletionReminderNotice({ pageId, deleteAtMs, now }) {
 
 function exactDeletionInput(data) {
   requireObject(data);
-  requireExactInput(data, ["op"], ["op"]);
   if (typeof data.op !== "string" || !MANAGE_PAGE_DELETION_OPS.includes(data.op)) {
     fail("invalid-argument", "op is invalid.");
   }
-  return { op: data.op };
+  if (data.op !== "purgeNow") {
+    requireExactInput(data, ["op"], ["op"]);
+    return { op: data.op };
+  }
+  // "Delete now" names the request it confirms (the requestedAtMs the owner
+  // was shown), so it can never act on a different, newer one.
+  requireExactInput(data, ["op", "requestedAtMs"], ["op", "requestedAtMs"]);
+  if (!Number.isSafeInteger(data.requestedAtMs) || data.requestedAtMs < 0) {
+    fail("invalid-argument", "requestedAtMs is invalid.");
+  }
+  return { op: data.op, requestedAtMs: data.requestedAtMs };
 }
 
 function errorCode(error) {
@@ -697,6 +753,7 @@ function createPagesDeletionService({
     return pageDeletionState({
       pageId: uid,
       pageExists: pageSnapshot.exists,
+      pagePaused: pageSnapshot.exists && pageSnapshot.data()?.ownerPaused === true,
       deletion: livePageDeletion(deletionSnapshot, uid),
       clearJob: canonicalPagePostClearJob(clearSnapshot, uid),
       memory,
@@ -713,7 +770,9 @@ function createPagesDeletionService({
 
   async function request(auth) {
     const uid = auth.uid;
-    const { nowMs, now } = timing();
+    const timed = timing();
+    const { nowMs, now } = timed;
+    await chargeRate("pages.deletionRequest", uid, timed);
     const { pageRef, deletionRef, clearRef } = references(uid);
     return firestore.runTransaction(async (transaction) => {
       const [pageSnapshot, visibilitySnapshot, deletionSnapshot, clearSnapshot] =
@@ -726,9 +785,16 @@ function createPagesDeletionService({
       const clearJob = canonicalPagePostClearJob(clearSnapshot, uid);
       const existing = canonicalPageDeletion(deletionSnapshot, uid);
       if (existing !== null && !existing.malformed) {
-        // Idempotent: the first request's date stands.
+        // Idempotent: the first request's date stands. A record means "this
+        // Page is paused"; one found over a RUNNING Page (an operator's
+        // repair, a record that outlived an earlier Page) pauses it again
+        // rather than leaving a public Page on a deletion timer.
+        applyPagePauseInTransaction(transaction, {
+          db: firestore, uid, page, visibilitySnapshot, now, logger,
+        });
         return pageDeletionState({
-          pageId: uid, pageExists: true, deletion: existing, clearJob, memory: null, nowMs,
+          pageId: uid, pageExists: true, pagePaused: true, deletion: existing, clearJob,
+          memory: null, nowMs,
         });
       }
       if (existing?.malformed) logger.error("pages deletion record malformed on request", {});
@@ -741,6 +807,7 @@ function createPagesDeletionService({
       return pageDeletionState({
         pageId: uid,
         pageExists: true,
+        pagePaused: true,
         deletion: {
           state: "pending",
           requestedAtMs: nowMs,
@@ -753,78 +820,109 @@ function createPagesDeletionService({
     });
   }
 
+  /**
+   * Takes a pending deletion back, in two separate steps.
+   *
+   * 1. CANCEL, a safety action. The record goes whenever it is still
+   *    pending: no switch, no capability, no mute, no verified e-mail, no
+   *    budget, and whatever state the Page document is in (it is not even
+   *    read). The purge reads none of those gates, so the undo must not
+   *    either: a gate that stayed closed for the rest of the 30 days would
+   *    otherwise turn a deletion the owner tried to take back into a
+   *    permanent one. Once the purge has started there is nothing to cancel
+   *    (`pageDeletionInProgress`).
+   * 2. RESUME, an ordinary gated write, only for a Page that was running
+   *    before the request. Any refusal (switch off, unverified, muted, no
+   *    live Premium or VIP, a private profile, a name no longer allowed, a
+   *    suspension, a broken visibility index, the budget) leaves the Page
+   *    exactly what a cancelled deletion leaves by itself: an ordinary paused
+   *    Page that the owner resumes later with managePageV1. The answer's
+   *    `pagePaused` says which of the two happened.
+   */
   async function restore(auth) {
     const uid = auth.uid;
     const timed = timing();
-    const { nowMs, now } = timed;
-    await assertPagesWriteEnabled({ db: firestore, uid, logger });
-    await chargeRate("pages.deletionRestore", uid, timed);
-    const { pageRef, deletionRef, clearRef } = references(uid);
-    return firestore.runTransaction(async (transaction) => {
-      const [userSnapshot, entitlementSnapshot, grantSnapshot, restrictionSnapshot, pageSnapshot,
-        publicSnapshot, visibilitySnapshot, deletionSnapshot, clearSnapshot] =
-        await transactionGetAll(
-          transaction,
-          ...pagesCapabilityReferences(firestore, uid),
-          firestore.doc(`restrictions/${uid}`),
-          pageRef,
-          firestore.doc(`publicProfiles/${uid}`),
-          pageVisibilityReference(firestore),
-          deletionRef,
-          clearRef,
-        );
-      const user = userSnapshot.exists ? (userSnapshot.data() ?? null) : null;
-      if (!likersAccountIsActive(user)) fail("permission-denied", "Your account is not active.");
-      assertNotRestricted(restrictionSnapshot, "Your", nowMs);
-      const clearJob = canonicalPagePostClearJob(clearSnapshot, uid);
-      const existing = canonicalPageDeletion(deletionSnapshot, uid);
-      const view = (deletion) => pageDeletionState({
-        pageId: uid, pageExists: pageSnapshot.exists, deletion, clearJob, memory: null, nowMs,
-      });
-      // Nothing pending: an idempotent answer, no gate.
-      if (existing === null) return view(null);
+    const { deletionRef } = references(uid);
+    const cancelled = await firestore.runTransaction(async (transaction) => {
+      const existing = canonicalPageDeletion(await transaction.get(deletionRef), uid);
+      // Nothing pending: an idempotent answer.
+      if (existing === null) return null;
       if (!existing.malformed && existing.state === "purging") {
         throw PAGE_DELETION_ERRORS.inProgress();
       }
+      // A malformed record goes too: nothing may ever act on it, and what
+      // it said about the Page before the request is not trusted.
+      transaction.delete(deletionRef);
+      return { resume: existing.malformed !== true && existing.pausedBefore === false };
+    });
+    if (cancelled !== null && cancelled.resume) {
+      let outcome;
+      try {
+        outcome = await resumeAfterCancel(auth, timed);
+      } catch (error) {
+        outcome = `error:${errorCode(error) ?? "unknown"}`;
+      }
+      if (outcome !== "resumed") {
+        logger.info("pages deletion cancelled, page left paused", { outcome });
+      }
+    }
+    return readState(uid);
+  }
+
+  /// Step 2 of `restore`: the Page goes back on air when today's gates allow
+  /// it. Returns a short outcome word; never the reason a Page is deleted.
+  async function resumeAfterCancel(auth, timed) {
+    const uid = auth.uid;
+    const { nowMs, now } = timed;
+    if (auth.token?.email_verified !== true) return "unverified";
+    const activation = await readPagesActivation({ db: firestore, logger });
+    if (!pagesWriteAllowed(activation, uid)) return "notEnabled";
+    await chargeRate("pages.deletionRestore", uid, timed);
+    const { pageRef, deletionRef } = references(uid);
+    return firestore.runTransaction(async (transaction) => {
+      const [userSnapshot, entitlementSnapshot, grantSnapshot, restrictionSnapshot, pageSnapshot,
+        publicSnapshot, visibilitySnapshot, deletionSnapshot] = await transactionGetAll(
+        transaction,
+        ...pagesCapabilityReferences(firestore, uid),
+        firestore.doc(`restrictions/${uid}`),
+        pageRef,
+        firestore.doc(`publicProfiles/${uid}`),
+        pageVisibilityReference(firestore),
+        deletionRef,
+      );
+      // A new request landed after the cancel: that Page stays paused (a
+      // record always means "paused").
+      if (deletionSnapshot.exists) return "requestedAgain";
+      const user = userSnapshot.exists ? (userSnapshot.data() ?? null) : null;
+      if (!likersAccountIsActive(user)) return "inactive";
+      assertNotRestricted(restrictionSnapshot, "Your", nowMs);
       const capability = derivePagesCapability(
         { userSnapshot, entitlementSnapshot, grantSnapshot },
         { tokenRole: typeof auth.token?.role === "string" ? auth.token.role : null, now: nowMs },
       );
-      if (!capability.allowed) throw pageAccessRequiredError();
-      transaction.delete(deletionRef);
-      // Taking a deletion back must never fail on the Page's own state: a
-      // malformed Page is logged and left as it is, but its record goes, so
-      // no sweep deletes a Page whose owner asked for it back.
+      if (!capability.allowed) return "accessRequired";
       const page = canonicalPageOrNull(pageSnapshot, uid);
       if (pageSnapshot.exists && page === null) {
         logger.error("pages malformed page on a deletion restore", {
           reason: pageMalformedReason(pageSnapshot.data(), uid),
         });
       }
-      if (page === null || page.suspended) {
-        // No Page, a malformed one, or a suspended one: the deletion is
-        // cancelled and the Page is left exactly as it is (a suspended one
-        // as a moderator put it).
-        return view(null);
-      }
-      const changes = { ...restoredPageFields(page) };
-      // The Page returns to what it was before the request. A Page the owner
-      // had paused earlier stays paused; so does one whose profile is no
-      // longer public or whose name is no longer allowed (the resume rules),
-      // and the owner sees the ordinary "paused" state with its reason.
-      if (existing.malformed !== true && existing.pausedBefore === false &&
-          page.ownerPaused === true && resumable(user, publicSnapshot, uid)) {
-        changes.ownerPaused = false;
-      }
-      if (Object.keys(changes).length > 0) {
-        const next = { ...page, ...changes, updatedAt: now };
-        next.listed = derivePageListed(next);
-        transaction.update(pageRef, { ...changes, listed: next.listed, updatedAt: now });
-        applyPageVisibilityInTransaction(transaction, {
-          db: firestore, snapshot: visibilitySnapshot, pageId: uid, page: next, now, logger,
-        });
-      }
-      return view(null);
+      // No Page, a malformed one or a suspended one is left exactly as it
+      // is (a suspended one as a moderator put it).
+      if (page === null) return "noPage";
+      if (page.suspended) return "suspended";
+      if (page.ownerPaused !== true) return "resumed";
+      // The resume rules of managePageV1: a public profile, an allowed name.
+      if (!resumable(user, publicSnapshot, uid)) return "notResumable";
+      // The capability is live (the gate passed): a lapsed Page is restored.
+      const changes = { ...restoredPageFields(page), ownerPaused: false };
+      const next = { ...page, ...changes, updatedAt: now };
+      next.listed = derivePageListed(next);
+      transaction.update(pageRef, { ...changes, listed: next.listed, updatedAt: now });
+      applyPageVisibilityInTransaction(transaction, {
+        db: firestore, snapshot: visibilitySnapshot, pageId: uid, page: next, now, logger,
+      });
+      return "resumed";
     });
   }
 
@@ -840,16 +938,28 @@ function createPagesDeletionService({
     return displayName !== null && pageNameViolation(displayName) === null;
   }
 
-  async function purgeNow(auth) {
+  /**
+   * "Delete now": the one irreversible op, so it is the one that asks for
+   * more than a valid session.
+   *   * A sign-in no older than 5 minutes (the account-deletion rule,
+   *     utils/auth.js): a stolen or left-open session can start a deletion,
+   *     which the owner can take back for 30 days, but cannot skip the wait.
+   *   * The requestedAtMs of the request it confirms: a delayed or repeated
+   *     call never purges a newer request.
+   */
+  async function purgeNow(auth, input) {
     const uid = auth.uid;
-    const { now } = timing();
+    const timed = timing();
+    const { nowMs, now } = timed;
+    requireRecentPrivilegedAuthentication(auth, { nowSeconds: Math.floor(nowMs / 1000) });
+    await chargeRate("pages.deletionPurge", uid, timed);
     const { deletionRef } = references(uid);
-    await firestore.runTransaction(async (transaction) => {
+    const started = await firestore.runTransaction(async (transaction) => {
       const deletion = canonicalPageDeletion(await transaction.get(deletionRef), uid);
-      // The typed-name confirmation happened at `request`: "now" is only
-      // ever the second step of a deletion the owner already asked for.
       if (deletion === null || deletion.malformed) throw PAGE_DELETION_ERRORS.notRequested();
-      if (deletion.state === "purging") return;
+      if (deletion.requestedAtMs !== input.requestedAtMs) throw PAGE_DELETION_ERRORS.changed();
+      // Already running: the worker has it. No second runner is started.
+      if (deletion.state === "purging") return false;
       transaction.update(deletionRef, {
         state: "purging",
         step: 0,
@@ -859,19 +969,24 @@ function createPagesDeletionService({
         dueAt: now,
         updatedAt: now,
       });
+      return true;
     });
-    try {
-      await advanceDeletion(uid, { rounds: limits.inlineDeletionRounds });
-    } catch (error) {
-      // The record stays; pagesMaintenance finishes the purge.
-      logger.warn("pages deletion purge deferred", { code: errorCode(error) });
+    if (started) {
+      try {
+        await advanceDeletion(uid, { rounds: limits.inlineDeletionRounds });
+      } catch (error) {
+        // The record stays; pagesMaintenance finishes the purge.
+        logger.warn("pages deletion purge deferred", { code: errorCode(error) });
+      }
     }
     return readState(uid);
   }
 
   async function clearPosts(auth) {
     const uid = auth.uid;
-    const { now } = timing();
+    const timed = timing();
+    const { now } = timed;
+    await chargeRate("pages.deletionClear", uid, timed);
     const { pageRef, deletionRef, clearRef } = references(uid);
     const queued = await firestore.runTransaction(async (transaction) => {
       const [pageSnapshot, deletionSnapshot] = await transactionGetAll(
@@ -896,16 +1011,18 @@ function createPagesDeletionService({
   }
 
   async function managePageDeletionV1(request_) {
-    const op = request_?.data?.op;
-    // Only restore needs the verified e-mail of the common write
-    // preconditions; everything else is a read or a safety action.
-    const auth = requireActor(request_, { verified: op === "restore" });
+    // No op needs a verified e-mail: status is a read, and request,
+    // purgeNow, clearPosts and the CANCEL half of restore are safety actions
+    // (an owner who could ask for the deletion unverified must be able to
+    // take it back unverified). Only the resume that may follow a cancel
+    // looks at the e-mail, and it leaves the Page paused instead of refusing.
+    const auth = requireActor(request_, { verified: false });
     const input = exactDeletionInput(request_.data);
     switch (input.op) {
       case "status": return status(auth);
       case "request": return request(auth);
       case "restore": return restore(auth);
-      case "purgeNow": return purgeNow(auth);
+      case "purgeNow": return purgeNow(auth, input);
       case "clearPosts": return clearPosts(auth);
       default: return fail("invalid-argument", "op is invalid.");
     }
@@ -998,9 +1115,18 @@ function createPagesDeletionService({
    * Advances one deletion record by at most `rounds` bounded steps. A
    * pending record whose date passed is claimed (`purging`) first, in a
    * transaction that re-reads it, so a restore either wins outright or
-   * finds the purge already started. "none" | "waiting" | "more" | "done".
+   * finds the purge already started.
+   *
+   * `deadlineHeld(uid)` is the operator's brake on the ONE irreversible
+   * transition nobody asked for today: while it answers true a pending
+   * record whose date passed is NOT claimed; it is looked at again in
+   * PAGE_DELETION_HOLD_RETRY_MS and stays restorable meanwhile. A purge that
+   * already started, and "delete now", are never held.
+   * "none" | "waiting" | "held" | "more" | "done".
    */
-  async function advanceDeletion(uid, { rounds = limits.deletionRounds } = {}) {
+  async function advanceDeletion(uid, {
+    rounds = limits.deletionRounds, deadlineHeld = null,
+  } = {}) {
     const { nowMs, now } = timing();
     const { deletionRef } = references(uid);
     let deletion = await firestore.runTransaction(async (transaction) => {
@@ -1009,6 +1135,13 @@ function createPagesDeletionService({
       if (current.malformed) return current;
       if (current.state === "pending") {
         if (current.deleteAtMs > nowMs) return { ...current, waiting: true };
+        if (typeof deadlineHeld === "function" && deadlineHeld(uid) === true) {
+          transaction.update(deletionRef, {
+            dueAt: TimestampImpl.fromMillis(nowMs + PAGE_DELETION_HOLD_RETRY_MS),
+            updatedAt: now,
+          });
+          return { ...current, held: true };
+        }
         transaction.update(deletionRef, {
           state: "purging", step: 0, cursor: null, attempts: 0, reminderAt: null,
           dueAt: now, updatedAt: now,
@@ -1027,6 +1160,7 @@ function createPagesDeletionService({
       return "none";
     }
     if (deletion.waiting) return "waiting";
+    if (deletion.held) return "held";
     try {
       for (let round = 0; round < rounds; round += 1) {
         const outcome = await purgeStep(uid, deletion);
@@ -1056,10 +1190,29 @@ function createPagesDeletionService({
       clock() - startedMs >= limits.sweepBudgetMs;
   }
 
+  /**
+   * The operator's brake on deadline purges (never on "delete now"): a
+   * pending deletion is not turned into a purge while its owner could not
+   * use Pages at all, i.e. while appConfig/pagesV1 has Pages writes switched
+   * off for them (the kill switch, testers mode for a non-tester, or a
+   * missing or malformed switch, which reads as disabled). With Pages
+   * hidden an owner may not even reach "Przywróć stronę", and an incident
+   * that outlasts the rest of a 30-day window must not make deletions
+   * permanent by itself. Returns a predicate over the owner's uid; the
+   * switch is read once per run, and only when something is due.
+   */
+  async function deadlineHold() {
+    const activation = await readPagesActivation({ db: firestore, logger });
+    return (uid) => !pagesWriteAllowed(activation, uid);
+  }
+
   async function processDueDeletions({ limit = limits.deletions, startedMs = null } = {}) {
     const { now } = timing();
     const page = await PAGES_DELETION_WORK_QUERIES.dueDeletions(firestore, now).limit(limit).get();
-    const line = { processed: page.size, done: 0, failed: 0, hasMore: page.size === limit };
+    const line = {
+      processed: page.size, done: 0, failed: 0, held: 0, hasMore: page.size === limit,
+    };
+    const deadlineHeld = page.empty ? null : await deadlineHold();
     for (const document of page.docs) {
       if (overBudget(startedMs)) {
         line.hasMore = true;
@@ -1070,8 +1223,9 @@ function createPagesDeletionService({
         continue;
       }
       try {
-        const outcome = await advanceDeletion(document.id);
+        const outcome = await advanceDeletion(document.id, { deadlineHeld });
         if (outcome === "done") line.done += 1;
+        if (outcome === "held") line.held += 1;
         if (outcome === "more") line.hasMore = true;
       } catch (error) {
         line.failed += 1;
@@ -1082,6 +1236,9 @@ function createPagesDeletionService({
         logger[level]("pages deletion retry", { attempts, code: errorCode(error) });
       }
     }
+    // Somebody must notice: these Pages stay restorable until the switch is
+    // back, and are purged within PAGE_DELETION_HOLD_RETRY_MS after it is.
+    if (line.held > 0) logger.warn("pages deletion deadline held", { held: line.held });
     return line;
   }
 
@@ -1090,7 +1247,7 @@ function createPagesDeletionService({
    * Every save re-reads the job: a job the owner re-requested meanwhile (a
    * new requestedAt) is left to its next run. "none" | "more" | "done".
    */
-  async function runClearJob(uid, { rounds = limits.clearRounds } = {}) {
+  async function runClearJob(uid, { rounds = limits.clearRounds, startedMs = null } = {}) {
     const { clearRef } = references(uid);
     let job = canonicalPagePostClearJob(await clearRef.get(), uid);
     if (job === null) return "none";
@@ -1109,6 +1266,9 @@ function createPagesDeletionService({
     };
     try {
       for (let round = 0; round < rounds; round += 1) {
+        // The part's time budget also bounds ONE large job (after its first
+        // round, so every due job always moves).
+        if (round > 0 && overBudget(startedMs)) return "more";
         const posts = await pageStages().processPosts(uid, job.cursor, {
           reason: "postsCleared", ownerDelete: true, before: job.requestedAtMs,
         });
@@ -1159,7 +1319,7 @@ function createPagesDeletionService({
         continue;
       }
       try {
-        const outcome = await runClearJob(document.id);
+        const outcome = await runClearJob(document.id, { startedMs });
         if (outcome === "done") line.done += 1;
         if (outcome === "more") line.hasMore = true;
       } catch (error) {
@@ -1224,13 +1384,15 @@ function createPagesDeletionService({
     return line;
   }
 
-  /// The pagesMaintenance slice: each part isolated from the others.
+  /// The pagesMaintenance slice: each part isolated from the others. The
+  /// clear jobs run BEFORE the purges and on their own time budget: the
+  /// posts of a "delete all posts" are still public while they wait, a
+  /// purged Page's are already hidden (it is paused).
   async function sweep() {
-    const startedMs = clock();
     const parts = [
       ["reminders", () => sendDueReminders()],
-      ["deletions", () => processDueDeletions({ startedMs })],
-      ["clearJobs", () => processDueClearJobs({ startedMs })],
+      ["clearJobs", () => processDueClearJobs({ startedMs: clock() })],
+      ["deletions", () => processDueDeletions({ startedMs: clock() })],
       ["memory", () => expireMemory()],
     ];
     const results = {};
@@ -1279,6 +1441,7 @@ module.exports = {
   PAGES_DELETION_WORK_QUERIES,
   PAGE_DELETIONS,
   PAGE_DELETION_ERRORS,
+  PAGE_DELETION_HOLD_RETRY_MS,
   PAGE_DELETION_KEYS,
   PAGE_DELETION_REMINDER_BEFORE_MS,
   PAGE_DELETION_REMINDER_LABEL,

@@ -813,6 +813,74 @@ test("Creator audience cannot be enabled while a Page exists; disabling still wo
   assert.equal(on.creatorAudienceEnabled, true);
 });
 
+test("Creator audience stays closed while a deleted Page's suspension is remembered (ADR-236)",
+  async () => {
+    // A suspended Page kept the Creator audience closed (pages/{uid} existed).
+    // Deleting that Page must not reopen it: the account would be followable
+    // again minutes after a moderator's decision.
+    const creator = {
+      user: {
+        accountType: "creator",
+        premiumIdentity: true,
+        creatorAgeVerified: true,
+        creatorAudienceEnabled: false,
+      },
+      entitlement: {
+        status: "active",
+        isPremium: true,
+        premiumIdentityEnabled: true,
+        creatorEnabled: true,
+        currentPeriodEnd: Timestamp.fromMillis(nowMs + DAY_MS),
+      },
+    };
+    const now = Timestamp.fromMillis(nowMs);
+    const enable = (uid, requestId) => setCreatorAudienceEnabledHandler(
+      request(uid, { enabled: true, requestId }), { database: db, now });
+    const memory = (uid, overrides = {}) => db.doc(`pageMemory/${uid}`).set({
+      schemaVersion: 1,
+      pageId: uid,
+      deletedAt: now,
+      recreateAllowedAt: Timestamp.fromMillis(nowMs + 7 * DAY_MS),
+      suspension: null,
+      expiresAt: Timestamp.fromMillis(nowMs + 7 * DAY_MS),
+      updatedAt: now,
+      ...overrides,
+    });
+    // The generic refusal of ineligibility: a suspension is not disclosed.
+    const closed = (error) => error.code === "failed-precondition" &&
+      error.message === "Creator audience is unavailable for this account." &&
+      error.details === undefined;
+
+    const suspended = await ownerWithPage({}, creator);
+    await db.doc(`pages/${suspended}`).delete();
+    await memory(suspended, {
+      suspension: { suspendedAt: now, suspensionReason: "scam" }, expiresAt: null,
+    });
+    await assert.rejects(enable(suspended, "req-creator-suspended"), closed);
+    assert.equal((await db.doc(`users/${suspended}`).get()).data().creatorAudienceEnabled, false);
+    // Disabling is never affected.
+    const off = await setCreatorAudienceEnabledHandler(
+      request(suspended, { enabled: false, requestId: "req-creator-suspended-off" }),
+      { database: db, now },
+    );
+    assert.equal(off.creatorAudienceEnabled, false);
+    // A staff lift clears the suspension (moderation.js): the audience opens.
+    await memory(suspended);
+    assert.equal((await enable(suspended, "req-creator-lifted")).creatorAudienceEnabled, true);
+
+    // A malformed row fails closed.
+    const broken = await ownerWithPage({}, creator);
+    await db.doc(`pages/${broken}`).delete();
+    await db.doc(`pageMemory/${broken}`).set({ schemaVersion: 1, pageId: broken });
+    await assert.rejects(enable(broken, "req-creator-broken"), closed);
+
+    // The 7-day cooldown alone (no suspension) refuses nothing here.
+    const cooling = await ownerWithPage({}, creator);
+    await db.doc(`pages/${cooling}`).delete();
+    await memory(cooling);
+    assert.equal((await enable(cooling, "req-creator-cooling")).creatorAudienceEnabled, true);
+  });
+
 // ------------------------------------------------------- safety tolerance
 
 test("pause survives a malformed Page and a malformed index; other writes refuse", async () => {

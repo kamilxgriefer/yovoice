@@ -970,6 +970,13 @@ function createAccountDeletionStages({
     const reference = db.collection("users").doc(uid);
     const snapshot = await reference.get();
     await db.recursiveDelete(reference);
+    // Belt and braces (ADR-236): pageMemory/{uid} is removed with the other
+    // uid-keyed records, and the moderation arm no longer writes one for an
+    // account that is being deleted. A row written in between by an older
+    // deployment would never expire (a remembered suspension has no date),
+    // so it is removed once more here, after the last document that could
+    // make anybody write it is gone.
+    await db.collection("pageMemory").doc(uid).delete();
     return {
       done: true,
       cursor: null,

@@ -79,6 +79,10 @@ const pageDeleteTranslationKeys = <String>[
   'I understand that the contact details will be public. They stay saved while the Page is paused and are deleted together with the Page. I can clear them any time.',
   'Your profile will show as a Page. You can pause or delete it any time in Page settings.',
   'Page deleted',
+  'pages.delete.confirmIdentity',
+  'Deleting the Page now needs a fresh sign-in. Enter your password.',
+  'We couldn\'t confirm it is you, so nothing was deleted. Try again, or sign out and sign in again.',
+  'Deletion cancelled. The Page stays paused.',
   '{count} posts.zero',
   '{count} posts.one',
   '{count} posts.two',
@@ -154,6 +158,13 @@ const pageDeleteTranslations = <String, Map<String, String>>{
     'Your profile will show as a Page. You can pause or delete it any time in Page settings.':
         'Dein Profil wird als Seite angezeigt. Du kannst sie jederzeit in den Seiteneinstellungen pausieren oder löschen.',
     'Page deleted': 'Seite gelöscht',
+    'pages.delete.confirmIdentity': 'Bestätige, dass du es bist',
+    'Deleting the Page now needs a fresh sign-in. Enter your password.':
+        'Um die Seite sofort zu löschen, ist eine frische Anmeldung nötig. Gib dein Passwort ein.',
+    'We couldn\'t confirm it is you, so nothing was deleted. Try again, or sign out and sign in again.':
+        'Wir konnten nicht bestätigen, dass du es bist, deshalb wurde nichts gelöscht. Versuch es noch einmal oder melde dich ab und wieder an.',
+    'Deletion cancelled. The Page stays paused.':
+        'Löschung abgebrochen. Die Seite bleibt pausiert.',
     '{count} posts.zero': '{count} Beiträge',
     '{count} posts.one': '{count} Beitrag',
     '{count} posts.two': '{count} Beiträge',
@@ -228,6 +239,13 @@ const pageDeleteTranslations = <String, Map<String, String>>{
     'Your profile will show as a Page. You can pause or delete it any time in Page settings.':
         'Tu perfil se mostrará como página. Puedes pausarla o eliminarla cuando quieras en los ajustes de la página.',
     'Page deleted': 'Página eliminada',
+    'pages.delete.confirmIdentity': 'Confirma que eres tú',
+    'Deleting the Page now needs a fresh sign-in. Enter your password.':
+        'Para eliminar la página ahora hace falta un inicio de sesión reciente. Introduce tu contraseña.',
+    'We couldn\'t confirm it is you, so nothing was deleted. Try again, or sign out and sign in again.':
+        'No pudimos confirmar que eres tú, así que no se eliminó nada. Inténtalo de nuevo o cierra sesión y vuelve a iniciarla.',
+    'Deletion cancelled. The Page stays paused.':
+        'Eliminación cancelada. La página sigue en pausa.',
     '{count} posts.zero': '{count} publicaciones',
     '{count} posts.one': '{count} publicación',
     '{count} posts.two': '{count} publicaciones',
@@ -300,6 +318,13 @@ const pageDeleteTranslations = <String, Map<String, String>>{
     'Your profile will show as a Page. You can pause or delete it any time in Page settings.':
         'O teu perfil vai aparecer como página. Podes pausá-la ou eliminá-la a qualquer momento nas definições da página.',
     'Page deleted': 'Página eliminada',
+    'pages.delete.confirmIdentity': 'Confirma que és tu',
+    'Deleting the Page now needs a fresh sign-in. Enter your password.':
+        'Para eliminar a página agora é preciso um início de sessão recente. Introduz a tua palavra-passe.',
+    'We couldn\'t confirm it is you, so nothing was deleted. Try again, or sign out and sign in again.':
+        'Não conseguimos confirmar que és tu, por isso nada foi eliminado. Tenta novamente ou termina a sessão e inicia-a de novo.',
+    'Deletion cancelled. The Page stays paused.':
+        'Eliminação cancelada. A página continua em pausa.',
     '{count} posts.zero': '{count} publicações',
     '{count} posts.one': '{count} publicação',
     '{count} posts.two': '{count} publicações',
@@ -371,6 +396,13 @@ const pageDeleteTranslations = <String, Map<String, String>>{
     'Your profile will show as a Page. You can pause or delete it any time in Page settings.':
         'Seu perfil vai aparecer como página. Você pode pausá-la ou excluí-la quando quiser nas configurações da página.',
     'Page deleted': 'Página excluída',
+    'pages.delete.confirmIdentity': 'Confirme que é você',
+    'Deleting the Page now needs a fresh sign-in. Enter your password.':
+        'Para excluir a página agora é preciso um login recente. Digite sua senha.',
+    'We couldn\'t confirm it is you, so nothing was deleted. Try again, or sign out and sign in again.':
+        'Não conseguimos confirmar que é você, então nada foi excluído. Tente de novo ou saia e entre novamente.',
+    'Deletion cancelled. The Page stays paused.':
+        'Exclusão cancelada. A página continua pausada.',
     '{count} posts.zero': '{count} publicações',
     '{count} posts.one': '{count} publicação',
     '{count} posts.two': '{count} publicações',
@@ -446,6 +478,13 @@ const pageDeleteTranslations = <String, Map<String, String>>{
     'Your profile will show as a Page. You can pause or delete it any time in Page settings.':
         'Ton profil s’affichera comme une page. Tu peux la mettre en pause ou la supprimer à tout moment dans les paramètres de la page.',
     'Page deleted': 'Page supprimée',
+    'pages.delete.confirmIdentity': 'Confirme que c’est bien toi',
+    'Deleting the Page now needs a fresh sign-in. Enter your password.':
+        'Supprimer la page tout de suite demande une connexion récente. Saisis ton mot de passe.',
+    'We couldn\'t confirm it is you, so nothing was deleted. Try again, or sign out and sign in again.':
+        'Nous n’avons pas pu confirmer que c’est bien toi, donc rien n’a été supprimé. Réessaie, ou déconnecte-toi puis reconnecte-toi.',
+    'Deletion cancelled. The Page stays paused.':
+        'Suppression annulée. La page reste en pause.',
     '{count} posts.zero': '{count} publication',
     '{count} posts.one': '{count} publication',
     '{count} posts.two': '{count} publications',
@@ -519,6 +558,13 @@ const pageDeleteTranslations = <String, Map<String, String>>{
     'Your profile will show as a Page. You can pause or delete it any time in Page settings.':
         'Il tuo profilo apparirà come pagina. Puoi metterla in pausa o eliminarla in qualsiasi momento nelle impostazioni della pagina.',
     'Page deleted': 'Pagina eliminata',
+    'pages.delete.confirmIdentity': 'Conferma che sei tu',
+    'Deleting the Page now needs a fresh sign-in. Enter your password.':
+        'Per eliminare subito la pagina serve un accesso recente. Inserisci la tua password.',
+    'We couldn\'t confirm it is you, so nothing was deleted. Try again, or sign out and sign in again.':
+        'Non siamo riusciti a confermare che sei tu, quindi non è stato eliminato nulla. Riprova oppure esci e accedi di nuovo.',
+    'Deletion cancelled. The Page stays paused.':
+        'Eliminazione annullata. La pagina resta in pausa.',
     '{count} posts.zero': '{count} post',
     '{count} posts.one': '{count} post',
     '{count} posts.two': '{count} post',
@@ -592,6 +638,13 @@ const pageDeleteTranslations = <String, Map<String, String>>{
     'Your profile will show as a Page. You can pause or delete it any time in Page settings.':
         'Je profiel wordt als pagina getoond. Je kunt haar op elk moment pauzeren of verwijderen in de pagina-instellingen.',
     'Page deleted': 'Pagina verwijderd',
+    'pages.delete.confirmIdentity': 'Bevestig dat jij het bent',
+    'Deleting the Page now needs a fresh sign-in. Enter your password.':
+        'Om de pagina nu te verwijderen is een recente aanmelding nodig. Voer je wachtwoord in.',
+    'We couldn\'t confirm it is you, so nothing was deleted. Try again, or sign out and sign in again.':
+        'We konden niet bevestigen dat jij het bent, dus er is niets verwijderd. Probeer het opnieuw of meld je af en weer aan.',
+    'Deletion cancelled. The Page stays paused.':
+        'Verwijdering geannuleerd. De pagina blijft gepauzeerd.',
     '{count} posts.zero': '{count} berichten',
     '{count} posts.one': '{count} bericht',
     '{count} posts.two': '{count} berichten',
@@ -665,6 +718,13 @@ const pageDeleteTranslations = <String, Map<String, String>>{
     'Your profile will show as a Page. You can pause or delete it any time in Page settings.':
         'Profilul tău va apărea ca pagină. O poți pune pe pauză sau șterge oricând din setările paginii.',
     'Page deleted': 'Pagină ștearsă',
+    'pages.delete.confirmIdentity': 'Confirmă că ești tu',
+    'Deleting the Page now needs a fresh sign-in. Enter your password.':
+        'Pentru a șterge pagina acum este nevoie de o autentificare recentă. Introdu parola.',
+    'We couldn\'t confirm it is you, so nothing was deleted. Try again, or sign out and sign in again.':
+        'Nu am putut confirma că ești tu, așa că nu s-a șters nimic. Încearcă din nou sau deconectează-te și conectează-te iar.',
+    'Deletion cancelled. The Page stays paused.':
+        'Ștergere anulată. Pagina rămâne pe pauză.',
     '{count} posts.zero': '{count} postări',
     '{count} posts.one': '{count} postare',
     '{count} posts.two': '{count} postări',
@@ -736,6 +796,13 @@ const pageDeleteTranslations = <String, Map<String, String>>{
     'Your profile will show as a Page. You can pause or delete it any time in Page settings.':
         'Profilin sayfa olarak görünecek. İstediğin zaman sayfa ayarlarından duraklatabilir veya silebilirsin.',
     'Page deleted': 'Sayfa silindi',
+    'pages.delete.confirmIdentity': 'Sen olduğunu doğrula',
+    'Deleting the Page now needs a fresh sign-in. Enter your password.':
+        'Sayfayı şimdi silmek için yeni bir oturum açma gerekir. Şifreni gir.',
+    'We couldn\'t confirm it is you, so nothing was deleted. Try again, or sign out and sign in again.':
+        'Sen olduğunu doğrulayamadık, bu yüzden hiçbir şey silinmedi. Tekrar dene ya da çıkış yapıp yeniden giriş yap.',
+    'Deletion cancelled. The Page stays paused.':
+        'Silme iptal edildi. Sayfa duraklatılmış olarak kalıyor.',
     '{count} posts.zero': '{count} gönderi',
     '{count} posts.one': '{count} gönderi',
     '{count} posts.two': '{count} gönderi',
@@ -811,6 +878,13 @@ const pageDeleteTranslations = <String, Map<String, String>>{
     'Your profile will show as a Page. You can pause or delete it any time in Page settings.':
         'Το προφίλ σου θα εμφανίζεται ως σελίδα. Μπορείς να τη θέσεις σε παύση ή να τη διαγράψεις όποτε θέλεις από τις ρυθμίσεις σελίδας.',
     'Page deleted': 'Η σελίδα διαγράφηκε',
+    'pages.delete.confirmIdentity': 'Επιβεβαίωσε ότι είσαι εσύ',
+    'Deleting the Page now needs a fresh sign-in. Enter your password.':
+        'Για να διαγραφεί η σελίδα τώρα χρειάζεται πρόσφατη σύνδεση. Γράψε τον κωδικό σου.',
+    'We couldn\'t confirm it is you, so nothing was deleted. Try again, or sign out and sign in again.':
+        'Δεν μπορέσαμε να επιβεβαιώσουμε ότι είσαι εσύ, οπότε δεν διαγράφηκε τίποτα. Δοκίμασε ξανά ή αποσυνδέσου και συνδέσου πάλι.',
+    'Deletion cancelled. The Page stays paused.':
+        'Η διαγραφή ακυρώθηκε. Η σελίδα παραμένει σε παύση.',
     '{count} posts.zero': '{count} αναρτήσεις',
     '{count} posts.one': '{count} ανάρτηση',
     '{count} posts.two': '{count} αναρτήσεις',
@@ -884,6 +958,13 @@ const pageDeleteTranslations = <String, Map<String, String>>{
     'Your profile will show as a Page. You can pause or delete it any time in Page settings.':
         'A profilod oldalként jelenik meg. Az oldal beállításaiban bármikor szüneteltetheted vagy törölheted.',
     'Page deleted': 'Oldal törölve',
+    'pages.delete.confirmIdentity': 'Erősítsd meg, hogy te vagy az',
+    'Deleting the Page now needs a fresh sign-in. Enter your password.':
+        'Az oldal azonnali törléséhez friss bejelentkezés kell. Add meg a jelszavad.',
+    'We couldn\'t confirm it is you, so nothing was deleted. Try again, or sign out and sign in again.':
+        'Nem tudtuk megerősíteni, hogy te vagy az, ezért semmi sem törlődött. Próbáld újra, vagy jelentkezz ki, majd be újra.',
+    'Deletion cancelled. The Page stays paused.':
+        'Törlés visszavonva. Az oldal szüneteltetve marad.',
     '{count} posts.zero': '{count} bejegyzés',
     '{count} posts.one': '{count} bejegyzés',
     '{count} posts.two': '{count} bejegyzés',
@@ -956,6 +1037,13 @@ const pageDeleteTranslations = <String, Map<String, String>>{
     'Your profile will show as a Page. You can pause or delete it any time in Page settings.':
         'Ваш профіль відображатиметься як сторінка. Її можна будь-коли призупинити або видалити в налаштуваннях сторінки.',
     'Page deleted': 'Сторінку видалено',
+    'pages.delete.confirmIdentity': 'Підтвердьте, що це ви',
+    'Deleting the Page now needs a fresh sign-in. Enter your password.':
+        'Щоб видалити сторінку зараз, потрібен нещодавній вхід. Введіть пароль.',
+    'We couldn\'t confirm it is you, so nothing was deleted. Try again, or sign out and sign in again.':
+        'Не вдалося підтвердити, що це ви, тому нічого не видалено. Спробуйте ще раз або вийдіть і ввійдіть знову.',
+    'Deletion cancelled. The Page stays paused.':
+        'Видалення скасовано. Сторінка залишається призупиненою.',
     '{count} posts.zero': '{count} дописів',
     '{count} posts.one': '{count} допис',
     '{count} posts.two': '{count} дописи',
@@ -1028,6 +1116,13 @@ const pageDeleteTranslations = <String, Map<String, String>>{
     'Your profile will show as a Page. You can pause or delete it any time in Page settings.':
         'Ваш профиль будет отображаться как страница. Её можно в любой момент приостановить или удалить в настройках страницы.',
     'Page deleted': 'Страница удалена',
+    'pages.delete.confirmIdentity': 'Подтвердите, что это вы',
+    'Deleting the Page now needs a fresh sign-in. Enter your password.':
+        'Чтобы удалить страницу сейчас, нужен недавний вход. Введите пароль.',
+    'We couldn\'t confirm it is you, so nothing was deleted. Try again, or sign out and sign in again.':
+        'Не удалось подтвердить, что это вы, поэтому ничего не удалено. Попробуйте ещё раз или выйдите и войдите снова.',
+    'Deletion cancelled. The Page stays paused.':
+        'Удаление отменено. Страница остаётся приостановленной.',
     '{count} posts.zero': '{count} постов',
     '{count} posts.one': '{count} пост',
     '{count} posts.two': '{count} поста',
@@ -1100,6 +1195,13 @@ const pageDeleteTranslations = <String, Map<String, String>>{
     'Your profile will show as a Page. You can pause or delete it any time in Page settings.':
         'Tvůj profil se zobrazí jako stránka. V nastavení stránky ji můžeš kdykoli pozastavit nebo smazat.',
     'Page deleted': 'Stránka smazána',
+    'pages.delete.confirmIdentity': 'Potvrď, že jsi to ty',
+    'Deleting the Page now needs a fresh sign-in. Enter your password.':
+        'K okamžitému smazání stránky je potřeba čerstvé přihlášení. Zadej heslo.',
+    'We couldn\'t confirm it is you, so nothing was deleted. Try again, or sign out and sign in again.':
+        'Nepodařilo se potvrdit, že jsi to ty, takže se nic nesmazalo. Zkus to znovu, nebo se odhlas a přihlas znovu.',
+    'Deletion cancelled. The Page stays paused.':
+        'Smazání zrušeno. Stránka zůstává pozastavená.',
     '{count} posts.zero': '{count} příspěvků',
     '{count} posts.one': '{count} příspěvek',
     '{count} posts.two': '{count} příspěvky',
@@ -1172,6 +1274,13 @@ const pageDeleteTranslations = <String, Map<String, String>>{
     'Your profile will show as a Page. You can pause or delete it any time in Page settings.':
         'Tvoj profil sa zobrazí ako stránka. V nastaveniach stránky ju môžeš kedykoľvek pozastaviť alebo odstrániť.',
     'Page deleted': 'Stránka odstránená',
+    'pages.delete.confirmIdentity': 'Potvrď, že si to ty',
+    'Deleting the Page now needs a fresh sign-in. Enter your password.':
+        'Na okamžité odstránenie stránky je potrebné čerstvé prihlásenie. Zadaj heslo.',
+    'We couldn\'t confirm it is you, so nothing was deleted. Try again, or sign out and sign in again.':
+        'Nepodarilo sa potvrdiť, že si to ty, takže sa nič neodstránilo. Skús to znova alebo sa odhlás a znova prihlás.',
+    'Deletion cancelled. The Page stays paused.':
+        'Odstránenie zrušené. Stránka zostáva pozastavená.',
     '{count} posts.zero': '{count} príspevkov',
     '{count} posts.one': '{count} príspevok',
     '{count} posts.two': '{count} príspevky',
@@ -1246,6 +1355,13 @@ const pageDeleteTranslations = <String, Map<String, String>>{
     'Your profile will show as a Page. You can pause or delete it any time in Page settings.':
         'Профилът ти ще се показва като страница. Можеш да я поставиш на пауза или да я изтриеш по всяко време от настройките на страницата.',
     'Page deleted': 'Страницата е изтрита',
+    'pages.delete.confirmIdentity': 'Потвърди, че си ти',
+    'Deleting the Page now needs a fresh sign-in. Enter your password.':
+        'За да изтриеш страницата сега, е нужно скорошно влизане. Въведи паролата си.',
+    'We couldn\'t confirm it is you, so nothing was deleted. Try again, or sign out and sign in again.':
+        'Не успяхме да потвърдим, че си ти, затова нищо не е изтрито. Опитай отново или излез и влез пак.',
+    'Deletion cancelled. The Page stays paused.':
+        'Изтриването е отменено. Страницата остава на пауза.',
     '{count} posts.zero': '{count} публикации',
     '{count} posts.one': '{count} публикация',
     '{count} posts.two': '{count} публикации',
@@ -1320,6 +1436,13 @@ const pageDeleteTranslations = <String, Map<String, String>>{
     'Your profile will show as a Page. You can pause or delete it any time in Page settings.':
         'Tvoj profil prikazivat će se kao stranica. Možeš je pauzirati ili izbrisati u bilo kojem trenutku u postavkama stranice.',
     'Page deleted': 'Stranica izbrisana',
+    'pages.delete.confirmIdentity': 'Potvrdi da si to ti',
+    'Deleting the Page now needs a fresh sign-in. Enter your password.':
+        'Za brisanje stranice odmah potrebna je nedavna prijava. Upiši lozinku.',
+    'We couldn\'t confirm it is you, so nothing was deleted. Try again, or sign out and sign in again.':
+        'Nismo uspjeli potvrditi da si to ti, pa ništa nije izbrisano. Pokušaj ponovno ili se odjavi i ponovno prijavi.',
+    'Deletion cancelled. The Page stays paused.':
+        'Brisanje je otkazano. Stranica ostaje pauzirana.',
     '{count} posts.zero': '{count} objava',
     '{count} posts.one': '{count} objava',
     '{count} posts.two': '{count} objave',
@@ -1393,6 +1516,13 @@ const pageDeleteTranslations = <String, Map<String, String>>{
     'Your profile will show as a Page. You can pause or delete it any time in Page settings.':
         'Твој профил ће се приказивати као страница. Можеш да је паузираш или избришеш у било ком тренутку у подешавањима странице.',
     'Page deleted': 'Страница је избрисана',
+    'pages.delete.confirmIdentity': 'Потврди да си то ти',
+    'Deleting the Page now needs a fresh sign-in. Enter your password.':
+        'За брисање странице одмах потребна је недавна пријава. Унеси лозинку.',
+    'We couldn\'t confirm it is you, so nothing was deleted. Try again, or sign out and sign in again.':
+        'Нисмо успели да потврдимо да си то ти, па ништа није избрисано. Покушај поново или се одјави и поново пријави.',
+    'Deletion cancelled. The Page stays paused.':
+        'Брисање је отказано. Страница остаје паузирана.',
     '{count} posts.zero': '{count} објава',
     '{count} posts.one': '{count} објава',
     '{count} posts.two': '{count} објаве',
@@ -1468,6 +1598,13 @@ const pageDeleteTranslations = <String, Map<String, String>>{
     'Your profile will show as a Page. You can pause or delete it any time in Page settings.':
         'Din profil visas som en sida. Du kan pausa eller radera den när som helst i sidinställningarna.',
     'Page deleted': 'Sidan har raderats',
+    'pages.delete.confirmIdentity': 'Bekräfta att det är du',
+    'Deleting the Page now needs a fresh sign-in. Enter your password.':
+        'För att radera sidan nu krävs en färsk inloggning. Ange ditt lösenord.',
+    'We couldn\'t confirm it is you, so nothing was deleted. Try again, or sign out and sign in again.':
+        'Vi kunde inte bekräfta att det är du, så inget raderades. Försök igen eller logga ut och logga in igen.',
+    'Deletion cancelled. The Page stays paused.':
+        'Raderingen har avbrutits. Sidan är fortfarande pausad.',
     '{count} posts.zero': '{count} inlägg',
     '{count} posts.one': '{count} inlägg',
     '{count} posts.two': '{count} inlägg',
@@ -1540,6 +1677,13 @@ const pageDeleteTranslations = <String, Map<String, String>>{
     'Your profile will show as a Page. You can pause or delete it any time in Page settings.':
         'Din profil vises som en side. Du kan sætte den på pause eller slette den når som helst i sideindstillingerne.',
     'Page deleted': 'Siden er slettet',
+    'pages.delete.confirmIdentity': 'Bekræft, at det er dig',
+    'Deleting the Page now needs a fresh sign-in. Enter your password.':
+        'For at slette siden nu kræves et nyligt login. Indtast din adgangskode.',
+    'We couldn\'t confirm it is you, so nothing was deleted. Try again, or sign out and sign in again.':
+        'Vi kunne ikke bekræfte, at det er dig, så intet blev slettet. Prøv igen, eller log ud og log ind igen.',
+    'Deletion cancelled. The Page stays paused.':
+        'Sletningen er annulleret. Siden er stadig på pause.',
     '{count} posts.zero': '{count} opslag',
     '{count} posts.one': '{count} opslag',
     '{count} posts.two': '{count} opslag',
@@ -1613,6 +1757,13 @@ const pageDeleteTranslations = <String, Map<String, String>>{
     'Your profile will show as a Page. You can pause or delete it any time in Page settings.':
         'Profilen din vises som en side. Du kan sette den på pause eller slette den når som helst i sideinnstillingene.',
     'Page deleted': 'Siden er slettet',
+    'pages.delete.confirmIdentity': 'Bekreft at det er deg',
+    'Deleting the Page now needs a fresh sign-in. Enter your password.':
+        'For å slette siden nå kreves en fersk innlogging. Skriv inn passordet ditt.',
+    'We couldn\'t confirm it is you, so nothing was deleted. Try again, or sign out and sign in again.':
+        'Vi kunne ikke bekrefte at det er deg, så ingenting ble slettet. Prøv igjen, eller logg ut og logg inn på nytt.',
+    'Deletion cancelled. The Page stays paused.':
+        'Slettingen er avbrutt. Siden er fortsatt på pause.',
     '{count} posts.zero': '{count} innlegg',
     '{count} posts.one': '{count} innlegg',
     '{count} posts.two': '{count} innlegg',
@@ -1684,6 +1835,13 @@ const pageDeleteTranslations = <String, Map<String, String>>{
     'Your profile will show as a Page. You can pause or delete it any time in Page settings.':
         'Profiilisi näkyy sivuna. Voit keskeyttää tai poistaa sen milloin tahansa sivun asetuksista.',
     'Page deleted': 'Sivu poistettu',
+    'pages.delete.confirmIdentity': 'Vahvista, että se olet sinä',
+    'Deleting the Page now needs a fresh sign-in. Enter your password.':
+        'Sivun poistaminen heti vaatii tuoreen kirjautumisen. Anna salasanasi.',
+    'We couldn\'t confirm it is you, so nothing was deleted. Try again, or sign out and sign in again.':
+        'Emme voineet vahvistaa, että se olet sinä, joten mitään ei poistettu. Yritä uudelleen tai kirjaudu ulos ja takaisin sisään.',
+    'Deletion cancelled. The Page stays paused.':
+        'Poisto peruttu. Sivu pysyy keskeytettynä.',
     '{count} posts.zero': '{count} julkaisua',
     '{count} posts.one': '{count} julkaisu',
     '{count} posts.two': '{count} julkaisua',
@@ -1758,6 +1916,13 @@ const pageDeleteTranslations = <String, Map<String, String>>{
     'Your profile will show as a Page. You can pause or delete it any time in Page settings.':
         'Jūsų profilis bus rodomas kaip puslapis. Jį bet kada galite pristabdyti arba ištrinti puslapio nustatymuose.',
     'Page deleted': 'Puslapis ištrintas',
+    'pages.delete.confirmIdentity': 'Patvirtinkite, kad tai jūs',
+    'Deleting the Page now needs a fresh sign-in. Enter your password.':
+        'Norint ištrinti puslapį dabar, reikia neseniai atlikto prisijungimo. Įveskite slaptažodį.',
+    'We couldn\'t confirm it is you, so nothing was deleted. Try again, or sign out and sign in again.':
+        'Nepavyko patvirtinti, kad tai jūs, todėl niekas nebuvo ištrinta. Bandykite dar kartą arba atsijunkite ir prisijunkite iš naujo.',
+    'Deletion cancelled. The Page stays paused.':
+        'Ištrynimas atšauktas. Puslapis lieka pristabdytas.',
     '{count} posts.zero': '{count} įrašų',
     '{count} posts.one': '{count} įrašas',
     '{count} posts.two': '{count} įrašai',
@@ -1831,6 +1996,13 @@ const pageDeleteTranslations = <String, Map<String, String>>{
     'Your profile will show as a Page. You can pause or delete it any time in Page settings.':
         'Tavs profils tiks rādīts kā lapa. Lapas iestatījumos vari to jebkurā brīdī pauzēt vai dzēst.',
     'Page deleted': 'Lapa izdzēsta',
+    'pages.delete.confirmIdentity': 'Apstiprini, ka tas esi tu',
+    'Deleting the Page now needs a fresh sign-in. Enter your password.':
+        'Lai dzēstu lapu tagad, nepieciešama nesena pierakstīšanās. Ievadi paroli.',
+    'We couldn\'t confirm it is you, so nothing was deleted. Try again, or sign out and sign in again.':
+        'Neizdevās apstiprināt, ka tas esi tu, tāpēc nekas netika dzēsts. Mēģini vēlreiz vai izraksties un pieraksties no jauna.',
+    'Deletion cancelled. The Page stays paused.':
+        'Dzēšana atcelta. Lapa paliek pauzēta.',
     '{count} posts.zero': '{count} ziņu',
     '{count} posts.one': '{count} ziņa',
     '{count} posts.two': '{count} ziņas',
@@ -1904,6 +2076,13 @@ const pageDeleteTranslations = <String, Map<String, String>>{
     'Your profile will show as a Page. You can pause or delete it any time in Page settings.':
         'Sinu profiil kuvatakse lehena. Saad selle lehe seadetes igal ajal peatada või kustutada.',
     'Page deleted': 'Leht kustutatud',
+    'pages.delete.confirmIdentity': 'Kinnita, et see oled sina',
+    'Deleting the Page now needs a fresh sign-in. Enter your password.':
+        'Lehe kohe kustutamiseks on vaja värsket sisselogimist. Sisesta parool.',
+    'We couldn\'t confirm it is you, so nothing was deleted. Try again, or sign out and sign in again.':
+        'Me ei saanud kinnitada, et see oled sina, seega ei kustutatud midagi. Proovi uuesti või logi välja ja uuesti sisse.',
+    'Deletion cancelled. The Page stays paused.':
+        'Kustutamine tühistatud. Leht jääb peatatuks.',
     '{count} posts.zero': '{count} postitust',
     '{count} posts.one': '{count} postitus',
     '{count} posts.two': '{count} postitust',
@@ -1975,6 +2154,13 @@ const pageDeleteTranslations = <String, Map<String, String>>{
     'Your profile will show as a Page. You can pause or delete it any time in Page settings.':
         'Profilmu akan tampil sebagai halaman. Kamu bisa menjeda atau menghapusnya kapan saja di pengaturan halaman.',
     'Page deleted': 'Halaman dihapus',
+    'pages.delete.confirmIdentity': 'Konfirmasi bahwa ini kamu',
+    'Deleting the Page now needs a fresh sign-in. Enter your password.':
+        'Menghapus halaman sekarang memerlukan login terbaru. Masukkan kata sandimu.',
+    'We couldn\'t confirm it is you, so nothing was deleted. Try again, or sign out and sign in again.':
+        'Kami tidak bisa mengonfirmasi bahwa ini kamu, jadi tidak ada yang dihapus. Coba lagi, atau keluar lalu masuk kembali.',
+    'Deletion cancelled. The Page stays paused.':
+        'Penghapusan dibatalkan. Halaman tetap dijeda.',
     '{count} posts.zero': '{count} postingan',
     '{count} posts.one': '{count} postingan',
     '{count} posts.two': '{count} postingan',
@@ -2048,6 +2234,13 @@ const pageDeleteTranslations = <String, Map<String, String>>{
     'Your profile will show as a Page. You can pause or delete it any time in Page settings.':
         'Hồ sơ của bạn sẽ hiển thị như một trang. Bạn có thể tạm dừng hoặc xóa trang bất cứ lúc nào trong cài đặt trang.',
     'Page deleted': 'Đã xóa trang',
+    'pages.delete.confirmIdentity': 'Xác nhận đó là bạn',
+    'Deleting the Page now needs a fresh sign-in. Enter your password.':
+        'Để xóa trang ngay, bạn cần đăng nhập lại gần đây. Hãy nhập mật khẩu.',
+    'We couldn\'t confirm it is you, so nothing was deleted. Try again, or sign out and sign in again.':
+        'Chúng tôi không thể xác nhận đó là bạn nên chưa có gì bị xóa. Hãy thử lại hoặc đăng xuất rồi đăng nhập lại.',
+    'Deletion cancelled. The Page stays paused.':
+        'Đã hủy xóa. Trang vẫn đang tạm dừng.',
     '{count} posts.zero': '{count} bài đăng',
     '{count} posts.one': '{count} bài đăng',
     '{count} posts.two': '{count} bài đăng',
@@ -2117,6 +2310,12 @@ const pageDeleteTranslations = <String, Map<String, String>>{
     'Your profile will show as a Page. You can pause or delete it any time in Page settings.':
         '你的个人资料将显示为主页。你可以随时在主页设置中暂停或删除它。',
     'Page deleted': '主页已删除',
+    'pages.delete.confirmIdentity': '确认是你本人',
+    'Deleting the Page now needs a fresh sign-in. Enter your password.':
+        '立即删除主页需要最近登录过。请输入密码。',
+    'We couldn\'t confirm it is you, so nothing was deleted. Try again, or sign out and sign in again.':
+        '我们无法确认是你本人，因此没有删除任何内容。请重试，或退出后重新登录。',
+    'Deletion cancelled. The Page stays paused.': '已取消删除。主页仍处于暂停状态。',
     '{count} posts.zero': '{count} 条帖子',
     '{count} posts.one': '{count} 条帖子',
     '{count} posts.two': '{count} 条帖子',
@@ -2186,6 +2385,12 @@ const pageDeleteTranslations = <String, Map<String, String>>{
     'Your profile will show as a Page. You can pause or delete it any time in Page settings.':
         '你的個人檔案將顯示為專頁。你可以隨時在專頁設定中暫停或刪除它。',
     'Page deleted': '專頁已刪除',
+    'pages.delete.confirmIdentity': '確認是你本人',
+    'Deleting the Page now needs a fresh sign-in. Enter your password.':
+        '立即刪除專頁需要最近登入過。請輸入密碼。',
+    'We couldn\'t confirm it is you, so nothing was deleted. Try again, or sign out and sign in again.':
+        '我們無法確認是你本人，因此沒有刪除任何內容。請再試一次，或登出後重新登入。',
+    'Deletion cancelled. The Page stays paused.': '已取消刪除。專頁仍處於暫停狀態。',
     '{count} posts.zero': '{count} 則貼文',
     '{count} posts.one': '{count} 則貼文',
     '{count} posts.two': '{count} 則貼文',
@@ -2256,6 +2461,12 @@ const pageDeleteTranslations = <String, Map<String, String>>{
     'Your profile will show as a Page. You can pause or delete it any time in Page settings.':
         'プロフィールはページとして表示されます。ページ設定でいつでも一時停止または削除できます。',
     'Page deleted': 'ページを削除しました',
+    'pages.delete.confirmIdentity': 'ご本人であることを確認してください',
+    'Deleting the Page now needs a fresh sign-in. Enter your password.':
+        'ページを今すぐ削除するには、直近のログインが必要です。パスワードを入力してください。',
+    'We couldn\'t confirm it is you, so nothing was deleted. Try again, or sign out and sign in again.':
+        'ご本人であることを確認できなかったため、何も削除されていません。もう一度お試しいただくか、ログアウトしてからログインし直してください。',
+    'Deletion cancelled. The Page stays paused.': '削除を取り消しました。ページは一時停止のままです。',
     '{count} posts.zero': '{count} 件の投稿',
     '{count} posts.one': '{count} 件の投稿',
     '{count} posts.two': '{count} 件の投稿',
@@ -2326,6 +2537,13 @@ const pageDeleteTranslations = <String, Map<String, String>>{
     'Your profile will show as a Page. You can pause or delete it any time in Page settings.':
         '프로필이 페이지로 표시됩니다. 페이지 설정에서 언제든지 일시정지하거나 삭제할 수 있습니다.',
     'Page deleted': '페이지가 삭제되었습니다',
+    'pages.delete.confirmIdentity': '본인인지 확인해 주세요',
+    'Deleting the Page now needs a fresh sign-in. Enter your password.':
+        '페이지를 지금 삭제하려면 최근 로그인이 필요합니다. 비밀번호를 입력하세요.',
+    'We couldn\'t confirm it is you, so nothing was deleted. Try again, or sign out and sign in again.':
+        '본인인지 확인하지 못해 아무것도 삭제되지 않았습니다. 다시 시도하거나 로그아웃한 뒤 다시 로그인하세요.',
+    'Deletion cancelled. The Page stays paused.':
+        '삭제가 취소되었습니다. 페이지는 일시정지 상태로 유지됩니다.',
     '{count} posts.zero': '게시물 {count}개',
     '{count} posts.one': '게시물 {count}개',
     '{count} posts.two': '게시물 {count}개',
@@ -2397,6 +2615,13 @@ const pageDeleteTranslations = <String, Map<String, String>>{
     'Your profile will show as a Page. You can pause or delete it any time in Page settings.':
         'سيظهر ملفك الشخصي كصفحة. يمكنك إيقافها مؤقتًا أو حذفها في أي وقت من إعدادات الصفحة.',
     'Page deleted': 'تم حذف الصفحة',
+    'pages.delete.confirmIdentity': 'أكّد أنك أنت',
+    'Deleting the Page now needs a fresh sign-in. Enter your password.':
+        'حذف الصفحة الآن يتطلب تسجيل دخول حديثًا. أدخل كلمة المرور.',
+    'We couldn\'t confirm it is you, so nothing was deleted. Try again, or sign out and sign in again.':
+        'لم نتمكن من التأكد من أنك أنت، لذلك لم يُحذف شيء. حاول مرة أخرى أو سجّل الخروج ثم سجّل الدخول من جديد.',
+    'Deletion cancelled. The Page stays paused.':
+        'أُلغي الحذف. الصفحة ما زالت متوقفة مؤقتًا.',
     '{count} posts.zero': '{count} منشور',
     '{count} posts.one': '{count} منشور',
     '{count} posts.two': '{count} منشوران',
@@ -2469,6 +2694,13 @@ const pageDeleteTranslations = <String, Map<String, String>>{
     'Your profile will show as a Page. You can pause or delete it any time in Page settings.':
         'โปรไฟล์ของคุณจะแสดงเป็นเพจ คุณหยุดชั่วคราวหรือลบเพจได้ทุกเมื่อในการตั้งค่าเพจ',
     'Page deleted': 'ลบเพจแล้ว',
+    'pages.delete.confirmIdentity': 'ยืนยันว่าเป็นคุณ',
+    'Deleting the Page now needs a fresh sign-in. Enter your password.':
+        'การลบเพจทันทีต้องมีการเข้าสู่ระบบเมื่อไม่นานมานี้ โปรดป้อนรหัสผ่าน',
+    'We couldn\'t confirm it is you, so nothing was deleted. Try again, or sign out and sign in again.':
+        'เรายืนยันไม่ได้ว่าเป็นคุณ จึงยังไม่มีอะไรถูกลบ ลองอีกครั้ง หรือออกจากระบบแล้วเข้าสู่ระบบใหม่',
+    'Deletion cancelled. The Page stays paused.':
+        'ยกเลิกการลบแล้ว เพจยังคงหยุดชั่วคราว',
     '{count} posts.zero': 'โพสต์ {count} รายการ',
     '{count} posts.one': 'โพสต์ {count} รายการ',
     '{count} posts.two': 'โพสต์ {count} รายการ',
@@ -2542,6 +2774,13 @@ const pageDeleteTranslations = <String, Map<String, String>>{
     'Your profile will show as a Page. You can pause or delete it any time in Page settings.':
         'Profil anda akan dipaparkan sebagai halaman. Anda boleh menjeda atau memadamnya pada bila-bila masa dalam tetapan halaman.',
     'Page deleted': 'Halaman dipadam',
+    'pages.delete.confirmIdentity': 'Sahkan bahawa ini anda',
+    'Deleting the Page now needs a fresh sign-in. Enter your password.':
+        'Untuk memadam halaman sekarang, log masuk terkini diperlukan. Masukkan kata laluan anda.',
+    'We couldn\'t confirm it is you, so nothing was deleted. Try again, or sign out and sign in again.':
+        'Kami tidak dapat mengesahkan bahawa ini anda, jadi tiada apa-apa dipadam. Cuba lagi, atau log keluar dan log masuk semula.',
+    'Deletion cancelled. The Page stays paused.':
+        'Pemadaman dibatalkan. Halaman kekal dijeda.',
     '{count} posts.zero': '{count} hantaran',
     '{count} posts.one': '{count} hantaran',
     '{count} posts.two': '{count} hantaran',
@@ -2618,6 +2857,13 @@ const pageDeleteTranslations = <String, Map<String, String>>{
     'Your profile will show as a Page. You can pause or delete it any time in Page settings.':
         'Lalabas ang profile mo bilang Page. Maaari mo itong i-pause o burahin anumang oras sa mga setting ng Page.',
     'Page deleted': 'Nabura na ang Page',
+    'pages.delete.confirmIdentity': 'Kumpirmahin na ikaw ito',
+    'Deleting the Page now needs a fresh sign-in. Enter your password.':
+        'Kailangan ng bagong pag-sign in para mabura ang Page ngayon. Ilagay ang password mo.',
+    'We couldn\'t confirm it is you, so nothing was deleted. Try again, or sign out and sign in again.':
+        'Hindi namin nakumpirma na ikaw ito, kaya walang nabura. Subukan ulit, o mag-sign out at mag-sign in muli.',
+    'Deletion cancelled. The Page stays paused.':
+        'Kinansela ang pagbura. Naka-pause pa rin ang Page.',
     '{count} posts.zero': '{count} post',
     '{count} posts.one': '{count} post',
     '{count} posts.two': '{count} post',
@@ -2689,6 +2935,13 @@ const pageDeleteTranslations = <String, Map<String, String>>{
     'Your profile will show as a Page. You can pause or delete it any time in Page settings.':
         'הפרופיל שלכם יוצג כדף. אפשר להשהות או למחוק אותו בכל עת בהגדרות הדף.',
     'Page deleted': 'הדף נמחק',
+    'pages.delete.confirmIdentity': 'אשרו שזה אתם',
+    'Deleting the Page now needs a fresh sign-in. Enter your password.':
+        'כדי למחוק את הדף עכשיו נדרשת התחברות עדכנית. הזינו את הסיסמה.',
+    'We couldn\'t confirm it is you, so nothing was deleted. Try again, or sign out and sign in again.':
+        'לא הצלחנו לאשר שזה אתם, ולכן שום דבר לא נמחק. נסו שוב, או התנתקו והתחברו מחדש.',
+    'Deletion cancelled. The Page stays paused.':
+        'המחיקה בוטלה. הדף נשאר מושהה.',
     '{count} posts.zero': '{count} פוסטים',
     '{count} posts.one': '{count} פוסט',
     '{count} posts.two': '{count} פוסטים',
@@ -2761,6 +3014,13 @@ const pageDeleteTranslations = <String, Map<String, String>>{
     'Your profile will show as a Page. You can pause or delete it any time in Page settings.':
         'نمایه شما به‌صورت صفحه نمایش داده می‌شود. هر زمان بخواهید می‌توانید در تنظیمات صفحه آن را متوقف یا حذف کنید.',
     'Page deleted': 'صفحه حذف شد',
+    'pages.delete.confirmIdentity': 'تأیید کنید که خودتان هستید',
+    'Deleting the Page now needs a fresh sign-in. Enter your password.':
+        'برای حذف فوری صفحه، ورود تازه لازم است. گذرواژه‌تان را وارد کنید.',
+    'We couldn\'t confirm it is you, so nothing was deleted. Try again, or sign out and sign in again.':
+        'نتوانستیم تأیید کنیم که خودتان هستید، بنابراین چیزی حذف نشد. دوباره تلاش کنید یا از حساب خارج شوید و دوباره وارد شوید.',
+    'Deletion cancelled. The Page stays paused.':
+        'حذف لغو شد. صفحه همچنان متوقف است.',
     '{count} posts.zero': '{count} پست',
     '{count} posts.one': '{count} پست',
     '{count} posts.two': '{count} پست',
@@ -2834,6 +3094,13 @@ const pageDeleteTranslations = <String, Map<String, String>>{
     'Your profile will show as a Page. You can pause or delete it any time in Page settings.':
         'Wasifu wako utaonekana kama ukurasa. Unaweza kuusitisha au kuufuta wakati wowote kwenye mipangilio ya ukurasa.',
     'Page deleted': 'Ukurasa umefutwa',
+    'pages.delete.confirmIdentity': 'Thibitisha kuwa ni wewe',
+    'Deleting the Page now needs a fresh sign-in. Enter your password.':
+        'Kufuta ukurasa sasa kunahitaji uwe umeingia hivi karibuni. Weka nenosiri lako.',
+    'We couldn\'t confirm it is you, so nothing was deleted. Try again, or sign out and sign in again.':
+        'Hatukuweza kuthibitisha kuwa ni wewe, kwa hivyo hakuna kilichofutwa. Jaribu tena, au ondoka kisha uingie tena.',
+    'Deletion cancelled. The Page stays paused.':
+        'Ufutaji umeghairiwa. Ukurasa unabaki umesitishwa.',
     '{count} posts.zero': 'Machapisho {count}',
     '{count} posts.one': 'Chapisho {count}',
     '{count} posts.two': 'Machapisho {count}',
@@ -2905,6 +3172,13 @@ const pageDeleteTranslations = <String, Map<String, String>>{
     'Your profile will show as a Page. You can pause or delete it any time in Page settings.':
         'आपकी प्रोफ़ाइल पेज के रूप में दिखेगी। आप इसे पेज सेटिंग में कभी भी रोक या मिटा सकते हैं।',
     'Page deleted': 'पेज मिटा दिया गया',
+    'pages.delete.confirmIdentity': 'पुष्टि करें कि यह आप ही हैं',
+    'Deleting the Page now needs a fresh sign-in. Enter your password.':
+        'पेज अभी मिटाने के लिए हाल का साइन-इन ज़रूरी है। अपना पासवर्ड डालें।',
+    'We couldn\'t confirm it is you, so nothing was deleted. Try again, or sign out and sign in again.':
+        'हम पुष्टि नहीं कर सके कि यह आप ही हैं, इसलिए कुछ भी नहीं मिटाया गया। फिर कोशिश करें, या साइन आउट करके दोबारा साइन इन करें।',
+    'Deletion cancelled. The Page stays paused.':
+        'मिटाना रद्द किया गया। पेज रुका हुआ रहेगा।',
     '{count} posts.zero': '{count} पोस्ट',
     '{count} posts.one': '{count} पोस्ट',
     '{count} posts.two': '{count} पोस्ट',
@@ -2977,6 +3251,13 @@ const pageDeleteTranslations = <String, Map<String, String>>{
     'Your profile will show as a Page. You can pause or delete it any time in Page settings.':
         'আপনার প্রোফাইল পেজ হিসেবে দেখাবে। পেজ সেটিংসে গিয়ে যেকোনো সময় এটি বিরতিতে রাখতে বা মুছতে পারবেন।',
     'Page deleted': 'পেজ মুছে ফেলা হয়েছে',
+    'pages.delete.confirmIdentity': 'নিশ্চিত করুন যে এটি আপনিই',
+    'Deleting the Page now needs a fresh sign-in. Enter your password.':
+        'পেজটি এখনই মুছতে সাম্প্রতিক সাইন-ইন দরকার। আপনার পাসওয়ার্ড দিন।',
+    'We couldn\'t confirm it is you, so nothing was deleted. Try again, or sign out and sign in again.':
+        'আমরা নিশ্চিত হতে পারিনি যে এটি আপনিই, তাই কিছুই মোছা হয়নি। আবার চেষ্টা করুন, অথবা সাইন আউট করে আবার সাইন ইন করুন।',
+    'Deletion cancelled. The Page stays paused.':
+        'মুছে ফেলা বাতিল হয়েছে। পেজ বিরতিতেই থাকছে।',
     '{count} posts.zero': '{count}টি পোস্ট',
     '{count} posts.one': '{count}টি পোস্ট',
     '{count} posts.two': '{count}টি পোস্ট',
@@ -3048,6 +3329,13 @@ const pageDeleteTranslations = <String, Map<String, String>>{
     'Your profile will show as a Page. You can pause or delete it any time in Page settings.':
         'آپ کی پروفائل پیج کے طور پر دکھائی دے گی۔ آپ اسے پیج کی ترتیبات میں کسی بھی وقت روک یا حذف کر سکتے ہیں۔',
     'Page deleted': 'پیج حذف ہو گیا',
+    'pages.delete.confirmIdentity': 'تصدیق کریں کہ یہ آپ ہی ہیں',
+    'Deleting the Page now needs a fresh sign-in. Enter your password.':
+        'پیج ابھی حذف کرنے کے لیے تازہ سائن اِن ضروری ہے۔ اپنا پاس ورڈ درج کریں۔',
+    'We couldn\'t confirm it is you, so nothing was deleted. Try again, or sign out and sign in again.':
+        'ہم تصدیق نہیں کر سکے کہ یہ آپ ہی ہیں، اس لیے کچھ بھی حذف نہیں ہوا۔ دوبارہ کوشش کریں، یا سائن آؤٹ کر کے دوبارہ سائن اِن کریں۔',
+    'Deletion cancelled. The Page stays paused.':
+        'حذف منسوخ ہو گیا۔ پیج رکا ہوا رہے گا۔',
     '{count} posts.zero': '{count} پوسٹس',
     '{count} posts.one': '{count} پوسٹ',
     '{count} posts.two': '{count} پوسٹس',

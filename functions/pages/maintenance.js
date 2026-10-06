@@ -23,13 +23,19 @@
 //                    90 days passed. The post, its likes and comments and its
 //                    media (jobs released) go.
 //   4b. pageDeletion (ADR-236, pages/deletion.js) an owner's Page deletion
-//                    and "delete all posts": the 3-day reminder bell row, the
+//                    and "delete all posts": the 3-day reminder bell row; due
+//                    clear jobs (first: their posts are still public); the
 //                    purge of a deletion whose 30 days passed (or that the
 //                    owner asked to run now): posts, follower edges, storage,
-//                    records, then the Page with its memory row; due clear
-//                    jobs; expired memory rows. BEFORE the job slices, so the
-//                    media and cleanup jobs it queues go in the same run.
-//                    Bounded per record and per run, cursor-resumable.
+//                    records, then the Page with its memory row; expired
+//                    memory rows. BEFORE the job slices, so the media and
+//                    cleanup jobs it queues go in the same run. Bounded per
+//                    record and per run (the clear jobs and the purges each
+//                    stop picking up work after 45 s), cursor-resumable. A
+//                    DEADLINE purge is held while the owner cannot use Pages
+//                    (appConfig/pagesV1 writes off for them): the operator's
+//                    brake on the one irreversible step; "delete now" and a
+//                    purge already under way are never held.
 //   5. lapse         (package B5) hourly, cursor-resumable, <= 5 x 200 Pages:
 //                    the §2.8 transitions (pages/lapse_service.js), each in
 //                    its own re-deriving transaction.
@@ -52,8 +58,10 @@
 // only removes what is already unreferenced, expired, released or queued,
 // or (followCarry) writes follow hints that grant nothing by themselves, so
 // the worker keeps running with the kill switch on (an owner's delete is a
-// safety action, and so is deleting a whole Page). With nothing to do it
-// costs one empty query per slice (four for pageDeletion).
+// safety action, and so is deleting a whole Page). The one exception is the
+// deadline claim of a pending Page deletion (4b), which waits for the switch.
+// With nothing to do it costs one empty query per slice (four for
+// pageDeletion).
 
 const { Timestamp } = require("firebase-admin/firestore");
 const { onSchedule } = require("firebase-functions/v2/scheduler");

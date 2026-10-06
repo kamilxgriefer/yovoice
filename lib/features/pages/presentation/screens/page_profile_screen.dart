@@ -348,8 +348,16 @@ class _PageProfileScreenState extends State<PageProfileScreen> {
     final copy = _copy;
     setState(() => _restoring = true);
     try {
-      await _deletion.restore();
-      if (mounted) _snack(copy.pageRestored);
+      final state = await _deletion.restore();
+      // The deletion is always cancelled; the Page itself may stay paused
+      // (no live Premium or VIP, a private profile, paused before).
+      if (mounted) {
+        _snack(
+          state.pagePaused == true
+              ? copy.deletionCancelledPaused
+              : copy.pageRestored,
+        );
+      }
     } on PagesException catch (error) {
       if (mounted) _snack(copy.manageError(error.failure));
     } finally {

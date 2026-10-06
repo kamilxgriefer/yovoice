@@ -1299,6 +1299,27 @@ describe("account deletion: the stages", () => {
     assert.equal((await user.get()).exists, false);
     assert.equal((await user.collection("momentViews").limit(1).get()).empty, true);
   });
+
+  test("finalize removes a Page memory written after the records step (ADR-236)", async () => {
+    // pageMemory/{uid} goes with the uid-keyed records. A remembered
+    // suspension has no expiry date, so a row that reached the collection
+    // after that step would stay for an erased account forever.
+    const memory = db.collection("pageMemory").doc(SUBJECT);
+    await Promise.all([
+      db.collection("users").doc(SUBJECT).set({ uid: SUBJECT, email: EMAIL }),
+      memory.set({
+        schemaVersion: 1,
+        pageId: SUBJECT,
+        deletedAt: Timestamp.now(),
+        recreateAllowedAt: Timestamp.now(),
+        suspension: { suspendedAt: Timestamp.now(), suspensionReason: "scam" },
+        expiresAt: null,
+        updatedAt: Timestamp.now(),
+      }),
+    ]);
+    await stagesWith().runStage("finalize", { uid: SUBJECT });
+    assert.equal((await memory.get()).exists, false);
+  });
 });
 
 describe("account deletion: truthfulness", () => {

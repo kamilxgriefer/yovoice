@@ -4,8 +4,10 @@
 // sheets 6_pageDeleteWhat / 6_pageDeleteHow): the danger zone of Page
 // settings, the "Usuń wszystkie posty" confirmation, the "Usuń stronę"
 // screen, the pending banner on the owner's Page and in settings, "Usuń
-// teraz, nie czekaj", the "Trwa usuwanie postów" wall and what a follower
-// sees. The REAL screens with the shipped Inter font.
+// teraz, nie czekaj" with the fresh sign-in it needs (the password prompt),
+// "Przywróć stronę" when the Page stays paused, the "Trwa usuwanie postów"
+// wall and what a follower sees. The REAL screens with the shipped Inter
+// font.
 //
 // Not a golden test. Run explicitly:
 //
@@ -17,6 +19,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter/material.dart';
@@ -27,6 +30,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:yovoice/core/localization/app_localizations.dart';
 import 'package:yovoice/core/theme/app_palette.dart';
 import 'package:yovoice/core/theme/app_theme.dart';
+import 'package:yovoice/features/auth/data/reauthentication_service.dart';
 import 'package:yovoice/features/friends/data/models/friend_user.dart';
 import 'package:yovoice/features/home/presentation/widgets/desktop/desktop_sidebar.dart';
 import 'package:yovoice/features/home/presentation/widgets/navigation/yo_floating_navigation_dock.dart';
@@ -186,6 +190,11 @@ Map<String, Object?> _deletionWire(String state) => {
   'schemaVersion': 1,
   'pageId': 'me',
   'pageExists': state != 'deleted',
+  // A Page that is to be deleted is paused; 'cancelled' is what a restore
+  // answers when the deletion is gone but the Page could not be resumed.
+  'pagePaused': state == 'deleted'
+      ? null
+      : const {'pending', 'purging', 'cancelled'}.contains(state),
   'deletion': switch (state) {
     'pending' || 'purging' => {
       'state': state,
@@ -202,17 +211,50 @@ Map<String, Object?> _deletionWire(String state) => {
       : null,
 };
 
-PagesService _service(Object? page, {String deletion = ''}) => PagesService(
+/// [oldSignIn]: the server refuses "delete now" until the owner confirms it
+/// is them. [restoreLeavesPaused]: a restore cancels the deletion and the
+/// Page stays paused (no live Premium or VIP).
+PagesService _service(
+  Object? page, {
+  String deletion = '',
+  bool oldSignIn = false,
+  bool restoreLeavesPaused = false,
+}) => PagesService(
   clock: () => _now,
   invoker: (name, payload) async {
     if (name == PagesService.pageCallable) {
       if (page is Exception) throw page;
       return page;
     }
-    if (name == PagesService.deletionCallable) return _deletionWire(deletion);
+    if (name == PagesService.deletionCallable) {
+      if (oldSignIn && payload['op'] == 'purgeNow') {
+        throw FirebaseFunctionsException(
+          code: 'failed-precondition',
+          message: 'Sign in again before performing this sensitive action.',
+          details: const {'reason': 'recent-authentication-required'},
+        );
+      }
+      if (restoreLeavesPaused && payload['op'] == 'restore') {
+        return _deletionWire('cancelled');
+      }
+      return _deletionWire(deletion);
+    }
     return {'ok': true};
   },
 );
+
+/// An account whose fresh sign-in is its password.
+class _PasswordAccount implements ReauthenticationClient {
+  const _PasswordAccount();
+  @override
+  List<String> get providerIds => const ['password'];
+  @override
+  Future<void> reauthenticateWithPassword(String password) async {}
+  @override
+  Future<void> reauthenticateWithGoogle() async {}
+  @override
+  Future<void> reauthenticateWithApple() async {}
+}
 
 PageDeletionCenter _center(PagesService service) => PageDeletionCenter(
   service: service,
@@ -343,11 +385,22 @@ UserProfile _me() => UserProfile(
 
 /// Page settings in [deletion] state: '' (running), 'pending', 'purging',
 /// 'deleted' (the purge finished while the screen was open).
-Widget _settings({String deletion = ''}) {
-  final service = _service(null, deletion: deletion);
+Widget _settings({
+  String deletion = '',
+  bool oldSignIn = false,
+  bool restoreLeavesPaused = false,
+}) {
+  final service = _service(
+    null,
+    deletion: deletion,
+    oldSignIn: oldSignIn,
+    restoreLeavesPaused: restoreLeavesPaused,
+  );
   return PageSettingsScreen(
     service: service,
     deletion: _center(service),
+    reauthentication: const _PasswordAccount(),
+    refreshIdToken: () async => true,
     accessStream: () => Stream.value(
       PageAccessState(
         resolved: true,
@@ -590,6 +643,21 @@ Future<void> _settingsBottom(WidgetTester t) async {
   );
 }
 
+/// "Usuń teraz, nie czekaj" confirmed with a sign-in the server finds too
+/// old: the password prompt, with a password typed.
+Future<void> _deleteNowPassword(WidgetTester t) async {
+  await _settingsBottom(t);
+  await _settle(t);
+  await t.tap(find.byKey(const ValueKey('settings-delete-now')));
+  await _settle(t);
+  await t.tap(find.byKey(const ValueKey('page-confirm-action')));
+  await _settle(t);
+  await t.enterText(
+    find.byKey(const ValueKey('page-delete-password-field')),
+    'haslo-do-konta',
+  );
+}
+
 Future<void> _deleteBottom(WidgetTester t) async {
   await t.enterText(find.byKey(const ValueKey('page-delete-name')), _pageName);
   await t.pump();
@@ -697,6 +765,24 @@ void main() {
       await t.tap(find.byKey(const ValueKey('settings-delete-now')));
     },
   );
+  // "Delete now" is the one irreversible step: an old sign-in is confirmed
+  // first (the account-deletion rule).
+  _t(
+    'how_B3d_delete_now_password_390',
+    _p390,
+    () => _pushed(_settings(deletion: 'pending', oldSignIn: true)),
+    then: _deleteNowPassword,
+  );
+  // "Przywróć stronę" without live Premium or VIP: the deletion is
+  // cancelled, the Page stays paused, and the answer says so.
+  _t(
+    'how_B3e_restore_stays_paused_390',
+    _p390,
+    () => _pushed(_settings(deletion: 'pending', restoreLeavesPaused: true)),
+    then: (t) async {
+      await t.tap(find.byKey(const ValueKey('settings-notice-restore')));
+    },
+  );
   _t(
     'how_B4_follower_unavailable_390',
     _p390,
@@ -788,6 +874,18 @@ void main() {
   );
 
   _t(
+    'desktop_delete_now_password_1440',
+    _desk,
+    () => _desktop(_pushed(_settings(deletion: 'pending', oldSignIn: true))),
+    then: _deleteNowPassword,
+  );
+  _t(
+    'tablet_delete_now_password_768',
+    _tab,
+    () => _pushed(_settings(deletion: 'pending', oldSignIn: true)),
+    then: _deleteNowPassword,
+  );
+  _t(
     'desktop_settings_deleted_1440',
     _desk,
     () => _desktop(_pushed(_settings(deletion: 'deleted'))),
@@ -824,8 +922,32 @@ void main() {
     look: pearl,
   );
 
+  _t(
+    'pearl_delete_now_password_390',
+    _p390,
+    () => _pushed(_settings(deletion: 'pending', oldSignIn: true)),
+    then: _deleteNowPassword,
+    look: pearl,
+  );
+
   // ============ 200 % text ============
   const large = _Look(textScale: 2);
+  _t(
+    'text200_delete_now_password_390',
+    _p390,
+    () => _pushed(_settings(deletion: 'pending', oldSignIn: true)),
+    then: _deleteNowPassword,
+    look: large,
+  );
+  _t(
+    'text200_restore_stays_paused_390',
+    _p390,
+    () => _pushed(_settings(deletion: 'pending', restoreLeavesPaused: true)),
+    then: (t) async {
+      await t.tap(find.byKey(const ValueKey('settings-notice-restore')));
+    },
+    look: large,
+  );
   _t(
     'text200_settings_danger_390',
     _p390,
@@ -885,7 +1007,21 @@ void main() {
     ),
     look: arabic,
   );
+  _t(
+    'rtl_delete_now_password_390',
+    _p390,
+    () => _pushed(_settings(deletion: 'pending', oldSignIn: true)),
+    then: _deleteNowPassword,
+    look: arabic,
+  );
   const german = _Look(locale: Locale('de'));
+  _t(
+    'de_delete_now_password_390',
+    _p390,
+    () => _pushed(_settings(deletion: 'pending', oldSignIn: true)),
+    then: _deleteNowPassword,
+    look: german,
+  );
   _t(
     'de_settings_danger_390',
     _p390,

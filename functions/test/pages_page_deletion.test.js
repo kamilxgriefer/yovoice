@@ -20,11 +20,13 @@ if (getApps().length === 0) initializeApp({ projectId: SUITE_PROJECT });
 
 const { UID_KEYED_DOCUMENTS } = require("../account/stages");
 const { createPagesAccountDeletion } = require("../pages/account_deletion");
+const { PAGES_SAFETY_ACTIONS } = require("../pages/activation");
 const { PAGE_KEYS } = require("../pages/contract");
 const {
   MANAGE_PAGE_DELETION_OPS,
   PAGES_DELETION_RATE_LIMITS,
   PAGES_DELETION_WORK_LIMITS,
+  PAGE_DELETION_HOLD_RETRY_MS,
   PAGE_DELETION_KEYS,
   PAGE_DELETION_REMINDER_BEFORE_MS,
   PAGE_DELETION_REMINDER_LABEL,
@@ -36,6 +38,7 @@ const {
   createPagesDeletionService,
 } = require("../pages/deletion");
 const { pageFollowCarryJobDocument } = require("../pages/follow_carry");
+const { createPagesLapseService } = require("../pages/lapse_service");
 const { createPagesLifecycleService } = require("../pages/lifecycle");
 const { createPagesMaintenanceService } = require("../pages/maintenance");
 const { newReservation, pageMediaIdFor, pagePostIdFor } = require("../pages/media_contract");
@@ -114,6 +117,23 @@ function call(service, uid, op, options = {}) {
   return service.managePageDeletionV1(request(uid, { op }, options));
 }
 
+/// "Delete now" as the app sends it: a sign-in `signedInSecondsAgo` old (the
+/// server asks for one no older than 5 minutes) and the requestedAtMs of the
+/// request the owner is looking at (read from the record unless given).
+async function purge(service, uid, {
+  requestedAtMs = undefined, signedInSecondsAgo = 30, verified = true,
+} = {}) {
+  const record = await dataOf(`pageDeletions/${uid}`);
+  const call_ = request(uid, {
+    op: "purgeNow",
+    requestedAtMs: requestedAtMs ?? record?.requestedAt?.toMillis() ?? nowMs,
+  }, { verified });
+  if (signedInSecondsAgo !== null) {
+    call_.auth.token.auth_time = Math.floor(nowMs / 1000) - signedInSecondsAgo;
+  }
+  return service.managePageDeletionV1(call_);
+}
+
 async function dataOf(pathName) {
   const snapshot = await db.doc(pathName).get();
   return snapshot.exists ? snapshot.data() : null;
@@ -181,18 +201,28 @@ test("the op list, the exact input and the caller are checked before anything is
   await rejectsWith(service.managePageDeletionV1(request(uid, { op: "status", pageId: uid })),
     "invalid-argument");
   await rejectsWith(service.managePageDeletionV1(request(uid, {})), "invalid-argument");
-  // Only restore needs a verified e-mail.
-  await rejectsWith(call(service, uid, "restore", { verified: false }), "failed-precondition");
-  const state = await call(service, uid, "status", { verified: false });
-  assert.deepEqual(Object.keys(state).sort(), [...PAGE_DELETION_STATE_KEYS]);
-  assert.deepEqual(state, {
+  // purgeNow, and only purgeNow, names the request it confirms.
+  await rejectsWith(service.managePageDeletionV1(request(uid, { op: "purgeNow" })),
+    "invalid-argument");
+  await rejectsWith(service.managePageDeletionV1(request(uid, {
+    op: "purgeNow", requestedAtMs: "soon" })), "invalid-argument");
+  await rejectsWith(service.managePageDeletionV1(request(uid, {
+    op: "request", requestedAtMs: nowMs })), "invalid-argument");
+  // No op needs a verified e-mail: an owner who may ask for the deletion
+  // unverified may take it back unverified.
+  const empty = {
     schemaVersion: 1,
     pageId: uid,
     pageExists: false,
+    pagePaused: null,
     deletion: null,
     postsClearing: null,
     recreateAllowedAtMs: null,
-  });
+  };
+  assert.deepEqual(await call(service, uid, "restore", { verified: false }), empty);
+  const state = await call(service, uid, "status", { verified: false });
+  assert.deepEqual(Object.keys(state).sort(), [...PAGE_DELETION_STATE_KEYS]);
+  assert.deepEqual(state, empty);
 });
 
 test("status has its own rate budget", async () => {
@@ -216,6 +246,7 @@ test("request pauses the Page and writes the 30-day record in one transaction", 
     schemaVersion: 1,
     pageId: uid,
     pageExists: true,
+    pagePaused: true,
     deletion: {
       state: "pending",
       requestedAtMs: nowMs,
@@ -252,6 +283,9 @@ test("request pauses the Page and writes the 30-day record in one transaction", 
 });
 
 test("request is a safety action: kill switch, no capability, muted, unverified", async () => {
+  for (const op of ["request", "restore", "purgeNow", "clearPosts"]) {
+    assert.ok(PAGES_SAFETY_ACTIONS.includes(`managePageDeletionV1.${op}`), op);
+  }
   const uid = freshUid("pdelsafe");
   await seedPage(db, uid, nowMs, { grant: null });
   await db.doc(`restrictions/${uid}`).set({ type: "communicationMute", expiresAt: null });
@@ -297,39 +331,85 @@ test("a malformed Page is still paused and still queued for deletion", async () 
 
 // ---------------------------------------------------------------- restore
 
-test("restore removes the record and resumes the Page; it needs the switch, the e-mail and the capability",
-  async () => {
-    const { uid } = await seedRunningPage({ count: 1 });
-    const { service } = deletionService();
-    await call(service, uid, "request");
-
-    await clearActivation(db);
-    await rejectsWith(call(service, uid, "restore"), "failed-precondition", "pagesNotEnabled");
-    await setActivation(db);
-    await db.doc(`vipGrants/${uid}`).delete();
-    await rejectsWith(call(service, uid, "restore"), "failed-precondition", "pageAccessRequired");
-    assert.notEqual(await dataOf(`pageDeletions/${uid}`), null, "a refused restore changes nothing");
-    assert.equal((await dataOf(`pages/${uid}`)).ownerPaused, true);
-
-    await db.doc(`vipGrants/${uid}`).set({
-      source: "testerProgram", expiresAt: null, revoked: false, grantedBy: "owner-console",
-    });
-    nowMs += 5 * DAY_MS;
-    const state = await call(service, uid, "restore");
-    assert.deepEqual(state, {
-      schemaVersion: 1, pageId: uid, pageExists: true, deletion: null, postsClearing: null,
-      recreateAllowedAtMs: null,
-    });
-    assert.equal(await dataOf(`pageDeletions/${uid}`), null);
-    const page = await dataOf(`pages/${uid}`);
-    assert.equal(page.ownerPaused, false);
-    assert.equal(page.listed, true, "posts and listing come back");
-    assert.equal(page.postCount, 1);
-    assert.equal(await visibilityOf(uid), null);
-    // Idempotent with nothing pending (and no gate: nothing to restore).
-    await db.doc(`vipGrants/${uid}`).delete();
-    assert.equal((await call(service, uid, "restore")).deletion, null);
+test("restore removes the record and resumes the Page when today's gates allow it", async () => {
+  const { uid } = await seedRunningPage({ count: 1 });
+  const { service } = deletionService();
+  await call(service, uid, "request");
+  nowMs += 5 * DAY_MS;
+  const state = await call(service, uid, "restore");
+  assert.deepEqual(state, {
+    schemaVersion: 1, pageId: uid, pageExists: true, pagePaused: false, deletion: null,
+    postsClearing: null, recreateAllowedAtMs: null,
   });
+  assert.equal(await dataOf(`pageDeletions/${uid}`), null);
+  const page = await dataOf(`pages/${uid}`);
+  assert.equal(page.ownerPaused, false);
+  assert.equal(page.listed, true, "posts and listing come back");
+  assert.equal(page.postCount, 1);
+  assert.equal(await visibilityOf(uid), null);
+  // Idempotent with nothing pending (and no gate: nothing to restore).
+  await db.doc(`vipGrants/${uid}`).delete();
+  assert.equal((await call(service, uid, "restore")).deletion, null);
+});
+
+// The purge reads no gate, so the undo must not either (audit 2026-10-06):
+// every state in which the 30-day timer runs is a state in which the owner
+// can stop it. The gates only decide whether the Page also goes back on air.
+test("the cancel is a safety action: kill switch, testers mode, no capability, muted, unverified, " +
+  "disabled, a spent budget and a broken visibility index all still stop the timer", async () => {
+  const cases = {
+    killSwitch: async () => { await clearActivation(db); },
+    testersMode: async () => {
+      await setActivation(db, {
+        readAccess: "testers", writeAccess: "testers", testerUids: [freshUid("pdeltester")],
+      });
+    },
+    noCapability: async (uid) => { await db.doc(`vipGrants/${uid}`).delete(); },
+    muted: async (uid) => {
+      await db.doc(`restrictions/${uid}`).set({ type: "communicationMute", expiresAt: null });
+    },
+    unverified: async () => {},
+    disabled: async (uid) => { await db.doc(`users/${uid}`).update({ disabled: true }); },
+    brokenIndex: async () => { await db.doc("pageVisibility/v1").set({ schemaVersion: 7 }); },
+    spentBudget: async () => {},
+  };
+  for (const [name, arrange] of Object.entries(cases)) {
+    await setActivation(db);
+    await db.doc("pageVisibility/v1").delete();
+    const { uid } = await seedRunningPage({ count: 1, prefix: `pdelc${name.slice(0, 4)}` });
+    const { service, logger } = deletionService(name === "spentBudget"
+      ? { rateLimits: { ...PAGES_DELETION_RATE_LIMITS,
+        "pages.deletionRestore": { maxEvents: 1, windowMs: 3_600_000 } } }
+      : {});
+    if (name === "spentBudget") {
+      // One earlier request + restore uses the whole resume budget.
+      await call(service, uid, "request");
+      assert.equal((await call(service, uid, "restore")).pagePaused, false);
+    }
+    await call(service, uid, "request");
+    await arrange(uid);
+    const state = await call(service, uid, "restore", { verified: name !== "unverified" });
+    assert.equal(state.deletion, null, name);
+    assert.equal(state.pageExists, true, name);
+    assert.equal(state.pagePaused, true, `${name}: the Page stays an ordinary paused Page`);
+    assert.equal(await dataOf(`pageDeletions/${uid}`), null, `${name}: the record is gone`);
+    assert.equal((await dataOf(`pages/${uid}`)).ownerPaused, true, name);
+    assert.equal((await dataOf(`pages/${uid}`)).postCount, 1, name);
+    // No uid in the line that says why the Page stayed paused.
+    for (const entry of logger.entries) {
+      assert.equal(JSON.stringify(entry.args).includes(uid), false, name);
+    }
+    // 31 days later nothing is left to purge it.
+    const before = nowMs;
+    nowMs += 31 * DAY_MS;
+    await setActivation(db);
+    await service.sweep();
+    assert.notEqual(await dataOf(`pages/${uid}`), null, `${name}: never purged`);
+    assert.notEqual((await db.collection("pagePosts").where("pageId", "==", uid).get()).size, 0);
+    nowMs = before;
+  }
+  await db.doc("pageVisibility/v1").delete();
+});
 
 test("restore returns the Page to what it was: paused before, private profile, suspended, lapsed",
   async () => {
@@ -384,6 +464,38 @@ test("managePageV1 resume cancels a pending deletion; update and resume refuse o
     assert.equal(resumed.ownerPaused, false);
     assert.equal(await dataOf(`pageDeletions/${uid}`), null,
       "a resumed Page can never be swept later");
+
+    // What builds 40/41 offer for a pending Page is "Resume". A REFUSED
+    // resume still stops the timer: the cancel runs before every gate, in
+    // its own transaction (audit 2026-10-06).
+    const refusals = [
+      ["kill switch", () => clearActivation(db), "failed-precondition", "pagesNotEnabled", true],
+      ["no capability", () => db.doc(`vipGrants/${uid}`).delete(),
+        "failed-precondition", "pageAccessRequired", true],
+      ["private profile", () => db.doc(`users/${uid}`).update({ profileVisibility: "private" }),
+        "failed-precondition", "pageProfileNotPublic", true],
+      ["unverified", async () => {}, "failed-precondition", undefined, false],
+    ];
+    for (const [name, arrange, code, reason, verified] of refusals) {
+      await setActivation(db);
+      await db.doc(`vipGrants/${uid}`).set({
+        source: "testerProgram", expiresAt: null, revoked: false, grantedBy: "owner-console",
+      });
+      await db.doc(`users/${uid}`).update({ profileVisibility: "public" });
+      await db.doc(`pages/${uid}`).update({ ownerPaused: false });
+      await call(service, uid, "request");
+      await arrange();
+      await rejectsWith(lifecycle().managePageV1(request(uid, {
+        requestId: `req-refused-${name.replaceAll(" ", "-")}-${uid}`, op: "resume",
+      }, { verified })), code, reason);
+      assert.equal(await dataOf(`pageDeletions/${uid}`), null, `${name}: the timer is stopped`);
+      assert.equal((await dataOf(`pages/${uid}`)).ownerPaused, true, `${name}: still paused`);
+    }
+    await setActivation(db);
+    await db.doc(`vipGrants/${uid}`).set({
+      source: "testerProgram", expiresAt: null, revoked: false, grantedBy: "owner-console",
+    });
+    await db.doc(`users/${uid}`).update({ profileVisibility: "public" });
 
     await call(service, uid, "request");
     await db.doc(`pageDeletions/${uid}`).update({ state: "purging" });
@@ -681,18 +793,18 @@ test("purgeNow needs a pending deletion and removes a small Page before it answe
   const { uid, posts } = await seedRunningPage({ count: 2, user: { followerCount: 1 } });
   const follower = await addFollower(uid);
   const { service } = deletionService();
-  await rejectsWith(call(service, uid, "purgeNow"),
-    "failed-precondition", "pageDeletionNotRequested");
+  await rejectsWith(purge(service, uid), "failed-precondition", "pageDeletionNotRequested");
   assert.notEqual(await dataOf(`pages/${uid}`), null);
 
   await call(service, uid, "request");
   // The inline pass is bounded: let the worker finish what is left.
-  let state = await call(service, uid, "purgeNow", { verified: false });
+  let state = await purge(service, uid, { verified: false });
   for (let run = 0; run < 3 && state.pageExists; run += 1) {
     await service.sweep();
     state = await call(service, uid, "status");
   }
   assert.equal(state.pageExists, false);
+  assert.equal(state.pagePaused, null);
   assert.equal(state.deletion, null);
   assert.equal(state.recreateAllowedAtMs, nowMs + PAGE_RECREATE_COOLDOWN_MS);
   for (const postId of posts) assert.equal(await dataOf(`pagePosts/${postId}`), null);
@@ -700,6 +812,93 @@ test("purgeNow needs a pending deletion and removes a small Page before it answe
   // Nothing is left to restore.
   assert.equal((await call(service, uid, "restore")).deletion, null);
   assert.equal(await dataOf(`pages/${uid}`), null);
+});
+
+// The 30 days are the safety net against a stolen or left-open session; a
+// valid ID token alone must not be able to skip them (audit 2026-10-06).
+test("purgeNow needs a sign-in no older than 5 minutes and the request it confirms", async () => {
+  const { uid } = await seedRunningPage({ count: 1 });
+  const { service } = deletionService();
+  const first = await call(service, uid, "request");
+  const recent = (promise) => rejectsWith(promise,
+    "failed-precondition", "recent-authentication-required");
+
+  // An old session, a token without auth_time and one from the future.
+  await recent(purge(service, uid, { signedInSecondsAgo: 301 }));
+  await recent(purge(service, uid, { signedInSecondsAgo: null }));
+  await recent(purge(service, uid, { signedInSecondsAgo: -60 }));
+  assert.equal((await dataOf(`pageDeletions/${uid}`)).state, "pending");
+  // The owner can still take it back.
+  assert.equal((await call(service, uid, "restore")).deletion, null);
+  assert.equal((await dataOf(`pages/${uid}`)).ownerPaused, false);
+
+  // A delayed "delete now" for the FIRST request never purges a newer one.
+  nowMs += DAY_MS;
+  const second = await call(service, uid, "request");
+  assert.notEqual(second.deletion.requestedAtMs, first.deletion.requestedAtMs);
+  await rejectsWith(purge(service, uid, { requestedAtMs: first.deletion.requestedAtMs }),
+    "failed-precondition", "pageDeletionChanged");
+  assert.equal((await dataOf(`pageDeletions/${uid}`)).state, "pending");
+  assert.notEqual(await dataOf(`pages/${uid}`), null);
+
+  // Exactly at the limit it is accepted.
+  const state = await purge(service, uid, { signedInSecondsAgo: 300 });
+  assert.equal(state.deletion === null || state.deletion.state === "purging", true);
+});
+
+test("a second purgeNow on a running purge starts no second runner", async () => {
+  const { uid } = await seedRunningPage({ count: 3 });
+  const real = createPagesAccountDeletion({
+    db, TimestampImpl: Timestamp, clock: () => nowMs, logger: silentLogger(),
+    limits: { posts: 1, comments: 25, storage: 25, records: 200 },
+  });
+  let walks = 0;
+  const stages = {
+    ...real,
+    processPosts: (...args) => {
+      walks += 1;
+      return real.processPosts(...args);
+    },
+  };
+  const limits = { ...PAGES_DELETION_WORK_LIMITS, inlineDeletionRounds: 1 };
+  const { service } = deletionService({ stages, limits });
+  await call(service, uid, "request");
+  const state = await purge(service, uid);
+  assert.equal(state.deletion.state, "purging");
+  assert.equal(walks, 1, "one bounded inline pass");
+  const again = await purge(service, uid);
+  assert.equal(again.deletion.state, "purging");
+  assert.equal(walks, 1, "the repeated call only answers the state");
+});
+
+test("request, purgeNow and clearPosts have their own budgets; the cancel has none", async () => {
+  const tight = (scope) => deletionService({
+    rateLimits: { ...PAGES_DELETION_RATE_LIMITS, [scope]: { maxEvents: 1, windowMs: 3_600_000 } },
+  }).service;
+
+  const requested = (await seedRunningPage({ prefix: "pdelrq" })).uid;
+  let service = tight("pages.deletionRequest");
+  await call(service, requested, "request");
+  await rejectsWith(call(service, requested, "request"), "resource-exhausted");
+  // The undo is never the op that is refused.
+  for (let index = 0; index < 5; index += 1) {
+    assert.equal((await call(service, requested, "restore")).deletion, null);
+  }
+
+  const cleared = (await seedRunningPage({ count: 1, prefix: "pdelcl" })).uid;
+  service = tight("pages.deletionClear");
+  await call(service, cleared, "clearPosts");
+  await rejectsWith(call(service, cleared, "clearPosts"), "resource-exhausted");
+
+  const purged = (await seedRunningPage({ count: 1, prefix: "pdelpg" })).uid;
+  service = tight("pages.deletionPurge");
+  await call(service, purged, "request");
+  // A refused call (an old sign-in) costs nothing; the budget is charged
+  // only once the caller has proved a recent sign-in.
+  await rejectsWith(purge(service, purged, { signedInSecondsAgo: 900 }),
+    "failed-precondition", "recent-authentication-required");
+  await purge(service, purged);
+  await rejectsWith(purge(service, purged), "resource-exhausted");
 });
 
 // ------------------------------------------------- re-create and the memory
@@ -711,7 +910,7 @@ test("create waits out the 7-day cooldown and then consumes the memory", async (
   assert.equal(first.status, "active");
   const { service } = deletionService();
   await call(service, uid, "request");
-  let state = await call(service, uid, "purgeNow");
+  let state = await purge(service, uid);
   for (let run = 0; run < 3 && state.pageExists; run += 1) {
     await service.sweep();
     state = await call(service, uid, "status");
@@ -747,7 +946,7 @@ test("a suspension survives delete and re-create", async () => {
   } });
   const { service } = deletionService();
   await call(service, uid, "request");
-  let state = await call(service, uid, "purgeNow");
+  let state = await purge(service, uid);
   for (let run = 0; run < 3 && state.pageExists; run += 1) {
     await service.sweep();
     state = await call(service, uid, "status");
@@ -802,7 +1001,7 @@ test("a second finish of the same purge writes nothing: the remembered suspensio
   };
   const { service } = deletionService({ stages });
   await call(service, uid, "request");
-  let state = await call(service, uid, "purgeNow");
+  let state = await purge(service, uid);
   for (let run = 0; run < 3 && state.pageExists; run += 1) {
     await service.sweep();
     state = await call(service, uid, "status");
@@ -961,6 +1160,178 @@ test("a post published after clearPosts survives; the worker finishes a large Pa
   assert.equal((await dataOf(`pages/${uid}`)).postCount, 0);
 });
 
+// ------------------------------------------------ audit 2026-10-06 hardening
+
+test("the deadline purge is held while the owner cannot use Pages; delete now is not", async () => {
+  const held = (await seedRunningPage({ count: 1, prefix: "pdelheld" })).uid;
+  const explicit = (await seedRunningPage({ count: 1, prefix: "pdelnow" })).uid;
+  const { service, logger } = deletionService();
+  await call(service, held, "request");
+  await call(service, explicit, "request");
+  nowMs += 31 * DAY_MS;
+
+  // The kill switch (or a missing switch) is the operator's brake.
+  await clearActivation(db);
+  let line = await service.sweep();
+  assert.equal(line.deletions.held, 2);
+  assert.equal(line.deletions.done, 0);
+  let record = await dataOf(`pageDeletions/${held}`);
+  assert.equal(record.state, "pending", "not claimed");
+  assert.equal(record.dueAt.toMillis(), nowMs + PAGE_DELETION_HOLD_RETRY_MS);
+  assert.equal(record.deleteAt.toMillis() < nowMs, true, "the date itself is not rewritten");
+  assert.notEqual(await dataOf(`pages/${held}`), null);
+  assert.equal(logger.entries.some((entry) =>
+    entry.level === "warn" && entry.args[0] === "pages deletion deadline held"), true);
+  // Not looked at again before the retry time.
+  line = await service.sweep();
+  assert.equal(line.deletions.processed, 0);
+
+  // "Delete now" is the owner's explicit choice: never held.
+  let state = await purge(service, explicit);
+  for (let run = 0; run < 3 && state.pageExists; run += 1) {
+    await service.sweep();
+    state = await call(service, explicit, "status");
+  }
+  assert.equal(state.pageExists, false);
+
+  // Testers mode holds a non-tester's Page the same way.
+  nowMs += PAGE_DELETION_HOLD_RETRY_MS + 1000;
+  await setActivation(db, {
+    readAccess: "testers", writeAccess: "testers", testerUids: [freshUid("pdeltester")],
+  });
+  line = await service.sweep();
+  assert.equal(line.deletions.held, 1);
+  // Held is still restorable.
+  assert.equal((await call(service, held, "status")).deletion.state, "pending");
+
+  // The switch is back: the next look purges it.
+  await setActivation(db);
+  nowMs += PAGE_DELETION_HOLD_RETRY_MS + 1000;
+  for (let run = 0; run < 3 && await dataOf(`pageDeletions/${held}`) !== null; run += 1) {
+    await service.sweep();
+  }
+  assert.equal(await dataOf(`pages/${held}`), null);
+  record = await dataOf(`pageMemory/${held}`);
+  assert.notEqual(record, null);
+});
+
+test("clear jobs run before the purges and on their own time budget", async () => {
+  const purged = (await seedRunningPage({ count: 2, prefix: "pdelord1" })).uid;
+  const cleared = (await seedRunningPage({ count: 3, prefix: "pdelord2" })).uid;
+  const real = createPagesAccountDeletion({
+    db, TimestampImpl: Timestamp, clock: () => nowMs, logger: silentLogger(),
+    limits: { posts: 1, comments: 25, storage: 25, records: 200 },
+  });
+  const order = [];
+  // Every page of posts "takes" two thirds of a part's budget.
+  const stages = {
+    ...real,
+    processPosts: (uid, ...rest) => {
+      order.push(uid === cleared ? "clear" : "purge");
+      nowMs += Math.ceil(PAGES_DELETION_WORK_LIMITS.sweepBudgetMs * 2 / 3);
+      return real.processPosts(uid, ...rest);
+    },
+  };
+  const limits = { ...PAGES_DELETION_WORK_LIMITS, inlineClearRounds: 0 };
+  const { service } = deletionService({ stages, limits });
+  await call(service, purged, "request");
+  nowMs += 31 * DAY_MS;
+  await call(service, cleared, "clearPosts");
+  assert.deepEqual(order, [], "nothing inline in this arrangement");
+
+  const line = await service.sweep();
+  assert.equal(order[0], "clear", "public posts go before a hidden Page's");
+  // One large job stops when its part's budget is used (two rounds here)...
+  assert.deepEqual(order.filter((entry) => entry === "clear"), ["clear", "clear"]);
+  assert.equal(line.clearJobs.hasMore, true);
+  assert.equal((await dataOf(`pages/${cleared}`)).postCount, 1);
+  // ...and the purge still gets its own budget in the same run.
+  assert.equal(order.includes("purge"), true, "a clear job cannot starve the purges");
+  assert.equal((await dataOf(`pageDeletions/${purged}`)).state, "purging");
+});
+
+test("create never inherits a deletion record or a clear job that outlived an earlier Page",
+  async () => {
+    const uid = freshUid("pdelstale");
+    await seedOwner(db, uid, { nowMs });
+    const now = Timestamp.fromMillis(nowMs);
+    // A hand repair removed pages/{uid} and left both records behind.
+    await db.doc(`pageDeletions/${uid}`).set({
+      schemaVersion: 1, pageId: uid, state: "purging", requestedAt: now, deleteAt: now,
+      pausedBefore: false, reminderAt: null, dueAt: now, step: 1, cursor: null, attempts: 0,
+      updatedAt: now,
+    });
+    await db.doc(`pagePostClearJobs/${uid}`).set({
+      schemaVersion: 1, pageId: uid, requestedAt: now, cursor: null, attempts: 0,
+      nextAttemptAt: now, updatedAt: now,
+    });
+    const logger = silentLogger();
+    const created = await createPagesLifecycleService({
+      firestore: db, TimestampImpl: Timestamp, clock: () => nowMs, logger,
+    }).managePageV1(request(uid, createInput()));
+    assert.equal(created.pageId, uid);
+    assert.equal(await dataOf(`pageDeletions/${uid}`), null);
+    assert.equal(await dataOf(`pagePostClearJobs/${uid}`), null);
+    assert.equal(logger.entries.some((entry) => entry.level === "error"), true, "an alert");
+    for (const entry of logger.entries) {
+      assert.equal(JSON.stringify(entry.args).includes(uid), false);
+    }
+    const { service } = deletionService();
+    nowMs += DAY_MS;
+    await service.sweep();
+    assert.notEqual(await dataOf(`pages/${uid}`), null, "the new Page is not purged");
+  });
+
+test("a deletion record over a running Page pauses it again on the next request", async () => {
+  const { uid } = await seedRunningPage({ count: 1 });
+  const { service } = deletionService();
+  const first = await call(service, uid, "request");
+  // Somebody un-paused the Page by hand and left the record.
+  await db.doc(`pages/${uid}`).update({ ownerPaused: false, listed: true });
+  const again = await call(service, uid, "request");
+  assert.deepEqual(again.deletion, first.deletion, "the first date stands");
+  assert.equal(again.pagePaused, true);
+  const page = await dataOf(`pages/${uid}`);
+  assert.equal(page.ownerPaused, true);
+  assert.equal(page.listed, false);
+  assert.equal(await visibilityOf(uid), "paused");
+});
+
+test("no lapse notice says 'nothing is deleted' beside a pending deletion", async () => {
+  const lapse = createPagesLapseService({
+    firestore: db, TimestampImpl: Timestamp, clock: () => nowMs, logger: silentLogger(),
+  });
+  const notices = async (uid) =>
+    (await db.collection(`users/${uid}/notifications`).get()).docs.map((row) => row.id);
+
+  // Day 0: VIP ends while the deletion is pending.
+  const pending = (await seedRunningPage({ count: 1, prefix: "pdellap1" })).uid;
+  const { service } = deletionService();
+  await call(service, pending, "request");
+  await db.doc(`vipGrants/${pending}`).delete();
+  assert.equal((await lapse.reconcilePage(pending)).outcome, "readOnly");
+  assert.equal((await dataOf(`pages/${pending}`)).status, "readOnly", "the transition is written");
+  assert.deepEqual(await notices(pending), []);
+
+  // Day 23 of a lapse: the "hidden in 7 days, nothing is deleted" notice.
+  nowMs += 24 * DAY_MS;
+  assert.equal((await lapse.reconcilePage(pending)).outcome, "warned");
+  assert.deepEqual(await notices(pending), []);
+
+  // Without a deletion both notices are written as before.
+  const plain = (await seedRunningPage({ count: 1, prefix: "pdellap2" })).uid;
+  await db.doc(`vipGrants/${plain}`).delete();
+  await lapse.reconcilePage(plain);
+  assert.equal((await notices(plain)).length, 1);
+  assert.match((await notices(plain))[0], /^pageLapse_readOnly_/u);
+
+  // Taking the deletion back brings the notices back too.
+  await call(service, pending, "restore");
+  assert.equal((await lapse.reconcilePage(pending)).outcome, "warned");
+  assert.equal((await notices(pending)).length, 1);
+  assert.match((await notices(pending))[0], /^pageLapse_hidingSoon_/u);
+});
+
 // ------------------------------------------------------- wiring, inventory
 
 test("pagesMaintenance runs the pageDeletion slice and account deletion knows the new records",
@@ -972,7 +1343,7 @@ test("pagesMaintenance runs the pageDeletion slice and account deletion knows th
     });
     const { service } = deletionService();
     await call(service, uid, "request");
-    await call(service, uid, "purgeNow");
+    await purge(service, uid);
     const results = await maintenance.run();
     assert.deepEqual(Object.keys(results.pageDeletion).sort(),
       ["clearJobs", "deletions", "memory", "reminders"]);

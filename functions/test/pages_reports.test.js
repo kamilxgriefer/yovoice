@@ -631,8 +631,12 @@ test("suspending a Page its owner already deleted is remembered, and a lift clea
       clock: () => nowMs,
       logger: silentLogger(),
     });
-    await deletion.managePageDeletionV1(request(pageId, { op: "request" }));
-    let state = await deletion.managePageDeletionV1(request(pageId, { op: "purgeNow" }));
+    const requested = await deletion.managePageDeletionV1(request(pageId, { op: "request" }));
+    // "Delete now" needs a recent sign-in and names the request it confirms.
+    const purgeNow = request(pageId, {
+      op: "purgeNow", requestedAtMs: requested.deletion.requestedAtMs });
+    purgeNow.auth.token.auth_time = Math.floor(nowMs / 1000) - 30;
+    let state = await deletion.managePageDeletionV1(purgeNow);
     for (let run = 0; run < 3 && state.pageExists; run += 1) {
       await deletion.sweep();
       state = await deletion.readState(pageId);
@@ -694,6 +698,37 @@ test("a suspension that finds neither the Page nor the account writes nothing", 
   await runModerate(moderatorRequest(moderator, { reportId, action: "suspendPage" }));
   assert.equal(await dataOf(`pageMemory/${pageId}`), null, "a deleted account leaves no residue");
 });
+
+test("a suspension during ACCOUNT deletion remembers nothing; a banned account is remembered",
+  async () => {
+    // Account deletion removes the Page (content stage) and the uid-keyed
+    // records long before users/{uid} itself (finalize). A decision taken in
+    // that window must not write a never-expiring uid-keyed row for an
+    // account that is being erased (audit 2026-10-06).
+    const moderator = await seedModerator();
+    const deleting = await scene();
+    const deletingReport = await fileReport(deleting.reporter,
+      reportInput({ targetType: "page", pageId: deleting.pageId }));
+    await db.doc(`pages/${deleting.pageId}`).delete();
+    await db.doc(`users/${deleting.pageId}`).update({
+      disabled: true,
+      accountDeletion: { state: "records", source: "app", requestedAt: Timestamp.fromMillis(nowMs) },
+    });
+    await runModerate(moderatorRequest(moderator, {
+      reportId: deletingReport, action: "suspendPage" }));
+    assert.equal(await dataOf(`pageMemory/${deleting.pageId}`), null);
+    assert.equal((await db.collection(`users/${deleting.pageId}/notifications`).get()).size, 0,
+      "and no notice for an account that is leaving");
+
+    // A ban is not a deletion: it can be lifted, so the decision is kept.
+    const banned = await scene();
+    const bannedReport = await fileReport(banned.reporter,
+      reportInput({ targetType: "page", pageId: banned.pageId, reason: "scam" }));
+    await db.doc(`pages/${banned.pageId}`).delete();
+    await db.doc(`users/${banned.pageId}`).update({ disabled: true });
+    await runModerate(moderatorRequest(moderator, { reportId: bannedReport, action: "suspendPage" }));
+    assert.equal((await dataOf(`pageMemory/${banned.pageId}`)).suspension.suspensionReason, "scam");
+  });
 
 // --------------------------------------------------------------- script
 

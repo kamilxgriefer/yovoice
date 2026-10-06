@@ -26,8 +26,14 @@
 //     (`pageRecreateCooldown`) and takes over a remembered suspension from
 //     pageMemory/{uid}, so delete + re-create never erases one;
 //   * resume cancels a PENDING deletion (a build 40/41 shows such a Page as
-//     paused, and its "Resume" means "I want it back"); update and resume
-//     answer `pageNotFound` once the purge has started.
+//     paused, and its "Resume" means "I want it back"). The cancel is a
+//     safety action in its OWN transaction, BEFORE every gate of the resume
+//     (verified e-mail, switch, budget, capability, suspension, profile,
+//     name): a refused resume leaves an ordinary paused Page, never a Page
+//     still on a deletion timer. update and resume answer `pageNotFound`
+//     once the purge has started;
+//   * create removes a deletion record or a "delete all posts" job that
+//     outlived an earlier Page, so a new Page can never inherit one.
 //
 // The birth date is used for one calculation and then dropped: never stored,
 // never hashed (the ledger's inputHash covers {adultEligibility:true}), never
@@ -115,6 +121,7 @@ const {
   canonicalPageMemory,
   pageDeletionReference,
   pageMemoryReference,
+  pagePostClearJobReference,
   rememberedPageSuspension,
 } = require("./deletion");
 const {
@@ -323,18 +330,23 @@ function createPagesLifecycleService({
     const publicRef = firestore.doc(`publicProfiles/${uid}`);
     const ledgerRef = firestore.doc(`integrityOperationLedgers/${identity.id}`);
     const memoryRef = pageMemoryReference(firestore, uid);
+    const deletionRef = pageDeletionReference(firestore, uid);
+    const clearRef = pagePostClearJobReference(firestore, uid);
     const outcome = await firestore.runTransaction(async (transaction) => {
       const [user, entitlement, grant, restriction, pageSnapshot, publicSnapshot,
-        ledgerSnapshot, visibilitySnapshot, memorySnapshot] = await transactionGetAll(
-        transaction,
-        ...pagesCapabilityReferences(firestore, uid),
-        firestore.doc(`restrictions/${uid}`),
-        pageRef,
-        publicRef,
-        ledgerRef,
-        pageVisibilityReference(firestore),
-        memoryRef,
-      );
+        ledgerSnapshot, visibilitySnapshot, memorySnapshot, staleDeletion, staleClear] =
+        await transactionGetAll(
+          transaction,
+          ...pagesCapabilityReferences(firestore, uid),
+          firestore.doc(`restrictions/${uid}`),
+          pageRef,
+          publicRef,
+          ledgerRef,
+          pageVisibilityReference(firestore),
+          memoryRef,
+          deletionRef,
+          clearRef,
+        );
       const profile = assertWritePreconditions(user, restriction, timed.nowMs);
       const prior = assertLedgerReplay(ledgerSnapshot, {
         kind: LEDGER_KINDS.create,
@@ -379,6 +391,17 @@ function createPagesLifecycleService({
       transaction.create(pageRef, page);
       // The memory is consumed: the suspension now lives in the Page again.
       if (memorySnapshot.exists) transaction.delete(memoryRef);
+      // No Page existed, so a deletion record or a "delete all posts" job
+      // found here outlived an earlier one (a hand repair, a re-enabled
+      // account). The new Page must not inherit it: a stale record would
+      // purge it, followers included, on the old date.
+      if (staleDeletion.exists || staleClear.exists) {
+        logger.error("pages stale deletion records removed on create", {
+          deletion: staleDeletion.exists, clearJob: staleClear.exists,
+        });
+        if (staleDeletion.exists) transaction.delete(deletionRef);
+        if (staleClear.exists) transaction.delete(clearRef);
+      }
       applyPageVisibilityInTransaction(transaction, {
         db: firestore,
         snapshot: visibilitySnapshot,
@@ -415,6 +438,25 @@ function createPagesLifecycleService({
   }
 
   // ------------------------------------------------------- update + resume
+
+  /**
+   * ADR-236: "Resume" on a Page that is pending deletion means "I want it
+   * back". The record goes in its OWN transaction, before any gate of the
+   * resume itself, exactly like the cancel of managePageDeletionV1 restore:
+   * the purge reads no gate, so the undo must not either. A purge that has
+   * started is left alone (ownerWrite then answers `pageNotFound`). Returns
+   * true when a record was removed.
+   */
+  async function cancelPendingDeletion(uid) {
+    const deletionRef = pageDeletionReference(firestore, uid);
+    return firestore.runTransaction(async (transaction) => {
+      const deletion = canonicalPageDeletion(await transaction.get(deletionRef), uid);
+      if (deletion === null) return false;
+      if (deletion.malformed !== true && deletion.state === "purging") return false;
+      transaction.delete(deletionRef);
+      return true;
+    });
+  }
 
   async function ownerWrite(op, auth, input, timed, mutate) {
     const uid = auth.uid;
@@ -464,9 +506,10 @@ function createPagesLifecycleService({
       if (page.suspended) throw PAGE_ERRORS.suspended();
 
       const changes = await mutate({ transaction, page, profile, publicSnapshot });
-      // A resume while a deletion is PENDING takes the Page back: the record
-      // goes in this transaction, so no later sweep can delete a Page its
-      // owner resumed (a malformed record goes too: nothing may act on it).
+      // cancelPendingDeletion already removed a pending record before the
+      // gates. One that was requested again since then goes here, in this
+      // transaction, so a resumed Page is never left on a deletion timer
+      // (a malformed record goes too: nothing may act on it).
       if (op === "resume" && deletion !== null) transaction.delete(deletionRef);
       // The capability is live (the gate passed): a lapsed Page is restored.
       const next = {
@@ -560,11 +603,17 @@ function createPagesLifecycleService({
 
   async function managePageV1(request) {
     // Only pause may run unverified (a safety action); every other op needs
-    // the verified e-mail the common write preconditions require.
+    // the verified e-mail the common write preconditions require. A resume
+    // first cancels a pending deletion (ADR-236), which is a safety action
+    // too, and only then asks for the verified e-mail.
     const op = request?.data?.op;
-    const auth = requireActor(request, { verified: op !== "pause" });
+    const auth = requireActor(request, { verified: op !== "pause" && op !== "resume" });
     const input = exactManagePageInput(request.data);
     const timed = timing();
+    if (input.op === "resume") {
+      await cancelPendingDeletion(auth.uid);
+      requireActor(request);
+    }
     switch (input.op) {
       case "create": return create(auth, input, timed);
       case "update": return update(auth, input, timed);

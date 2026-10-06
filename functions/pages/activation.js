@@ -53,6 +53,13 @@ const PAGES_SAFETY_ACTIONS = Object.freeze([
   "createPageReportV1",
   "setFollow.unfollow",
   "setMyProfileVisibility",
+  // ADR-236 (pages/deletion.js): asking for a Page's deletion, TAKING IT
+  // BACK (the cancel; the resume that may follow it is gated), "delete now"
+  // and "delete all posts". pages_page_deletion.test.js proves each one.
+  "managePageDeletionV1.request",
+  "managePageDeletionV1.restore",
+  "managePageDeletionV1.purgeNow",
+  "managePageDeletionV1.clearPosts",
 ]);
 
 const DISABLED = Object.freeze({

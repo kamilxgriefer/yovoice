@@ -160,6 +160,15 @@ extension PageDeleteCopy on PagesCopy {
     'Wraca do Treści razem z postami i obserwującymi',
   );
   String get pageRestored => copy.text('Page restored', 'Strona przywrócona');
+
+  /// "Przywróć stronę" always cancels the deletion; the Page goes back on
+  /// air only when it was running before and today's rules allow it (live
+  /// Premium or VIP, a public profile). Otherwise this is the answer, and
+  /// the Page shows its ordinary paused state with "Wznów stronę".
+  String get deletionCancelledPaused => copy.text(
+    'Deletion cancelled. The Page stays paused.',
+    'Usuwanie anulowane. Strona pozostaje wstrzymana.',
+  );
   String get deleteNow =>
       copy.text("Delete now, don't wait", 'Usuń teraz, nie czekaj');
   String deleteNowSubtitle(DateTime deleteAt) => copy.template(
@@ -172,6 +181,27 @@ extension PageDeleteCopy on PagesCopy {
   String get deleteNowBody => copy.text(
     "Posts, followers and contact details are deleted right away and can't be restored. You can create a new Page after 7 days.",
     'Posty, obserwujących i dane kontaktowe usuniemy od razu i nie da się ich przywrócić. Nową stronę założysz po 7 dniach.',
+  );
+
+  // ---- The fresh sign-in before "Usuń teraz, nie czekaj" -----------------------
+
+  /// "Delete now" is the one step that cannot be undone, so the server asks
+  /// for a sign-in no older than five minutes (the account-deletion rule).
+  String get confirmIdentityTitle => copy.contextualText(
+    'pages.delete.confirmIdentity',
+    'Confirm it is you',
+    'Potwierdź, że to Ty',
+  );
+  String get confirmIdentityBody => copy.text(
+    'Deleting the Page now needs a fresh sign-in. Enter your password.',
+    'Usunięcie strony od razu wymaga świeżego logowania. Wpisz hasło.',
+  );
+
+  /// The field label; the word is in the base catalog of every locale.
+  String get passwordLabel => copy.text('Password', 'Hasło');
+  String get confirmIdentityFailed => copy.text(
+    "We couldn't confirm it is you, so nothing was deleted. Try again, or sign out and sign in again.",
+    'Nie udało się potwierdzić, że to Ty, więc nic nie zostało usunięte. Spróbuj ponownie albo wyloguj się i zaloguj od nowa.',
   );
 
   // ---- The purge and the pause before a new Page -------------------------------
